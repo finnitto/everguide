@@ -248,7 +248,7 @@ def discover_provider_websites():
         db.close()
 
 @celery_app.task(name="everguide.website.verify_candidates")
-def verify_website_candidates(limit=50):
+def verify_website_candidates(limit=50, run_id=None):
     """Run conservative robots-aware technical checks on a bounded candidate batch."""
     from app.models import WebsiteDiscoveryResult, WebsiteVerification
     from app.website_checks import verify_candidate
@@ -256,11 +256,19 @@ def verify_website_candidates(limit=50):
     db = SessionLocal()
     checked = 0
     outcomes = {}
+    run = None
     try:
+        if run_id is not None:
+            from app.models import WebsiteVerificationRun
+            run = db.query(WebsiteVerificationRun).filter(WebsiteVerificationRun.id == run_id).first()
+            if run:
+                run.status = "running"; run.started_at = datetime.now(timezone.utc); db.commit()
         pool = (db.query(WebsiteDiscoveryResult)
                 .filter(WebsiteDiscoveryResult.status == "candidate")
                 .order_by(WebsiteDiscoveryResult.id.asc()).limit(500).all())
         rows = [row for row in pool if _classify(row.result_title, row.result_snippet or "", row.result_domain) == "provider_candidate"][:max(1, min(int(limit), 50))]
+        if run:
+            run.total = len(rows); db.commit()
         for candidate in rows:
             try:
                 result = verify_candidate(candidate.result_url)
@@ -273,10 +281,18 @@ def verify_website_candidates(limit=50):
             candidate.status = "verification_checked"
             outcomes[result["status"]] = outcomes.get(result["status"], 0) + 1
             checked += 1
+            if run:
+                run.checked = checked; run.outcomes = dict(outcomes)
             db.commit()
+        if run:
+            run.status = "completed"; run.completed_at = datetime.now(timezone.utc); run.checked = checked; run.outcomes = dict(outcomes); db.commit()
         db.add(AuditEvent(entity_type="website_verification", entity_id=0, action="batch_completed",
                           detail={"checked": checked, "outcomes": outcomes}))
         db.commit()
         return {"status": "completed", "checked": checked, "outcomes": outcomes}
+    except Exception as exc:
+        if run:
+            run.status = "failed"; run.error_message = str(exc)[:1000]; run.completed_at = datetime.now(timezone.utc); db.commit()
+        raise
     finally:
         db.close()

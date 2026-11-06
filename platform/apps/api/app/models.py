@@ -136,3 +136,18 @@ class WebsiteVerification(Base):
     robots_allowed: Mapped[bool | None] = mapped_column(Boolean)
     content_sha256: Mapped[str | None] = mapped_column(String(64))
     detail: Mapped[str | None] = mapped_column(Text)
+
+
+class WebsiteVerificationRun(Base):
+    __tablename__ = "website_verification_runs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    celery_task_id: Mapped[str | None] = mapped_column(String(100), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="queued", index=True)
+    requested_limit: Mapped[int] = mapped_column(Integer, default=50)
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    checked: Mapped[int] = mapped_column(Integer, default=0)
+    outcomes: Mapped[dict] = mapped_column(JSON, default=dict)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

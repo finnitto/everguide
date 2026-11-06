@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.0 — Verification batch tracking
+
+- Adds persistent verification-run records with queued, running, completed and failed states.
+- Tracks batch size, completed checks, outcome counts, task ID and timestamps.
+- Adds an admin activity panel with progress bars and recent batch history; dashboard refreshes automatically every 10 seconds.
+- Prevents a second batch from being queued while a tracked batch is queued or running.
+- Adds migration `0007_verification_run_tracking`; preserves existing provider, branch, candidate and verification data.
+- Does not alter or publish provider records.
+
+
 ## 0.8.0 — Conservative website verification
 
 - Adds a bounded background verification batch for up to 50 likely provider website candidates.

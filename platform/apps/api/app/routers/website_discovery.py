@@ -1,12 +1,13 @@
 import re
 import html
 from collections import Counter
+from datetime import datetime, timezone
 from urllib.parse import urlsplit, urlunsplit
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.config import settings
-from app.models import WebsiteDiscoveryResult, WebsiteVerification, Provider
+from app.models import WebsiteDiscoveryResult, WebsiteVerification, WebsiteVerificationRun, Provider
 from app.tasks import discover_provider_websites, verify_website_candidates
 
 router = APIRouter(prefix="/api/v1/website-discovery", tags=["automatic website discovery"])
@@ -62,10 +63,29 @@ def start_run():
     return {"status":"queued","task_id":task.id,"message":"Automatic England regional website search queued."}
 
 @router.post("/verification-runs", status_code=202)
-def start_verification_run():
-    task = verify_website_candidates.delay(limit=50)
-    return {"status": "queued", "task_id": task.id,
-            "message": "A bounded batch of up to 50 likely provider websites has been queued for technical checks."}
+def start_verification_run(db: Session = Depends(get_db)):
+    active = db.query(WebsiteVerificationRun).filter(WebsiteVerificationRun.status.in_(["queued", "running"])).order_by(WebsiteVerificationRun.id.desc()).first()
+    if active:
+        return {"status": active.status, "run_id": active.id, "task_id": active.celery_task_id,
+                "message": "A website verification batch is already queued or running. No duplicate batch was created."}
+    run = WebsiteVerificationRun(status="queued", requested_limit=50, total=0, checked=0, outcomes={})
+    db.add(run); db.commit(); db.refresh(run)
+    try:
+        task = verify_website_candidates.delay(limit=50, run_id=run.id)
+        run.celery_task_id = task.id; db.commit()
+    except Exception as exc:
+        run.status = "failed"; run.error_message = str(exc)[:1000]; run.completed_at = datetime.now(timezone.utc); db.commit()
+        raise HTTPException(503, "Could not queue website verification. Check the worker and Redis services.")
+    return {"status":"queued", "run_id":run.id, "task_id":task.id,
+            "message":"A batch of up to 50 provider website checks has been queued."}
+
+@router.get("/verification-runs")
+def verification_runs(limit: int = 10, db: Session = Depends(get_db)):
+    rows = db.query(WebsiteVerificationRun).order_by(WebsiteVerificationRun.id.desc()).limit(min(max(limit,1),50)).all()
+    return {"items":[{"id":r.id,"status":r.status,"requested_limit":r.requested_limit,"total":r.total,
+        "checked":r.checked,"outcomes":r.outcomes or {},"error_message":r.error_message,
+        "created_at":r.created_at,"started_at":r.started_at,"completed_at":r.completed_at,
+        "task_id":r.celery_task_id} for r in rows]}
 
 @router.get("/candidates")
 def candidates(limit:int=100, db:Session=Depends(get_db)):
