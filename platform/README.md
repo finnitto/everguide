@@ -47,3 +47,11 @@ Duplicate detection reports exact duplicate Place IDs and duplicate fingerprints
 - The admin interface is a local development preview. Authentication and role-based access control are not yet enabled; do not expose it to the public internet.
 - Keep `.env` private. Never commit API keys or database credentials.
 - Do not remove Docker volumes to troubleshoot application updates; doing so deletes local database data.
+
+
+## v0.5.1 source permission workflow
+See `docs/SOURCE-PERMISSIONS.md`. Sources are pending by default; only explicitly approved HTTPS websites are eligible for a limited homepage evidence check. SAIF/NAFD directory data is excluded without written permission. This feature does not enrich Place ID-only observations or publish provider records.
+
+
+## Automatic website discovery (v0.6.0)
+Configure `BRAVE_SEARCH_API_KEY` in `.env` to enable independent England regional website search. See `docs/WEBSITE-DISCOVERY.md`. Choose a search plan whose terms permit storing result metadata.

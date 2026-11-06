@@ -82,3 +82,43 @@ class DiscoveryRun(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class SourcePermission(Base):
+    __tablename__ = "source_permissions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider_id: Mapped[int] = mapped_column(ForeignKey("providers.id", ondelete="CASCADE"), index=True)
+    source_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    source_domain: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    permission_status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    permission_basis: Mapped[str] = mapped_column(Text, nullable=False)
+    permission_reference: Mapped[str | None] = mapped_column(String(500))
+    approved_by: Mapped[str | None] = mapped_column(String(120))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+class WebsiteEvidenceCheck(Base):
+    __tablename__ = "website_evidence_checks"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_permission_id: Mapped[int] = mapped_column(ForeignKey("source_permissions.id", ondelete="CASCADE"), index=True)
+    provider_id: Mapped[int] = mapped_column(ForeignKey("providers.id", ondelete="CASCADE"), index=True)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    http_status: Mapped[int | None] = mapped_column(Integer)
+    page_title: Mapped[str | None] = mapped_column(String(500))
+    content_sha256: Mapped[str | None] = mapped_column(String(64))
+    detail: Mapped[str | None] = mapped_column(Text)
+
+
+class WebsiteDiscoveryResult(Base):
+    __tablename__ = "website_discovery_results"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    query_region: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    query_text: Mapped[str] = mapped_column(String(500), nullable=False)
+    result_title: Mapped[str] = mapped_column(String(500), nullable=False)
+    result_url: Mapped[str] = mapped_column(String(1000), nullable=False, index=True)
+    result_domain: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    result_snippet: Mapped[str | None] = mapped_column(Text)
+    source_provider: Mapped[str] = mapped_column(String(40), default="brave_search")
+    status: Mapped[str] = mapped_column(String(30), default="candidate", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
