@@ -10,13 +10,16 @@
 - [x] Local deployment and packaging scripts
 - [x] Basic API tests and health checks
 
-## Release 0.2.0 – Directory data foundation
-- [ ] Provider and branch entities
-- [ ] Contacts, services and locations
-- [ ] Source and evidence model
-- [ ] Audit events and approval records
-- [ ] Versioned database migrations
-- [ ] API CRUD and validation tests
+## Release 0.2.0 – Core provider directory (implemented)
+- [x] Parent provider and branch entities
+- [x] Branch contact details, service fields and coordinates
+- [x] Source observations with attribution, retrieval time and confidence
+- [x] Audit events for provider and evidence actions
+- [x] Versioned database migration
+- [x] Provider CRUD, status management and directory search API
+- [x] Local admin provider creation and review-status controls
+- [x] Public search limited to published providers and branches
+- [x] API smoke tests for core directory workflows
 
 ## Subsequent releases
 - Public directory search and profiles

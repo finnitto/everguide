@@ -1,48 +1,53 @@
-# Everguide – Release 0.1.1
+# Everguide — local development
 
-Patch release 0.1.1: resolves the Celery/Kombu/Redis Python dependency conflict and makes release ZIP contents extract directly into the repository root.
+Current release: **0.2.1**. This is an early development build of the Everguide directory and provider-management platform.
 
-Initial local development foundation: Next.js/React/TypeScript, FastAPI, PostgreSQL/PostGIS, SQLAlchemy/Alembic, Redis/Celery and Docker Compose.
+## Start / update locally
 
-## First-time setup
-
-From Git Bash in the repository root:
+From Git Bash in `C:/projects/everguide/platform`:
 
 ```bash
-cp .env.example .env
-./scripts/deploy-local.sh
+bash scripts/deploy-local.sh
 ```
 
-Review `.env` first if you want to change local credentials or ports. The example credentials are for local development only.
+The deployment script rebuilds the application images and starts the services. Existing PostgreSQL and Redis volumes are retained. Do not use `docker compose down -v` unless you intend to delete local data.
 
-## Local URLs
-
+## Addresses
 - Public website: http://localhost:3000
-- Administration placeholder: http://localhost:3000/admin
-- Backend API: http://localhost:8000
-- API documentation: http://localhost:8000/docs
-- API health: http://localhost:8000/health
-- API readiness: http://localhost:8000/health/ready
+- Directory search: http://localhost:3000/search
+- Admin preview: http://localhost:3000/admin
+- API: http://localhost:8000
+- API docs: http://localhost:8000/docs
+- Readiness: http://localhost:8000/health/ready
 
-## Useful commands
+## 0.2.0 capabilities (included in 0.2.1)
+- Create parent provider records and their first branch.
+- List and search provider records by provider name, branch name, town/city and postcode.
+- View dashboard counts and filter provider lifecycle status.
+- Move providers to review or publish them from the local admin preview.
+- Store source observations separately from approved provider and branch fields, including source name/type/URL, retrieval timestamp, confidence, observed data and review status.
+- Record basic audit events for provider and observation actions.
+- Search public directory records; only providers and branches with `published` status appear.
 
-```bash
-docker compose ps
-docker compose logs -f
-docker compose logs -f api
-docker compose exec api pytest -q
-docker compose up -d --build
-./scripts/stop-local.sh
-```
+## Important limitations
+This is a development milestone, not a production-ready directory. The admin interface has **no authentication or role-based access control** and must remain local; do not expose it to the internet. The public directory will be empty until records are entered and published. No Google Places integration, England-wide automated discovery, website enrichment, NAFD/SAIF/FCA checks, pricing extraction, map search, geocoding, automated publication rules or scheduled revalidation are implemented yet. The source-observation API is available, but a full evidence review interface is still pending.
 
-`stop-local.sh` preserves named database and Redis volumes. `docker compose down -v` deletes them and should only be used when intentionally resetting local data.
+Provider and pricing approval are intended to remain independent. This release only implements provider lifecycle statuses; pricing workflows arrive in a later milestone.
 
-## Release packaging
+## Database safety
+Release 0.2.0 adds an Alembic migration and does not require deleting existing database volumes. The API applies migrations at startup. Back up local data before any future destructive schema operation.
 
-Run `./scripts/package-release.sh`. The packager reads `VERSION`, excludes environment secrets, Git metadata, dependencies, caches, build output, local data, uploads and backups, and writes the ZIP under `releases/`.
+## API quick reference
+- `GET /api/v1/dashboard`
+- `GET /api/v1/providers?q=...&status=...`
+- `POST /api/v1/providers`
+- `GET /api/v1/providers/{id}`
+- `PATCH /api/v1/providers/{id}`
+- `POST /api/v1/providers/{id}/branches`
+- `POST /api/v1/providers/{id}/status?status=published`
+- `POST /api/v1/observations`
+- `GET /api/v1/observations?review_status=pending`
+- `PATCH /api/v1/observations/{id}`
+- `GET /api/v1/directory/search?q=...`
 
-## Current scope
-
-This is a technical foundation, not yet the complete directory product. Provider/branch CRUD, authentication, Google Places discovery, enrichment, matching, pricing extraction, approval workflows and AWS deployment are planned for later releases.
-
-Do not expose this development stack directly to the public internet.
+All provider, branch and observation writes are validated by the API. See `/docs` for interactive API documentation.
