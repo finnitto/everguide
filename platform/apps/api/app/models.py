@@ -65,3 +65,20 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 Index("ix_branches_location", Branch.town_city, Branch.postcode)
+
+
+class DiscoveryRun(Base):
+    __tablename__ = "discovery_runs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[str | None] = mapped_column(String(120), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="queued", index=True)
+    scope: Mapped[str] = mapped_column(String(40), default="england")
+    source: Mapped[str] = mapped_column(String(60), default="google_places")
+    locations_attempted: Mapped[int] = mapped_column(Integer, default=0)
+    places_found: Mapped[int] = mapped_column(Integer, default=0)
+    observations_created: Mapped[int] = mapped_column(Integer, default=0)
+    duplicates_flagged: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)

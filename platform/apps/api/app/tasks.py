@@ -1,6 +1,150 @@
+import json
+import urllib.request
+import urllib.error
+from datetime import datetime, timezone
 from app.celery_app import celery_app
+from app.config import settings
+from app.database import SessionLocal
+from app.models import DiscoveryRun, SourceObservation, AuditEvent
+
+# Regional discovery anchors. These are a starter coverage plan, not a boundary-
+# validated exhaustive England grid. Coverage is intentionally explicit in the UI.
+ENGLAND_DISCOVERY_ANCHORS = [
+    ("London", 51.5072, -0.1276), ("Birmingham", 52.4862, -1.8904),
+    ("Manchester", 53.4808, -2.2426), ("Liverpool", 53.4084, -2.9916),
+    ("Leeds", 53.8008, -1.5491), ("Sheffield", 53.3811, -1.4701),
+    ("Newcastle", 54.9783, -1.6178), ("Sunderland", 54.9069, -1.3838),
+    ("Nottingham", 52.9548, -1.1581), ("Leicester", 52.6369, -1.1398),
+    ("Coventry", 52.4068, -1.5197), ("Worcester", 52.1936, -2.2216),
+    ("Bristol", 51.4545, -2.5879), ("Bath", 51.3758, -2.3599),
+    ("Exeter", 50.7184, -3.5339), ("Plymouth", 50.3755, -4.1427),
+    ("Southampton", 50.9097, -1.4044), ("Portsmouth", 50.8198, -1.0880),
+    ("Brighton", 50.8225, -0.1372), ("Canterbury", 51.2802, 1.0789),
+    ("Oxford", 51.7520, -1.2577), ("Cambridge", 52.2053, 0.1218),
+    ("Norwich", 52.6309, 1.2974), ("Peterborough", 52.5695, -0.2405),
+    ("Milton Keynes", 52.0406, -0.7594), ("Chelmsford", 51.7356, 0.4685),
+    ("Ipswich", 52.0567, 1.1482), ("Carlisle", 54.8925, -2.9329),
+    ("Lancaster", 54.0466, -2.8007), ("Blackpool", 53.8175, -3.0357),
+    ("York", 53.9590, -1.0815), ("Kingston upon Hull", 53.7676, -0.3274),
+    ("Stoke-on-Trent", 53.0027, -2.1794), ("Chester", 53.1934, -2.8931),
+    ("Gloucester", 51.8642, -2.2382), ("Hereford", 52.0567, -2.7160),
+    ("Truro", 50.2632, -5.0510), ("Torquay", 50.4619, -3.5253),
+    ("Dover", 51.1279, 1.3134), ("Eastbourne", 50.7680, 0.2905),
+]
+
+def _places_search(api_key, location):
+    url = "https://places.googleapis.com/v1/places:searchText"
+    body = {
+        "textQuery": "funeral director",
+        "pageSize": 20,
+        "locationBias": {"circle": {
+            "center": {"latitude": location[1], "longitude": location[2]},
+            "radius": 30000
+        }},
+        "languageCode": "en-GB",
+        "regionCode": "GB"
+    }
+    request = urllib.request.Request(
+        url, data=json.dumps(body).encode("utf-8"), method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": api_key,
+            "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.nationalPhoneNumber,places.websiteUri,places.googleMapsUri,places.location,places.primaryType"
+        }
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=25) as response:
+            return json.loads(response.read().decode("utf-8")).get("places", [])
+    except urllib.error.HTTPError as exc:
+        # Preserve Google's structured error response without exposing the API key.
+        try:
+            raw_error = exc.read().decode("utf-8", errors="replace")
+            payload = json.loads(raw_error) if raw_error else {}
+            google_error = payload.get("error", {})
+            message = google_error.get("message") or raw_error or exc.reason
+            status = google_error.get("status")
+            code = google_error.get("code") or exc.code
+            detail = f"Google Places API HTTP {code}"
+            if status:
+                detail += f" ({status})"
+            detail += f": {message}"
+        except Exception:
+            detail = f"Google Places API HTTP {exc.code}: {exc.reason}"
+        raise RuntimeError(detail) from exc
+
+@celery_app.task(name="everguide.discovery.run", bind=True)
+def run_provider_discovery(self, run_id: int):
+    db = SessionLocal()
+    run = db.get(DiscoveryRun, run_id)
+    if not run:
+        db.close()
+        return {"status": "missing", "run_id": run_id}
+    run.status = "running"
+    run.started_at = datetime.now(timezone.utc)
+    db.commit()
+    try:
+        if not settings.google_places_api_key:
+            raise RuntimeError("Google Places API key is not configured. Add GOOGLE_PLACES_API_KEY to .env and restart the services.")
+        seen = set()
+        for location in ENGLAND_DISCOVERY_ANCHORS:
+            run.locations_attempted += 1
+            places = _places_search(settings.google_places_api_key, location)
+            for place in places:
+                place_id = place.get("id")
+                if not place_id or place_id in seen:
+                    continue
+                seen.add(place_id)
+                run.places_found += 1
+
+                # Google Place IDs may be retained; other Google Places content
+                # is deliberately not persisted pending a formal terms review.
+                prior = db.query(SourceObservation).filter(
+                    SourceObservation.source_type == "google_places",
+                    SourceObservation.observed_data["google_place_id"].as_string() == place_id
+                ).first()
+                if prior:
+                    prior.observed_data = {
+                        "google_place_id": place_id,
+                        "discovery_anchor": location[0],
+                        "data_policy": "place_id_only"
+                    }
+                    prior.retrieved_at = datetime.now(timezone.utc)
+                    prior.review_status = "pending"
+                else:
+                    db.add(SourceObservation(
+                        source_type="google_places",
+                        source_name="Google Places (Place ID reference)",
+                        source_url=None,
+                        confidence=None,
+                        observed_data={
+                            "google_place_id": place_id,
+                            "discovery_anchor": location[0],
+                            "data_policy": "place_id_only"
+                        },
+                        review_status="pending",
+                        notes="Place ID reference only. Business details are not retained from Google pending terms, attribution and retention review."
+                    ))
+                    run.observations_created += 1
+            db.commit()
+        run.status = "completed"
+        run.completed_at = datetime.now(timezone.utc)
+        db.add(AuditEvent(entity_type="discovery_run", entity_id=run.id, action="completed",
+                          detail={"places_found": run.places_found, "observations_created": run.observations_created}))
+        db.commit()
+        return {"status": run.status, "run_id": run.id, "places_found": run.places_found}
+    except Exception as exc:
+        db.rollback()
+        run = db.get(DiscoveryRun, run_id)
+        run.status = "failed"
+        run.error_message = str(exc)[:2000]
+        run.completed_at = datetime.now(timezone.utc)
+        db.add(AuditEvent(entity_type="discovery_run", entity_id=run.id, action="failed",
+                          detail={"error": run.error_message}))
+        db.commit()
+        raise
+    finally:
+        db.close()
 
 @celery_app.task(name="everguide.system.ping")
 def ping():
-    # Diagnostic task proving that the Celery worker can execute jobs.
     return {"status": "ok", "task": "everguide.system.ping"}
