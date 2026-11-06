@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.models import Provider, Branch, SourceObservation, AuditEvent
 from app.schemas import ProviderCreate, ProviderUpdate, ProviderOut, BranchInput, BranchOut, ObservationCreate, ObservationDecision
+from app.matching import find_provider_matches, observation_duplicate_key
 
 router = APIRouter(prefix="/api/v1", tags=["directory"])
 ALLOWED_PROVIDER_STATUSES = {"draft", "needs_review", "approved", "published", "suspended", "rejected"}
@@ -91,11 +92,90 @@ def list_observations(review_status: str | None = None, db: Session = Depends(ge
 
 @router.patch("/observations/{observation_id}")
 def decide_observation(observation_id: int, payload: ObservationDecision, db: Session = Depends(get_db)):
-    if payload.review_status not in {"accepted","rejected","pending"}: raise HTTPException(400,"Invalid review status")
-    o=db.get(SourceObservation,observation_id)
-    if not o: raise HTTPException(404,"Observation not found")
-    o.review_status=payload.review_status; o.notes=payload.notes or o.notes
-    audit(db,"observation",o.id,"reviewed",{"review_status":o.review_status}); db.commit(); return observation_dict(o)
+    if payload.review_status not in {"accepted", "rejected", "pending"}:
+        raise HTTPException(400, "Invalid review status")
+    o = db.get(SourceObservation, observation_id)
+    if not o:
+        raise HTTPException(404, "Observation not found")
+    if payload.provider_id is not None and not db.get(Provider, payload.provider_id):
+        raise HTTPException(404, "Provider not found")
+    if payload.branch_id is not None:
+        branch = db.get(Branch, payload.branch_id)
+        if not branch:
+            raise HTTPException(404, "Branch not found")
+        if payload.provider_id is not None and branch.provider_id != payload.provider_id:
+            raise HTTPException(400, "Selected branch does not belong to the selected provider")
+        o.provider_id = branch.provider_id
+    elif payload.provider_id is not None:
+        o.provider_id = payload.provider_id
+        if o.branch_id is not None:
+            existing_branch = db.get(Branch, o.branch_id)
+            if existing_branch and existing_branch.provider_id != payload.provider_id:
+                o.branch_id = None
+    if payload.branch_id is not None:
+        o.branch_id = payload.branch_id
+    o.review_status = payload.review_status
+    o.notes = payload.notes or o.notes
+    audit(db, "observation", o.id, "reviewed", {
+        "review_status": o.review_status, "provider_id": o.provider_id,
+        "branch_id": o.branch_id
+    })
+    db.commit()
+    db.refresh(o)
+    return observation_dict(o)
+
+
+@router.get("/matching/summary")
+def matching_summary(db: Session = Depends(get_db)):
+    observations = db.query(SourceObservation).filter(SourceObservation.review_status == "pending").all()
+    providers = db.query(Provider).options(joinedload(Provider.branches)).all()
+    matchable = 0
+    needs_enrichment = 0
+    strong = 0
+    possible = 0
+    no_candidate = 0
+    duplicate_keys = {}
+    for observation in observations:
+        result = find_provider_matches(observation, providers)
+        if result["matchable"]:
+            matchable += 1
+            if result["match_state"] == "strong_candidate": strong += 1
+            elif result["match_state"] == "possible_candidate": possible += 1
+            else: no_candidate += 1
+        else:
+            needs_enrichment += 1
+        key = observation_duplicate_key(observation)
+        if key:
+            duplicate_keys.setdefault(key, []).append(observation.id)
+    duplicate_groups = [ids for ids in duplicate_keys.values() if len(ids) > 1]
+    return {"pending": len(observations), "matchable": matchable,
+            "needs_enrichment": needs_enrichment, "strong_candidates": strong,
+            "possible_candidates": possible, "no_candidate": no_candidate,
+            "duplicate_groups": len(duplicate_groups),
+            "duplicate_observations": sum(len(ids) for ids in duplicate_groups)}
+
+
+@router.get("/matching/queue")
+def matching_queue(limit: int = Query(100, ge=1, le=250), offset: int = Query(0, ge=0),
+                   db: Session = Depends(get_db)):
+    total = db.query(SourceObservation).filter(SourceObservation.review_status == "pending").count()
+    observations = (db.query(SourceObservation)
+        .filter(SourceObservation.review_status == "pending")
+        .order_by(SourceObservation.retrieved_at.desc())
+        .offset(offset).limit(limit).all())
+    providers = db.query(Provider).options(joinedload(Provider.branches)).all()
+    duplicate_counts = {}
+    for observation in db.query(SourceObservation).all():
+        key = observation_duplicate_key(observation)
+        if key:
+            duplicate_counts[key] = duplicate_counts.get(key, 0) + 1
+    items = []
+    for observation in observations:
+        result = find_provider_matches(observation, providers)
+        key = observation_duplicate_key(observation)
+        items.append({**observation_dict(observation), **result,
+                      "possible_duplicate": bool(key and duplicate_counts.get(key, 0) > 1)})
+    return {"items": items, "count": total, "limit": limit, "offset": offset}
 
 @router.get("/directory/search")
 def public_search(q: str = Query(min_length=2), limit: int = Query(50,ge=1,le=100), db: Session = Depends(get_db)):

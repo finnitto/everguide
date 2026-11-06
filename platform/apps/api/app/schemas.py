@@ -75,3 +75,5 @@ class ObservationCreate(BaseModel):
 class ObservationDecision(BaseModel):
     review_status: str
     notes: str | None = None
+    provider_id: int | None = None
+    branch_id: int | None = None

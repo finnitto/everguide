@@ -1,66 +1,49 @@
-# Everguide — local development
+# Everguide
 
-Current release: **0.3.1**. This is an early development build of the Everguide directory and provider-management platform.
+Current release: **0.4.1**. Early development build of the Everguide funeral director directory and provider-management platform.
 
-## Start / update locally
+## Stack
 
-From Git Bash in `C:/projects/everguide/platform`:
+- Next.js / React / TypeScript web application
+- FastAPI / Python API
+- PostgreSQL with PostGIS
+- Redis and Celery background worker
+- Docker Compose local deployment
+
+## Local deployment
+
+1. Extract this release into your existing repository, replacing the files from the previous release. Keep your existing `.env` file and database volumes.
+2. From Git Bash:
 
 ```bash
+cd /c/projects/everguide/platform
 bash scripts/deploy-local.sh
 ```
 
-The deployment script rebuilds the application images and starts the services. Existing PostgreSQL and Redis volumes are retained. Do not use `docker compose down -v` unless you intend to delete local data.
+The API applies Alembic migrations at startup. Release 0.4.1 does not add a database migration and does not require deleting or recreating database volumes.
 
-## Addresses
-- Public website: http://localhost:3000
-- Directory search: http://localhost:3000/search
-- Admin preview: http://localhost:3000/admin
-- API: http://localhost:8000
-- API docs: http://localhost:8000/docs
-- Readiness: http://localhost:8000/health/ready
+## Google Places discovery
 
-## Core directory capabilities
-- Create parent provider records and their first branch.
-- List and search provider records by provider name, branch name, town/city and postcode.
-- View dashboard counts and filter provider lifecycle status.
-- Move providers to review or publish them from the local admin preview.
-- Store source observations separately from approved provider and branch fields, including source name/type/URL, retrieval timestamp, confidence, observed data and review status.
-- Record basic audit events for provider and observation actions.
-- Search public directory records; only providers and branches with `published` status appear.
+Set `GOOGLE_PLACES_API_KEY` in the project-root `.env` file. Enable Places API (New) and billing in the associated Google Cloud project. Restart the API and worker after changing the key:
 
-## Important limitations
-This is a development milestone, not a production-ready directory. The admin interface has **no authentication or role-based access control** and must remain local; do not expose it to the internet. The public directory will be empty until records are entered and published. No Google Places integration, England-wide automated discovery, website enrichment, NAFD/SAIF/FCA checks, pricing extraction, map search, geocoding, automated publication rules or scheduled revalidation are implemented yet. The source-observation API is available, but a full evidence review interface is still pending.
+```bash
+docker compose up -d --force-recreate api worker
+```
 
-Provider and pricing approval are intended to remain independent. This release only implements provider lifecycle statuses; pricing workflows arrive in a later milestone.
+The initial discovery connector uses 40 England regional anchors with 30 km location bias. This is an initial regional discovery pass, not a boundary-validated exhaustive census or a guarantee of complete England coverage.
 
-## Database safety
-Release 0.3.1 adds an Alembic migration and does not require deleting existing database volumes. The API applies migrations at startup. Back up local data before any future destructive schema operation.
+Google Places observations retain the Google Place ID only. Google's Places policy exempts Place IDs from caching restrictions; other Places content remains subject to restrictions and attribution requirements. See [Google Maps Platform Places API policies](https://developers.google.com/maps/documentation/places/web-service/policies).
 
-## API quick reference
-- `GET /api/v1/dashboard`
-- `GET /api/v1/providers?q=...&status=...`
-- `POST /api/v1/providers`
-- `GET /api/v1/providers/{id}`
-- `PATCH /api/v1/providers/{id}`
-- `POST /api/v1/providers/{id}/branches`
-- `POST /api/v1/providers/{id}/status?status=published`
-- `POST /api/v1/observations`
-- `GET /api/v1/observations?review_status=pending`
-- `PATCH /api/v1/observations/{id}`
-- `GET /api/v1/directory/search?q=...`
+## Provider matching and review (0.4.1)
 
-All provider, branch and observation writes are validated by the API. See `/docs` for interactive API documentation.
+The matching engine compares source fields already stored in Everguide against provider and branch records. It can use business name, postcode, telephone number, website domain and town/city. Scores and reasons are indicative suggestions only; the system does not automatically merge, approve or publish records.
 
+Google Place ID-only observations cannot be responsibly matched by name or address. They are explicitly labelled as needing enrichment rather than being guessed. The matching queue supports linking a reviewed observation to an existing provider and branch; the API validates that the branch belongs to the selected provider and records an audit event.
 
-## Automated provider discovery (0.3.1)
+Duplicate detection reports exact duplicate Place IDs and duplicate fingerprints where enough independently sourced business fields exist. Discovery already deduplicates repeated Place IDs within an individual run.
 
-The admin dashboard includes a Google Places discovery control. Configure `GOOGLE_PLACES_API_KEY` in your local `.env` file and restart Docker Compose before launching a run. Enable the Places API (New) and billing in the associated Google Cloud project, and restrict the key to the Places API and appropriate usage.
+## Development and security notes
 
-A run performs one search at 40 regional England anchor locations (30 km location bias). Only Google Place ID references and Everguide's own search-anchor metadata are retained by default. Other Google Places business content is not stored pending a formal review of Google Maps Platform terms, attribution and retention rules. Existing provider records are not overwritten and new providers are not automatically published.
-
-**Coverage limitation:** this first connector is a regional discovery pass, not a boundary-validated exhaustive census of every location in England. It is a technical integration milestone; a validated national coverage grid, paging/quotas, geographic coverage reporting and ongoing scheduling are subsequent work. Review Google Maps Platform terms, attribution, storage and retention requirements before production use.
-
-
-### 0.3.1 diagnostic update
-If Google Places rejects a discovery request, the run now records Google's structured error message and status. No database migration is required.
+- The admin interface is a local development preview. Authentication and role-based access control are not yet enabled; do not expose it to the public internet.
+- Keep `.env` private. Never commit API keys or database credentials.
+- Do not remove Docker volumes to troubleshoot application updates; doing so deletes local database data.
