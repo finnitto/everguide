@@ -246,3 +246,37 @@ def discover_provider_websites():
         return {"status":"completed", "regional_searches":searches, "candidates_saved":saved}
     finally:
         db.close()
+
+@celery_app.task(name="everguide.website.verify_candidates")
+def verify_website_candidates(limit=50):
+    """Run conservative robots-aware technical checks on a bounded candidate batch."""
+    from app.models import WebsiteDiscoveryResult, WebsiteVerification
+    from app.website_checks import verify_candidate
+    from app.routers.website_discovery import _classify
+    db = SessionLocal()
+    checked = 0
+    outcomes = {}
+    try:
+        pool = (db.query(WebsiteDiscoveryResult)
+                .filter(WebsiteDiscoveryResult.status == "candidate")
+                .order_by(WebsiteDiscoveryResult.id.asc()).limit(500).all())
+        rows = [row for row in pool if _classify(row.result_title, row.result_snippet or "", row.result_domain) == "provider_candidate"][:max(1, min(int(limit), 50))]
+        for candidate in rows:
+            try:
+                result = verify_candidate(candidate.result_url)
+            except Exception as exc:
+                result = {"status": "check_blocked_or_failed", "final_url": None,
+                          "http_status": None, "content_type": None, "page_title": None,
+                          "robots_allowed": None, "content_sha256": None,
+                          "detail": str(exc)[:1000]}
+            db.add(WebsiteVerification(candidate_id=candidate.id, **result))
+            candidate.status = "verification_checked"
+            outcomes[result["status"]] = outcomes.get(result["status"], 0) + 1
+            checked += 1
+            db.commit()
+        db.add(AuditEvent(entity_type="website_verification", entity_id=0, action="batch_completed",
+                          detail={"checked": checked, "outcomes": outcomes}))
+        db.commit()
+        return {"status": "completed", "checked": checked, "outcomes": outcomes}
+    finally:
+        db.close()

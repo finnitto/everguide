@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0 — Conservative website verification
+
+- Adds a bounded background verification batch for up to 50 likely provider website candidates.
+- Checks HTTPS reachability and `robots.txt` before requesting candidate pages; rejects local/private network destinations and embedded URL credentials.
+- Does not automatically follow redirects; records them for later manual review.
+- Retains only response metadata, page title and a SHA-256 digest; response bodies are discarded.
+- Displays verification outcomes in the admin candidate list. No provider or branch records are created, changed or published.
+- Adds database migration `0006_website_verification`.
+
+
 ## 0.7.0 — Website candidate triage and provider-name matching
 
 - Cleans HTML fragments and entities from search-result titles and snippets before display.
@@ -17,6 +27,16 @@
 
 # Changelog
 
+## 0.8.0 — Conservative website verification
+
+- Adds a bounded background verification batch for up to 50 likely provider website candidates.
+- Checks HTTPS reachability and `robots.txt` before requesting candidate pages; rejects local/private network destinations and embedded URL credentials.
+- Does not automatically follow redirects; records them for later manual review.
+- Retains only response metadata, page title and a SHA-256 digest; response bodies are discarded.
+- Displays verification outcomes in the admin candidate list. No provider or branch records are created, changed or published.
+- Adds database migration `0006_website_verification`.
+
+
 ## 0.6.1
 - Introduced a provider-independent search adapter interface.
 - Moved Brave-specific HTTP handling out of the discovery task into `search_providers.py`.
@@ -26,6 +46,16 @@
 - No schema migration; existing website candidates and provider records are preserved.
 
 # Changelog
+
+## 0.8.0 — Conservative website verification
+
+- Adds a bounded background verification batch for up to 50 likely provider website candidates.
+- Checks HTTPS reachability and `robots.txt` before requesting candidate pages; rejects local/private network destinations and embedded URL credentials.
+- Does not automatically follow redirects; records them for later manual review.
+- Retains only response metadata, page title and a SHA-256 digest; response bodies are discarded.
+- Displays verification outcomes in the admin candidate list. No provider or branch records are created, changed or published.
+- Adds database migration `0006_website_verification`.
+
 
 ## 0.6.0
 - Added independent Brave Search API integration for automatic regional funeral-director website discovery.
@@ -37,6 +67,16 @@
 
 # Changelog
 
+## 0.8.0 — Conservative website verification
+
+- Adds a bounded background verification batch for up to 50 likely provider website candidates.
+- Checks HTTPS reachability and `robots.txt` before requesting candidate pages; rejects local/private network destinations and embedded URL credentials.
+- Does not automatically follow redirects; records them for later manual review.
+- Retains only response metadata, page title and a SHA-256 digest; response bodies are discarded.
+- Displays verification outcomes in the admin candidate list. No provider or branch records are created, changed or published.
+- Adds database migration `0006_website_verification`.
+
+
 ## 0.5.2
 - Reframed provider-owned website research as automatic technical screening without requiring an individual permission record for each provider.
 - Made source notes optional and clarified that registration is not legal clearance to extract, retain or publish content.
@@ -46,6 +86,16 @@
 
 # Changelog
 
+## 0.8.0 — Conservative website verification
+
+- Adds a bounded background verification batch for up to 50 likely provider website candidates.
+- Checks HTTPS reachability and `robots.txt` before requesting candidate pages; rejects local/private network destinations and embedded URL credentials.
+- Does not automatically follow redirects; records them for later manual review.
+- Retains only response metadata, page title and a SHA-256 digest; response bodies are discarded.
+- Displays verification outcomes in the admin candidate list. No provider or branch records are created, changed or published.
+- Adds database migration `0006_website_verification`.
+
+
 ## 0.5.1
 - Revised provider website registration to queue automated technical eligibility checks.
 - Removed individual administrator approval as a prerequisite for initial technical checks.
@@ -53,6 +103,16 @@
 - Kept checks metadata-only; no page body extraction, provider updates, match confirmation or publication.
 
 # Changelog
+
+## 0.8.0 — Conservative website verification
+
+- Adds a bounded background verification batch for up to 50 likely provider website candidates.
+- Checks HTTPS reachability and `robots.txt` before requesting candidate pages; rejects local/private network destinations and embedded URL credentials.
+- Does not automatically follow redirects; records them for later manual review.
+- Retains only response metadata, page title and a SHA-256 digest; response bodies are discarded.
+- Displays verification outcomes in the admin candidate list. No provider or branch records are created, changed or published.
+- Adds database migration `0006_website_verification`.
+
 
 ## 0.4.1 — Admin JSX build fix
 

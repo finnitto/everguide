@@ -122,3 +122,17 @@ class WebsiteDiscoveryResult(Base):
     source_provider: Mapped[str] = mapped_column(String(40), default="brave_search")
     status: Mapped[str] = mapped_column(String(30), default="candidate", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+class WebsiteVerification(Base):
+    __tablename__ = "website_verifications"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    candidate_id: Mapped[int] = mapped_column(ForeignKey("website_discovery_results.id", ondelete="CASCADE"), index=True)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    status: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    final_url: Mapped[str | None] = mapped_column(String(1000))
+    http_status: Mapped[int | None] = mapped_column(Integer)
+    content_type: Mapped[str | None] = mapped_column(String(160))
+    page_title: Mapped[str | None] = mapped_column(String(500))
+    robots_allowed: Mapped[bool | None] = mapped_column(Boolean)
+    content_sha256: Mapped[str | None] = mapped_column(String(64))
+    detail: Mapped[str | None] = mapped_column(Text)

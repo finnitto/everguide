@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.config import settings
-from app.models import WebsiteDiscoveryResult, Provider
-from app.tasks import discover_provider_websites
+from app.models import WebsiteDiscoveryResult, WebsiteVerification, Provider
+from app.tasks import discover_provider_websites, verify_website_candidates
 
 router = APIRouter(prefix="/api/v1/website-discovery", tags=["automatic website discovery"])
 
@@ -43,12 +43,14 @@ def _name_tokens(value):
 def status(db: Session = Depends(get_db)):
     configured = bool(settings.brave_search_api_key) if settings.search_provider == "brave" else False
     rows = db.query(WebsiteDiscoveryResult).all()
+    verification_count = db.query(WebsiteVerification).count()
     domains = {x.result_domain for x in rows}
     return {
         "configured": configured,
         "provider": settings.search_provider,
         "candidates": len(rows),
         "unique_domains": len(domains),
+        "verification_checks": verification_count,
         "message": "Search provider configured." if configured else "Configure credentials for the selected search provider."
     }
 
@@ -59,10 +61,20 @@ def start_run():
     task = discover_provider_websites.delay()
     return {"status":"queued","task_id":task.id,"message":"Automatic England regional website search queued."}
 
+@router.post("/verification-runs", status_code=202)
+def start_verification_run():
+    task = verify_website_candidates.delay(limit=50)
+    return {"status": "queued", "task_id": task.id,
+            "message": "A bounded batch of up to 50 likely provider websites has been queued for technical checks."}
+
 @router.get("/candidates")
 def candidates(limit:int=100, db:Session=Depends(get_db)):
     rows = db.query(WebsiteDiscoveryResult).order_by(WebsiteDiscoveryResult.created_at.desc()).limit(min(max(limit,1),500)).all()
     all_rows = db.query(WebsiteDiscoveryResult).all()
+    verification_rows = (db.query(WebsiteVerification).order_by(WebsiteVerification.checked_at.desc()).all())
+    latest_verification = {}
+    for verification in verification_rows:
+        latest_verification.setdefault(verification.candidate_id, verification)
     domain_counts = Counter(x.result_domain for x in all_rows)
     providers = db.query(Provider).all()
     items = []
@@ -83,6 +95,7 @@ def candidates(limit:int=100, db:Session=Depends(get_db)):
                       "canonical_url":_canonical_url(x.result_url),"domain":x.result_domain,
                       "domain_candidate_count":domain_counts[x.result_domain],"snippet":snippet,
                       "status":x.status,"candidate_type":candidate_type,
+                      "verification": ({"status":latest_verification[x.id].status, "checked_at":latest_verification[x.id].checked_at, "http_status":latest_verification[x.id].http_status, "page_title":latest_verification[x.id].page_title, "final_url":latest_verification[x.id].final_url, "robots_allowed":latest_verification[x.id].robots_allowed, "detail":latest_verification[x.id].detail} if x.id in latest_verification else None),
                       "possible_matches":possible_matches[:5],"created_at":x.created_at})
     summary = Counter(item["candidate_type"] for item in items)
     return {"items":items,"summary":{"shown":len(items),"provider_candidates":summary["provider_candidate"],
