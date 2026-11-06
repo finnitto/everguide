@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0
+- Added conservative automatic approval and publication for genuinely new providers only when a reachable HTTPS website permits the check and explicitly publishes complete Schema.org FuneralHome identity and UK branch address data.
+- Stores structured facts and verification provenance; discards fetched page bodies.
+- Holds exact-name, postcode and domain collisions for exception review; existing provider records are never overwritten.
+- Adds migration 0008_auto_provider_approval.
+- Pricing is not extracted or auto-approved.
+
+# Changelog
+
 ## 0.9.0 — Verification batch tracking
 
 - Adds persistent verification-run records with queued, running, completed and failed states.

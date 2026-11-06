@@ -2,6 +2,7 @@
 Only page metadata and a digest are retained; response bodies are discarded.
 """
 import hashlib
+import json
 import html
 import ipaddress
 import re
@@ -58,6 +59,45 @@ def _get(url: str, limit: int = 4096):
             raise ValueError("Response exceeded the configured safety size limit.")
         return response.status, response.headers, body, None
 
+def _structured_funeral_home_data(decoded: str):
+    """Extract a minimal Schema.org FuneralHome record transiently; never retain page HTML."""
+    scripts = re.findall(r'<script\b[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script\s*>', decoded, re.I | re.S)
+    for raw in scripts[:20]:
+        try:
+            payload = json.loads(html.unescape(raw.strip()))
+        except Exception:
+            continue
+        stack = payload if isinstance(payload, list) else [payload]
+        while stack:
+            item = stack.pop(0)
+            if not isinstance(item, dict):
+                continue
+            graph = item.get("@graph")
+            if isinstance(graph, list): stack.extend(graph[:100])
+            types = item.get("@type", [])
+            types = [types] if isinstance(types, str) else types
+            if not any(str(t).lower().endswith("funeralhome") for t in types):
+                continue
+            address = item.get("address") or {}
+            if isinstance(address, list): address = address[0] if address else {}
+            if not isinstance(address, dict): continue
+            country = address.get("addressCountry") or ""
+            if isinstance(country, dict): country = country.get("name", "")
+            country_text = str(country).lower()
+            if country_text and not any(x in country_text for x in ("gb", "uk", "united kingdom", "england")):
+                continue
+            name = re.sub(r"\s+", " ", str(item.get("name") or "")).strip()[:240]
+            street = re.sub(r"\s+", " ", str(address.get("streetAddress") or "")).strip()[:240]
+            town = re.sub(r"\s+", " ", str(address.get("addressLocality") or "")).strip()[:120]
+            postcode = re.sub(r"\s+", " ", str(address.get("postalCode") or "")).strip().upper()[:12]
+            # A complete physical UK location is mandatory for automatic publication.
+            if name and street and town and postcode and re.fullmatch(r"[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2}", postcode):
+                return {"name": name, "street": street, "town": town, "postcode": postcode,
+                        "telephone": str(item.get("telephone") or "")[:40] or None,
+                        "email": str(item.get("email") or "")[:254] or None,
+                        "source_type": "schema_org_funeralhome", "country": country_text or "unspecified"}
+    return None
+
 def verify_candidate(url: str):
     parsed, _ = _validate_public_https(url)
     origin = f"https://{parsed.netloc}"
@@ -93,7 +133,8 @@ def verify_candidate(url: str):
     match = re.search(r"<title\b[^>]*>(.*?)</title\s*>", decoded, re.I | re.S)
     title = html.unescape(re.sub(r"<[^>]+>", " ", match.group(1))).strip() if match else None
     title = re.sub(r"\s+", " ", title or "")[:500] or None
+    extracted = _structured_funeral_home_data(decoded)
     return {"status": "reachable", "final_url": url, "http_status": code,
             "content_type": content_type, "page_title": title, "robots_allowed": True,
-            "content_sha256": hashlib.sha256(body).hexdigest(),
-            "detail": "Technical reachability confirmed. This does not establish ownership, identity, reuse rights or permission to publish."}
+            "content_sha256": hashlib.sha256(body).hexdigest(), "extracted_data": extracted,
+            "detail": "Technical reachability confirmed. Structured data was inspected transiently; the page body was discarded."}

@@ -115,7 +115,8 @@ def candidates(limit:int=100, db:Session=Depends(get_db)):
                       "canonical_url":_canonical_url(x.result_url),"domain":x.result_domain,
                       "domain_candidate_count":domain_counts[x.result_domain],"snippet":snippet,
                       "status":x.status,"candidate_type":candidate_type,
-                      "verification": ({"status":latest_verification[x.id].status, "checked_at":latest_verification[x.id].checked_at, "http_status":latest_verification[x.id].http_status, "page_title":latest_verification[x.id].page_title, "final_url":latest_verification[x.id].final_url, "robots_allowed":latest_verification[x.id].robots_allowed, "detail":latest_verification[x.id].detail} if x.id in latest_verification else None),
+                      "verification": ({"status":latest_verification[x.id].status, "checked_at":latest_verification[x.id].checked_at, "http_status":latest_verification[x.id].http_status, "page_title":latest_verification[x.id].page_title, "final_url":latest_verification[x.id].final_url, "robots_allowed":latest_verification[x.id].robots_allowed, "detail":latest_verification[x.id].detail,
+                          "extracted_data":latest_verification[x.id].extracted_data} if x.id in latest_verification else None),
                       "possible_matches":possible_matches[:5],"created_at":x.created_at})
     summary = Counter(item["candidate_type"] for item in items)
     return {"items":items,"summary":{"shown":len(items),"provider_candidates":summary["provider_candidate"],

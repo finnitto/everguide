@@ -136,6 +136,7 @@ class WebsiteVerification(Base):
     robots_allowed: Mapped[bool | None] = mapped_column(Boolean)
     content_sha256: Mapped[str | None] = mapped_column(String(64))
     detail: Mapped[str | None] = mapped_column(Text)
+    extracted_data: Mapped[dict | None] = mapped_column(JSON)
 
 
 class WebsiteVerificationRun(Base):

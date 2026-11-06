@@ -250,7 +250,7 @@ def discover_provider_websites():
 @celery_app.task(name="everguide.website.verify_candidates")
 def verify_website_candidates(limit=50, run_id=None):
     """Run conservative robots-aware technical checks on a bounded candidate batch."""
-    from app.models import WebsiteDiscoveryResult, WebsiteVerification
+    from app.models import WebsiteDiscoveryResult, WebsiteVerification, Provider, Branch, SourceObservation, AuditEvent
     from app.website_checks import verify_candidate
     from app.routers.website_discovery import _classify
     db = SessionLocal()
@@ -277,8 +277,49 @@ def verify_website_candidates(limit=50, run_id=None):
                           "http_status": None, "content_type": None, "page_title": None,
                           "robots_allowed": None, "content_sha256": None,
                           "detail": str(exc)[:1000]}
-            db.add(WebsiteVerification(candidate_id=candidate.id, **result))
+            verification = WebsiteVerification(candidate_id=candidate.id, **result)
+            db.add(verification)
+            db.flush()
             candidate.status = "verification_checked"
+            approval_state = "not_eligible"
+            extracted = result.get("extracted_data")
+            if result.get("status") == "reachable" and extracted:
+                # Conservative duplicate gate: exact normalized business name or postcode collision
+                # sends the candidate to exception review; existing records are never overwritten.
+                norm = re.sub(r"[^a-z0-9]", "", extracted["name"].lower())
+                providers = db.query(Provider).all()
+                name_collision = any(re.sub(r"[^a-z0-9]", "", p.trading_name.lower()) == norm for p in providers)
+                postcode_collision = db.query(Branch).filter(Branch.postcode == extracted["postcode"]).first() is not None
+                domain_collision = db.query(Provider).filter(Provider.website.ilike(f"%{candidate.result_domain}%")).first() is not None
+                if name_collision or postcode_collision or domain_collision:
+                    candidate.status = "auto_approval_held_possible_duplicate"
+                    approval_state = "held_possible_duplicate"
+                else:
+                    provider = Provider(trading_name=extracted["name"], website=candidate.result_url,
+                        provider_type="funeral_director", status="published", verification_status="approved",
+                        notes="Automatically approved from explicit Schema.org FuneralHome structured data. See linked source observation and audit event.")
+                    db.add(provider); db.flush()
+                    branch = Branch(provider_id=provider.id, branch_name=extracted["name"],
+                        address_line_1=extracted["street"], town_city=extracted["town"], postcode=extracted["postcode"],
+                        telephone=extracted.get("telephone"), email=extracted.get("email"), website=candidate.result_url,
+                        status="published")
+                    db.add(branch); db.flush()
+                    db.add(SourceObservation(provider_id=provider.id, branch_id=branch.id,
+                        source_type="provider_website_structured_data", source_name="Provider website Schema.org FuneralHome",
+                        source_url=candidate.result_url, confidence=0.98,
+                        observed_data={"provider_name": extracted["name"], "branch_name": extracted["name"],
+                            "address_line_1": extracted["street"], "town_city": extracted["town"],
+                            "postcode": extracted["postcode"], "telephone": extracted.get("telephone"),
+                            "email": extracted.get("email"), "verification_id": verification.id,
+                            "content_sha256": result.get("content_sha256")},
+                        review_status="accepted", notes="Automatically published under strict new-provider rules; source facts and verification evidence retained."))
+                    db.add(AuditEvent(entity_type="provider", entity_id=provider.id, action="auto_approved_published",
+                        detail={"candidate_id": candidate.id, "verification_id": verification.id,
+                            "source_url": candidate.result_url, "confidence": 0.98,
+                            "rule": "reachable_https_robots_allowed_schema_org_funeralhome_complete_uk_address_no_exact_name_postcode_or_domain_collision"}))
+                    candidate.status = "auto_approved_published"
+                    approval_state = "auto_approved_published"
+            outcomes[approval_state] = outcomes.get(approval_state, 0) + 1
             outcomes[result["status"]] = outcomes.get(result["status"], 0) + 1
             checked += 1
             if run:
