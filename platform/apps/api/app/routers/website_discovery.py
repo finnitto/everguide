@@ -1,19 +1,55 @@
+import re
+import html
+from collections import Counter
+from urllib.parse import urlsplit, urlunsplit
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.config import settings
-from app.models import WebsiteDiscoveryResult
+from app.models import WebsiteDiscoveryResult, Provider
 from app.tasks import discover_provider_websites
 
 router = APIRouter(prefix="/api/v1/website-discovery", tags=["automatic website discovery"])
 
+DIRECTORY_TERMS = ("directory", "funeral guide", "compare funeral", "find a funeral", "reviews", "listings")
+IRRELEVANT_TERMS = ("jobs", "careers", "vacancies", "wikipedia", "news", "facebook", "instagram", "linkedin")
+
+def _clean_text(value):
+    value = html.unescape(value or "")
+    value = re.sub(r"<[^>]*>", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+def _canonical_url(url):
+    parsed = urlsplit(url)
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    path = re.sub(r"/{2,}", "/", parsed.path or "/").rstrip("/") or "/"
+    return urlunsplit(("https", host, path, "", ""))
+
+def _classify(title, snippet, domain):
+    text = f"{title} {snippet} {domain}".lower()
+    if any(term in text for term in IRRELEVANT_TERMS):
+        return "likely_irrelevant"
+    if any(term in text for term in DIRECTORY_TERMS) or domain in {"funeralguide.co.uk", "funeral-directory.co.uk"}:
+        return "directory_or_comparison"
+    if any(term in text for term in ("funeral directors", "funeral director", "funeral services", "undertakers", "funeral care")):
+        return "provider_candidate"
+    return "uncertain"
+
+def _name_tokens(value):
+    ignored = {"limited", "ltd", "plc", "the", "and", "funeral", "directors", "director", "services"}
+    return {x for x in re.findall(r"[a-z0-9]+", (value or "").lower()) if len(x) > 2 and x not in ignored}
+
 @router.get("/status")
 def status(db: Session = Depends(get_db)):
+    configured = bool(settings.brave_search_api_key) if settings.search_provider == "brave" else False
+    rows = db.query(WebsiteDiscoveryResult).all()
+    domains = {x.result_domain for x in rows}
     return {
-        "configured": bool(settings.brave_search_api_key) if settings.search_provider == "brave" else False,
+        "configured": configured,
         "provider": settings.search_provider,
-        "candidates": db.query(WebsiteDiscoveryResult).count(),
-        "message": "Search provider configured." if settings.brave_search_api_key else "Configure credentials for the selected search provider."
+        "candidates": len(rows),
+        "unique_domains": len(domains),
+        "message": "Search provider configured." if configured else "Configure credentials for the selected search provider."
     }
 
 @router.post("/runs", status_code=202)
@@ -26,4 +62,29 @@ def start_run():
 @router.get("/candidates")
 def candidates(limit:int=100, db:Session=Depends(get_db)):
     rows = db.query(WebsiteDiscoveryResult).order_by(WebsiteDiscoveryResult.created_at.desc()).limit(min(max(limit,1),500)).all()
-    return {"items":[{"id":x.id,"region":x.query_region,"title":x.result_title,"url":x.result_url,"domain":x.result_domain,"snippet":x.result_snippet,"status":x.status,"created_at":x.created_at} for x in rows]}
+    all_rows = db.query(WebsiteDiscoveryResult).all()
+    domain_counts = Counter(x.result_domain for x in all_rows)
+    providers = db.query(Provider).all()
+    items = []
+    for x in rows:
+        title = _clean_text(x.result_title)
+        snippet = _clean_text(x.result_snippet)[:1200]
+        candidate_type = _classify(title, snippet, x.result_domain)
+        tokens = _name_tokens(title)
+        possible_matches = []
+        if candidate_type == "provider_candidate":
+            for provider in providers:
+                provider_tokens = _name_tokens(provider.trading_name)
+                overlap = tokens & provider_tokens
+                if len(overlap) >= 2 or (len(provider_tokens) == 1 and provider_tokens <= tokens):
+                    possible_matches.append({"provider_id": provider.id, "provider_name": provider.trading_name,
+                                             "shared_terms": sorted(overlap)})
+        items.append({"id":x.id,"region":x.query_region,"title":title,"url":x.result_url,
+                      "canonical_url":_canonical_url(x.result_url),"domain":x.result_domain,
+                      "domain_candidate_count":domain_counts[x.result_domain],"snippet":snippet,
+                      "status":x.status,"candidate_type":candidate_type,
+                      "possible_matches":possible_matches[:5],"created_at":x.created_at})
+    summary = Counter(item["candidate_type"] for item in items)
+    return {"items":items,"summary":{"shown":len(items),"provider_candidates":summary["provider_candidate"],
+            "directories":summary["directory_or_comparison"],"uncertain":summary["uncertain"],
+            "likely_irrelevant":summary["likely_irrelevant"],"unique_domains_in_database":len(domain_counts)}}

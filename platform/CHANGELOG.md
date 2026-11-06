@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0 — Website candidate triage and provider-name matching
+
+- Cleans HTML fragments and entities from search-result titles and snippets before display.
+- Classifies results into likely provider candidates, directory/comparison results, uncertain results and likely irrelevant results using transparent heuristic signals.
+- Normalises candidate URLs and reports repeated results from the same domain to support domain-level deduplication.
+- Suggests possible matches against existing provider trading names using shared name terms; suggestions are informational only.
+- Adds candidate category and domain metrics to the admin view.
+- Does not fetch candidate websites, assert official ownership, extract business facts, create or alter providers, or publish records.
+- No database migration; all classifications and match suggestions are computed from existing records.
+
 ## 0.6.2
 - Fixed a malformed literal newline in the admin page state declarations that prevented the Next.js production build.
 - No database schema changes.
