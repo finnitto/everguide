@@ -59,10 +59,24 @@ def _get(url: str, limit: int = 4096):
             raise ValueError("Response exceeded the configured safety size limit.")
         return response.status, response.headers, body, None
 
-def _structured_funeral_home_data(decoded: str):
-    """Extract a minimal Schema.org FuneralHome record transiently; never retain page HTML."""
+def _extract_funeral_provider_data(decoded: str):
+    """Extract a small set of factual business fields from permitted page HTML.
+
+    JSON-LD is treated as one signal, not the sole gate. Generic LocalBusiness and
+    Organization entities are accepted only when the page itself contains explicit
+    funeral-sector context. Raw page HTML is never returned or persisted.
+    """
     scripts = re.findall(r'<script\b[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script\s*>', decoded, re.I | re.S)
-    for raw in scripts[:20]:
+    visible = html.unescape(re.sub(r'<(script|style|noscript)\b[^>]*>.*?</\1\s*>', ' ', decoded, flags=re.I | re.S))
+    visible = re.sub(r'<[^>]+>', ' ', visible)
+    visible = re.sub(r'\s+', ' ', visible).strip()
+    context = (visible + ' ' + ' '.join(re.findall(r'<title\b[^>]*>(.*?)</title\s*>', decoded, re.I | re.S))).lower()
+    funeral_terms = ('funeral director', 'funeral directors', 'funeral service', 'funeral services',
+                     'funeral home', 'funeral homes', 'undertaker', 'undertakers', 'funeralcare',
+                     'funeral care', 'cremation service')
+    context_hits = [term for term in funeral_terms if term in context]
+    candidates = []
+    for raw in scripts[:30]:
         try:
             payload = json.loads(html.unescape(raw.strip()))
         except Exception:
@@ -72,31 +86,54 @@ def _structured_funeral_home_data(decoded: str):
             item = stack.pop(0)
             if not isinstance(item, dict):
                 continue
-            graph = item.get("@graph")
-            if isinstance(graph, list): stack.extend(graph[:100])
-            types = item.get("@type", [])
-            types = [types] if isinstance(types, str) else types
-            if not any(str(t).lower().endswith("funeralhome") for t in types):
+            graph = item.get('@graph')
+            if isinstance(graph, list):
+                stack.extend(graph[:150])
+            typ = item.get('@type', [])
+            types = [typ] if isinstance(typ, str) else typ if isinstance(typ, list) else []
+            type_names = [str(t).rsplit('/', 1)[-1].lower() for t in types]
+            if not any(t in ('funeralhome', 'localbusiness', 'organization', 'professionalservice') for t in type_names):
                 continue
-            address = item.get("address") or {}
+            name = re.sub(r'\s+', ' ', str(item.get('name') or '')).strip()[:240]
+            description = str(item.get('description') or '')[:1000]
+            local_context = (name + ' ' + description).lower()
+            hits = list(context_hits)
+            hits.extend(term for term in funeral_terms if term in local_context and term not in hits)
+            explicit_funeral_type = 'funeralhome' in type_names
+            if not explicit_funeral_type and not hits:
+                continue
+            address = item.get('address') or {}
             if isinstance(address, list): address = address[0] if address else {}
-            if not isinstance(address, dict): continue
-            country = address.get("addressCountry") or ""
-            if isinstance(country, dict): country = country.get("name", "")
+            if not isinstance(address, dict): address = {}
+            country = address.get('addressCountry') or ''
+            if isinstance(country, dict): country = country.get('name', '')
             country_text = str(country).lower()
-            if country_text and not any(x in country_text for x in ("gb", "uk", "united kingdom", "england")):
+            if country_text and not any(x in country_text for x in ('gb', 'uk', 'united kingdom', 'england')):
                 continue
-            name = re.sub(r"\s+", " ", str(item.get("name") or "")).strip()[:240]
-            street = re.sub(r"\s+", " ", str(address.get("streetAddress") or "")).strip()[:240]
-            town = re.sub(r"\s+", " ", str(address.get("addressLocality") or "")).strip()[:120]
-            postcode = re.sub(r"\s+", " ", str(address.get("postalCode") or "")).strip().upper()[:12]
-            # A complete physical UK location is mandatory for automatic publication.
-            if name and street and town and postcode and re.fullmatch(r"[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2}", postcode):
-                return {"name": name, "street": street, "town": town, "postcode": postcode,
-                        "telephone": str(item.get("telephone") or "")[:40] or None,
-                        "email": str(item.get("email") or "")[:254] or None,
-                        "source_type": "schema_org_funeralhome", "country": country_text or "unspecified"}
-    return None
+            street = re.sub(r'\s+', ' ', str(address.get('streetAddress') or '')).strip()[:240]
+            town = re.sub(r'\s+', ' ', str(address.get('addressLocality') or '')).strip()[:120]
+            postcode = re.sub(r'\s+', ' ', str(address.get('postalCode') or '')).strip().upper()[:12]
+            postcode_ok = bool(re.fullmatch(r'[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2}', postcode))
+            telephone = str(item.get('telephone') or '')[:40] or None
+            email = str(item.get('email') or '')[:254] or None
+            website = str(item.get('url') or '')[:1000] or None
+            # Strong provider identity can be approved without a complete branch address;
+            # the branch is created only when a complete UK address is available.
+            if name and (explicit_funeral_type or len(hits) >= 1):
+                confidence = 0.96 if explicit_funeral_type and street and town and postcode_ok else 0.90 if explicit_funeral_type else 0.86 if street and town and postcode_ok else 0.82
+                candidates.append({"name": name, "street": street or None, "town": town or None,
+                    "postcode": postcode if postcode_ok else None, "telephone": telephone, "email": email,
+                    "website": website, "source_type": "schema_org_" + (type_names[0] if type_names else "business"),
+                    "country": country_text or "unspecified", "confidence": confidence,
+                    "funeral_signals": sorted(set(hits)), "has_complete_branch_address": bool(street and town and postcode_ok)})
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda x: (x['confidence'], bool(x['telephone']), bool(x['email'])), reverse=True)[0]
+
+
+def _structured_funeral_home_data(decoded: str):
+    """Backward-compatible name for the expanded factual provider extractor."""
+    return _extract_funeral_provider_data(decoded)
 
 def verify_candidate(url: str):
     parsed, _ = _validate_public_https(url)
@@ -133,8 +170,8 @@ def verify_candidate(url: str):
     match = re.search(r"<title\b[^>]*>(.*?)</title\s*>", decoded, re.I | re.S)
     title = html.unescape(re.sub(r"<[^>]+>", " ", match.group(1))).strip() if match else None
     title = re.sub(r"\s+", " ", title or "")[:500] or None
-    extracted = _structured_funeral_home_data(decoded)
+    extracted = _extract_funeral_provider_data(decoded)
     return {"status": "reachable", "final_url": url, "http_status": code,
             "content_type": content_type, "page_title": title, "robots_allowed": True,
             "content_sha256": hashlib.sha256(body).hexdigest(), "extracted_data": extracted,
-            "detail": "Technical reachability confirmed. Structured data was inspected transiently; the page body was discarded."}
+            "detail": "Technical reachability confirmed. Business identity signals were inspected transiently; the page body was discarded."}

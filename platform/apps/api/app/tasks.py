@@ -263,9 +263,12 @@ def verify_website_candidates(limit=50, run_id=None):
             run = db.query(WebsiteVerificationRun).filter(WebsiteVerificationRun.id == run_id).first()
             if run:
                 run.status = "running"; run.started_at = datetime.now(timezone.utc); db.commit()
+        # Include both never-checked candidates and candidates checked by earlier
+        # releases. v1.1 broadens extraction, so the existing backlog must be
+        # reassessed under the new rules rather than silently skipped.
         pool = (db.query(WebsiteDiscoveryResult)
-                .filter(WebsiteDiscoveryResult.status == "candidate")
-                .order_by(WebsiteDiscoveryResult.id.asc()).limit(500).all())
+                .filter(WebsiteDiscoveryResult.status.in_(["candidate", "verification_checked"]))
+                .order_by(WebsiteDiscoveryResult.id.asc()).limit(1000).all())
         rows = [row for row in pool if _classify(row.result_title, row.result_snippet or "", row.result_domain) == "provider_candidate"][:max(1, min(int(limit), 50))]
         if run:
             run.total = len(rows); db.commit()
@@ -289,36 +292,50 @@ def verify_website_candidates(limit=50, run_id=None):
                 norm = re.sub(r"[^a-z0-9]", "", extracted["name"].lower())
                 providers = db.query(Provider).all()
                 name_collision = any(re.sub(r"[^a-z0-9]", "", p.trading_name.lower()) == norm for p in providers)
-                postcode_collision = db.query(Branch).filter(Branch.postcode == extracted["postcode"]).first() is not None
+                postcode_collision = bool(extracted.get("postcode") and db.query(Branch).filter(Branch.postcode == extracted["postcode"]).first())
                 domain_collision = db.query(Provider).filter(Provider.website.ilike(f"%{candidate.result_domain}%")).first() is not None
                 if name_collision or postcode_collision or domain_collision:
                     candidate.status = "auto_approval_held_possible_duplicate"
                     approval_state = "held_possible_duplicate"
                 else:
+                    confidence = float(extracted.get("confidence", 0.82))
                     provider = Provider(trading_name=extracted["name"], website=candidate.result_url,
                         provider_type="funeral_director", status="published", verification_status="approved",
-                        notes="Automatically approved from explicit Schema.org FuneralHome structured data. See linked source observation and audit event.")
+                        notes="Automatically approved using corroborated funeral-sector website identity signals. Branch details may be enriched when independently evidenced. See source observation and audit event.")
                     db.add(provider); db.flush()
-                    branch = Branch(provider_id=provider.id, branch_name=extracted["name"],
-                        address_line_1=extracted["street"], town_city=extracted["town"], postcode=extracted["postcode"],
-                        telephone=extracted.get("telephone"), email=extracted.get("email"), website=candidate.result_url,
-                        status="published")
-                    db.add(branch); db.flush()
-                    db.add(SourceObservation(provider_id=provider.id, branch_id=branch.id,
-                        source_type="provider_website_structured_data", source_name="Provider website Schema.org FuneralHome",
-                        source_url=candidate.result_url, confidence=0.98,
-                        observed_data={"provider_name": extracted["name"], "branch_name": extracted["name"],
-                            "address_line_1": extracted["street"], "town_city": extracted["town"],
-                            "postcode": extracted["postcode"], "telephone": extracted.get("telephone"),
-                            "email": extracted.get("email"), "verification_id": verification.id,
-                            "content_sha256": result.get("content_sha256")},
-                        review_status="accepted", notes="Automatically published under strict new-provider rules; source facts and verification evidence retained."))
+                    branch = None
+                    if extracted.get("has_complete_branch_address"):
+                        branch = Branch(provider_id=provider.id, branch_name=extracted["name"],
+                            address_line_1=extracted["street"], town_city=extracted["town"], postcode=extracted["postcode"],
+                            telephone=extracted.get("telephone"), email=extracted.get("email"), website=candidate.result_url,
+                            status="published")
+                        db.add(branch); db.flush()
+                    db.add(SourceObservation(provider_id=provider.id, branch_id=branch.id if branch else None,
+                        source_type="provider_website_business_identity", source_name="Provider website business identity evidence",
+                        source_url=candidate.result_url, confidence=confidence,
+                        observed_data={"provider_name": extracted["name"], "branch_name": extracted["name"] if branch else None,
+                            "address_line_1": extracted.get("street"), "town_city": extracted.get("town"),
+                            "postcode": extracted.get("postcode"), "telephone": extracted.get("telephone"),
+                            "email": extracted.get("email"), "website": candidate.result_url,
+                            "funeral_signals": extracted.get("funeral_signals", []), "verification_id": verification.id,
+                            "content_sha256": result.get("content_sha256"), "branch_created": bool(branch)},
+                        review_status="accepted", notes="Automatically published as a new provider; only extracted factual fields retained. Branch created only when a complete UK address was evidenced."))
                     db.add(AuditEvent(entity_type="provider", entity_id=provider.id, action="auto_approved_published",
                         detail={"candidate_id": candidate.id, "verification_id": verification.id,
-                            "source_url": candidate.result_url, "confidence": 0.98,
-                            "rule": "reachable_https_robots_allowed_schema_org_funeralhome_complete_uk_address_no_exact_name_postcode_or_domain_collision"}))
+                            "source_url": candidate.result_url, "confidence": confidence,
+                            "branch_created": bool(branch), "rule": "reachable_https_robots_allowed_funeral_business_identity_no_name_postcode_or_domain_collision"}))
                     candidate.status = "auto_approved_published"
                     approval_state = "auto_approved_published"
+            # A candidate that did not qualify under the expanded rules is marked
+            # as reassessed so future batches do not loop over the same negative
+            # result. Duplicate holds and published providers retain their explicit
+            # terminal statuses. Verification evidence remains in its own table.
+            if approval_state == "not_eligible":
+                candidate.status = "reassessed_not_eligible"
+                db.add(AuditEvent(entity_type="website_candidate", entity_id=candidate.id,
+                    action="candidate_reassessed_not_eligible",
+                    detail={"verification_id": verification.id, "source_url": candidate.result_url,
+                            "reason": "no_sufficient_provider_identity_evidence_under_v1_1_rules"}))
             outcomes[approval_state] = outcomes.get(approval_state, 0) + 1
             outcomes[result["status"]] = outcomes.get(result["status"], 0) + 1
             checked += 1
@@ -332,8 +349,22 @@ def verify_website_candidates(limit=50, run_id=None):
         db.commit()
         return {"status": "completed", "checked": checked, "outcomes": outcomes}
     except Exception as exc:
-        if run:
-            run.status = "failed"; run.error_message = str(exc)[:1000]; run.completed_at = datetime.now(timezone.utc); db.commit()
+        # A failed flush/commit leaves the SQLAlchemy session unusable until rollback.
+        # Roll back first, then reload the batch row in a clean transaction so the
+        # dashboard can reliably show the failure instead of masking it with
+        # PendingRollbackError. Previously committed candidate checks remain intact.
+        db.rollback()
+        if run_id is not None:
+            try:
+                from app.models import WebsiteVerificationRun
+                failed_run = db.query(WebsiteVerificationRun).filter(WebsiteVerificationRun.id == run_id).first()
+                if failed_run:
+                    failed_run.status = "failed"
+                    failed_run.error_message = str(exc)[:1000]
+                    failed_run.completed_at = datetime.now(timezone.utc)
+                    db.commit()
+            except Exception:
+                db.rollback()
         raise
     finally:
         db.close()

@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.1.1
+- Adds backlog reassessment to website verification: previously checked candidates from earlier releases are reprocessed under the expanded v1.1 identity-extraction rules, in batches of up to 50.
+- Includes both never-checked and previously checked candidates; already published providers and possible-duplicate holds are excluded.
+- Marks candidates that still lack sufficient provider identity evidence as reassessed, with an audit event, preventing repeated processing of the same negative result.
+- Adds a dashboard count for candidates awaiting initial checks or reassessment and clarifies the verification action.
+- No database migration required; existing verification evidence, provider records, branches and approval history are preserved.
+
+## 1.1.0
+- Broadened provider identity extraction beyond Schema.org `FuneralHome` to include `LocalBusiness`, `Organization`, and `ProfessionalService` when explicit funeral-sector language corroborates the entity.
+- Supports automatic publication of a clearly identified new provider even when no complete branch address is available; a branch is created only when a complete UK street address, town and postcode are evidenced.
+- Retains duplicate holds for exact provider-name, existing postcode and website-domain collisions; existing records are never overwritten.
+- Records extracted factual fields, confidence, funeral-sector signals, verification reference and content digest; fetched page bodies remain discarded.
+- No database migration required. Pricing remains outside automatic approval.
+
+## 1.0.4
+- Fixed stale verification recovery API failure by importing the audit model used when recording interrupted batches.
+- Recovers old queued/running batches when the Celery worker responds but no longer reports their task; also handles batches whose task ID was not persisted.
+- Keeps recovery conservative: if worker inspection is unavailable, active batches are not changed.
+- Preserves prior verification checks, provider records, branches and approval audit history.
+- No database migration required.
+
+# Changelog
+
+## 1.0.3
+- Recover abandoned website-verification batches when a responding Celery worker no longer reports the associated task as active, reserved, or scheduled.
+- Preserve previously committed verification checks and approval records when recovering an interrupted batch.
+- Improve the web container health check to probe the admin route and report HTTP/transport failures.
+- No database migration required.
+
+# Changelog
+
+## 1.0.2
+- Fixed migration startup failure: shortened the Alembic revision identifier to fit PostgreSQL’s existing 32-character `alembic_version.version_num` column. The migration filename and schema change remain the same.
+- Keeps the v1.0.1 status-column widening and transaction rollback fixes.
+
+## 1.0.1
+- Fixed website candidate status truncation: widened `website_discovery_results.status` from 30 to 80 characters so duplicate-hold and automatic-approval states can be persisted.
+- Fixed verification task error handling: rolls back a failed SQLAlchemy transaction before recording the batch as failed, preventing a secondary `PendingRollbackError` from hiding the original error.
+- Previously committed checks remain intact; no provider or branch data is reset or overwritten.
+- Adds migration `0009_expand_status` (file: `0009_expand_website_candidate_status.py`).
+
+
 ## 1.0.0
 - Added conservative automatic approval and publication for genuinely new providers only when a reachable HTTPS website permits the check and explicitly publishes complete Schema.org FuneralHome identity and UK branch address data.
 - Stores structured facts and verification provenance; discards fetched page bodies.

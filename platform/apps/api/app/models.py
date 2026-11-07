@@ -120,7 +120,7 @@ class WebsiteDiscoveryResult(Base):
     result_domain: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     result_snippet: Mapped[str | None] = mapped_column(Text)
     source_provider: Mapped[str] = mapped_column(String(40), default="brave_search")
-    status: Mapped[str] = mapped_column(String(30), default="candidate", index=True)
+    status: Mapped[str] = mapped_column(String(80), default="candidate", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 class WebsiteVerification(Base):

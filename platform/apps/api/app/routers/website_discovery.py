@@ -1,13 +1,13 @@
 import re
 import html
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from urllib.parse import urlsplit, urlunsplit
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.config import settings
-from app.models import WebsiteDiscoveryResult, WebsiteVerification, WebsiteVerificationRun, Provider
+from app.models import AuditEvent, WebsiteDiscoveryResult, WebsiteVerification, WebsiteVerificationRun, Provider
 from app.tasks import discover_provider_websites, verify_website_candidates
 
 router = APIRouter(prefix="/api/v1/website-discovery", tags=["automatic website discovery"])
@@ -40,11 +40,80 @@ def _name_tokens(value):
     ignored = {"limited", "ltd", "plc", "the", "and", "funeral", "directors", "director", "services"}
     return {x for x in re.findall(r"[a-z0-9]+", (value or "").lower()) if len(x) > 2 and x not in ignored}
 
+def _recover_stale_verification_runs(db: Session):
+    """Mark abandoned batches failed only when a live worker no longer reports their task.
+
+    This preserves active work and its committed candidate checks while allowing the
+    dashboard to recover after a worker/container restart or an unhandled task crash.
+    """
+    from app.celery_app import celery_app
+    from app.models import WebsiteVerificationRun
+
+    try:
+        inspector = celery_app.control.inspect(timeout=1.5)
+        snapshots = [inspector.active(), inspector.reserved(), inspector.scheduled()]
+        if all(snapshot is None for snapshot in snapshots):
+            # No reliable worker response: do not make assumptions about queued work.
+            return 0
+        known_task_ids = set()
+        for snapshot in snapshots:
+            if not snapshot:
+                continue
+            for tasks in snapshot.values():
+                for item in tasks or []:
+                    request = item.get("request", item)
+                    task_id = request.get("id")
+                    if task_id:
+                        known_task_ids.add(task_id)
+    except Exception:
+        # Monitoring must never prevent the admin API from serving its dashboard.
+        return 0
+
+    now = datetime.now(timezone.utc)
+    recovered = 0
+    active_runs = (db.query(WebsiteVerificationRun)
+                   .filter(WebsiteVerificationRun.status.in_(["queued", "running"]))
+                   .all())
+    for run in active_runs:
+        if run.celery_task_id and run.celery_task_id in known_task_ids:
+            continue
+        reference_time = run.started_at if run.status == "running" and run.started_at else run.created_at
+        if reference_time is None:
+            continue
+        if reference_time.tzinfo is None:
+            reference_time = reference_time.replace(tzinfo=timezone.utc)
+        age_seconds = (now - reference_time).total_seconds()
+        threshold = 180 if run.status == "running" else 600
+        if age_seconds < threshold:
+            continue
+        run.status = "failed"
+        run.error_message = (
+            "Verification task is no longer reported by the Celery worker. "
+            "The batch was marked interrupted; previously committed checks and approvals are preserved."
+        )
+        run.completed_at = now
+        db.add(AuditEvent(entity_type="website_verification", entity_id=run.id,
+                          action="batch_recovered_as_interrupted",
+                          detail={"task_id": run.celery_task_id, "checked": run.checked,
+                                  "reason": "task_missing_from_worker_active_reserved_and_scheduled"}))
+        recovered += 1
+    if recovered:
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+    return recovered
+
+
 @router.get("/status")
 def status(db: Session = Depends(get_db)):
     configured = bool(settings.brave_search_api_key) if settings.search_provider == "brave" else False
     rows = db.query(WebsiteDiscoveryResult).all()
     verification_count = db.query(WebsiteVerification).count()
+    backlog_count = db.query(WebsiteDiscoveryResult).filter(
+        WebsiteDiscoveryResult.status.in_(["candidate", "verification_checked"])
+    ).count()
     domains = {x.result_domain for x in rows}
     return {
         "configured": configured,
@@ -52,6 +121,7 @@ def status(db: Session = Depends(get_db)):
         "candidates": len(rows),
         "unique_domains": len(domains),
         "verification_checks": verification_count,
+        "backlog_reassessment_candidates": backlog_count,
         "message": "Search provider configured." if configured else "Configure credentials for the selected search provider."
     }
 
@@ -64,6 +134,7 @@ def start_run():
 
 @router.post("/verification-runs", status_code=202)
 def start_verification_run(db: Session = Depends(get_db)):
+    _recover_stale_verification_runs(db)
     active = db.query(WebsiteVerificationRun).filter(WebsiteVerificationRun.status.in_(["queued", "running"])).order_by(WebsiteVerificationRun.id.desc()).first()
     if active:
         return {"status": active.status, "run_id": active.id, "task_id": active.celery_task_id,
@@ -81,6 +152,7 @@ def start_verification_run(db: Session = Depends(get_db)):
 
 @router.get("/verification-runs")
 def verification_runs(limit: int = 10, db: Session = Depends(get_db)):
+    _recover_stale_verification_runs(db)
     rows = db.query(WebsiteVerificationRun).order_by(WebsiteVerificationRun.id.desc()).limit(min(max(limit,1),50)).all()
     return {"items":[{"id":r.id,"status":r.status,"requested_limit":r.requested_limit,"total":r.total,
         "checked":r.checked,"outcomes":r.outcomes or {},"error_message":r.error_message,

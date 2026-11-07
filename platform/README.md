@@ -55,3 +55,16 @@ See `docs/SOURCE-PERMISSIONS.md`. Sources are pending by default; only explicitl
 
 ## Automatic website discovery (v0.6.0)
 Configure `BRAVE_SEARCH_API_KEY` in `.env` to enable independent England regional website search. See `docs/WEBSITE-DISCOVERY.md`. Choose a search plan whose terms permit storing result metadata.
+
+
+## v1.0.3
+Includes interrupted verification batch recovery and a more diagnostic web health check. No database migration is required.
+
+
+## v1.1.1 — Existing candidate backlog reassessment
+
+Website verification batches now include previously checked candidates from earlier releases so the broader v1.1 extraction rules can reassess them. Each batch remains capped at 50. Previously published providers and possible-duplicate holds are not reprocessed. Candidates still lacking sufficient evidence are marked reassessed and audited to prevent repeated negative checks. No database migration is required.
+
+## v1.1.0 — Broader automatic provider approval
+
+This release broadens website identity extraction. It accepts Schema.org `FuneralHome` directly and accepts `LocalBusiness`, `Organization`, or `ProfessionalService` only when the page contains explicit funeral-sector language. A new provider may be published when identity is sufficiently clear even if branch address details are incomplete; a branch is created only when a complete UK street address, town and postcode are evidenced. Exact name, postcode and domain collisions remain held for duplicate review. Existing records are not overwritten. Pricing is not extracted or approved. No database migration is required.
