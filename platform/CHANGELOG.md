@@ -1,3 +1,13 @@
+## 1.5.0 — Existing provider quality assessment and source reconciliation
+
+- Adds an idempotent bulk assessment endpoint for existing provider records using only evidence already retained in Everguide.
+- Separates evidence-supported records, records needing review, and records with insufficient retained evidence. Insufficient evidence is not treated as proof that a provider is invalid.
+- Writes an audit event for each newly assessed provider; existing records are never automatically unpublished, deleted or merged.
+- Adds an admin action to assess all currently unassessed provider records.
+- Adds source-observation counts grouped by source type to make the pending observation backlog more transparent. Google Places Place ID observations remain pending and are not enriched from restricted Places content.
+- No database migration required.
+- County enrichment is not automated in this release; postcode values are retained for a separately controlled authoritative lookup.
+
 # Changelog
 
 ## 1.4.0 — Provider quality safeguards

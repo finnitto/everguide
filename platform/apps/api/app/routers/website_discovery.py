@@ -4,6 +4,7 @@ from collections import Counter
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlsplit, urlunsplit
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.config import settings
@@ -160,6 +161,53 @@ def verification_runs(limit: int = 10, db: Session = Depends(get_db)):
         "task_id":r.celery_task_id} for r in rows]}
 
 
+def _provider_quality_assessment(provider: Provider, observations: list[SourceObservation]):
+    """Assess only evidence already retained by Everguide; never fetch or infer facts."""
+    name = (provider.trading_name or "").strip().lower()
+    domain = (urlsplit(provider.website or "").hostname or "").lower().removeprefix("www.")
+    generic_names = {"admin", "administrator", "test", "unknown", "localfuneral", "funeral directors", "home", "welcome"}
+    exclusion_terms = ("cemetery", "cemeteries", "crematorium", "council", "funeralguide", "funeral-directory", "localfuneral", "compare-funeral", "directory")
+    if name in generic_names or any(term in name or term in domain for term in exclusion_terms):
+        return "needs_review", "Name or website contains a generic, directory, civic or cemetery signal; manual identity check required."
+    domain_observations = []
+    for obs in observations:
+        obs_domain = (urlsplit(obs.source_url or "").hostname or "").lower().removeprefix("www.")
+        data = obs.observed_data or {}
+        signals = data.get("funeral_signals") or []
+        observed_name = re.sub(r"[^a-z0-9]", "", str(data.get("provider_name") or "").lower())
+        provider_name = re.sub(r"[^a-z0-9]", "", name)
+        if obs.review_status == "accepted" and domain and obs_domain == domain and signals and observed_name == provider_name:
+            domain_observations.append(obs)
+    if domain_observations:
+        return "confirmed", "Existing accepted provider-website observation matches the provider name and domain and records funeral-sector signals."
+    return "insufficient_evidence", "Existing retained records do not contain enough independent evidence to confirm provider identity; no external facts were inferred."
+
+
+@router.post("/quality-assessments", status_code=200)
+def assess_existing_provider_quality(db: Session = Depends(get_db)):
+    """Idempotently assess existing provider records from retained evidence only."""
+    providers = db.query(Provider).order_by(Provider.id.asc()).all()
+    observations = db.query(SourceObservation).all()
+    by_provider = {}
+    for observation in observations:
+        if observation.provider_id is not None:
+            by_provider.setdefault(observation.provider_id, []).append(observation)
+    assessed = {"confirmed": 0, "needs_review": 0, "insufficient_evidence": 0, "already_assessed": 0}
+    now = datetime.now(timezone.utc)
+    for provider in providers:
+        if provider.quality_status != "unassessed":
+            assessed["already_assessed"] += 1
+            continue
+        status, reason = _provider_quality_assessment(provider, by_provider.get(provider.id, []))
+        provider.quality_status = status
+        db.add(AuditEvent(entity_type="provider", entity_id=provider.id, action="provider_quality_assessed",
+            detail={"quality_status": status, "reason": reason, "assessment_basis": "retained_everguide_records_only", "assessed_at": now.isoformat()}))
+        assessed[status] += 1
+    db.commit()
+    return {"status": "completed", "total_providers": len(providers), "results": assessed,
+            "message": "Existing records assessed using retained Everguide evidence only. Insufficient evidence is not treated as proof that a provider is invalid."}
+
+
 @router.get("/analytics")
 def provider_analytics(db: Session = Depends(get_db)):
     """Distinct provider, branch, geography and duplicate-quality reporting."""
@@ -227,19 +275,25 @@ def provider_analytics(db: Session = Depends(get_db)):
                      "published_without_county": sum(not (b.county or "").strip() for b in published_branches),
                      "published_without_postcode": sum(not (b.postcode or "").strip() for b in published_branches)},
         "quality": {"needs_review": sum(p.quality_status == "needs_review" for p in providers),
+                    "confirmed": sum(p.quality_status == "confirmed" for p in providers),
+                    "insufficient_evidence": sum(p.quality_status == "insufficient_evidence" for p in providers),
                     "unassessed": sum(p.quality_status == "unassessed" for p in providers),
                     "paused_candidate_count": db.query(WebsiteDiscoveryResult).filter(WebsiteDiscoveryResult.status == "held_quality_review").count(),
                     "paused_candidates": paused_candidate_rows,
                     "flagged_providers": [{"id": p.id, "name": p.trading_name, "website": p.website,
                         "status": p.status, "quality_status": p.quality_status, "verification_status": p.verification_status}
-                        for p in providers if p.quality_status == "needs_review"][:100]},
+                        for p in providers if p.quality_status == "needs_review"][:100],
+                    "assessed_providers": [{"id": p.id, "name": p.trading_name, "website": p.website,
+                        "status": p.status, "quality_status": p.quality_status}
+                        for p in providers if p.quality_status != "unassessed"][:200]},
         "geography": region_rows,
         "duplicate_checks": {"groups_flagged": len(duplicate_groups), "groups": duplicate_groups[:100]},
         "auto_approval_audit": [{"provider_id": e.entity_id, "provider_name": next((p.trading_name for p in providers if p.id == e.entity_id), None),
             "created_at": e.created_at, "detail": e.detail or {}} for e in recent],
         "source_observations": {"total": db.query(SourceObservation).count(),
             "accepted": db.query(SourceObservation).filter(SourceObservation.review_status == "accepted").count(),
-            "pending": db.query(SourceObservation).filter(SourceObservation.review_status == "pending").count()}
+            "pending": db.query(SourceObservation).filter(SourceObservation.review_status == "pending").count(),
+            "by_source_type": [{"source_type": kind, "count": count} for kind, count in db.query(SourceObservation.source_type, func.count(SourceObservation.id)).group_by(SourceObservation.source_type).order_by(func.count(SourceObservation.id).desc()).all()] }
     }
 
 @router.get("/candidates")
