@@ -14,6 +14,7 @@ class Provider(Base):
     provider_type: Mapped[str] = mapped_column(String(40), default="funeral_director")
     status: Mapped[str] = mapped_column(String(30), default="draft", index=True)
     verification_status: Mapped[str] = mapped_column(String(30), default="unverified")
+    quality_status: Mapped[str] = mapped_column(String(24), default="unassessed", index=True)
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)

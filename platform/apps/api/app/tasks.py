@@ -247,6 +247,33 @@ def discover_provider_websites():
     finally:
         db.close()
 
+@celery_app.task(name="everguide.automation.weekly_discovery_cycle")
+def weekly_discovery_cycle():
+    """Run regional web discovery, then queue one bounded verification batch."""
+    from celery import chain
+    return chain(discover_provider_websites.s(), enqueue_scheduled_verification.s()).apply_async().id
+
+
+@celery_app.task(name="everguide.automation.enqueue_scheduled_verification")
+def enqueue_scheduled_verification(discovery_result):
+    from app.models import WebsiteVerificationRun
+    db = SessionLocal()
+    try:
+        active = db.query(WebsiteVerificationRun).filter(WebsiteVerificationRun.status.in_(["queued", "running"])).first()
+        if active:
+            return {"status": "skipped_active_verification", "run_id": active.id, "discovery": discovery_result}
+        run = WebsiteVerificationRun(status="queued", requested_limit=250, total=0, checked=0, outcomes={})
+        db.add(run); db.commit(); db.refresh(run)
+        task = verify_website_candidates.delay(limit=250, run_id=run.id)
+        run.celery_task_id = task.id; db.commit()
+        return {"status": "verification_queued", "run_id": run.id, "task_id": task.id, "discovery": discovery_result}
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 @celery_app.task(name="everguide.website.verify_candidates")
 def verify_website_candidates(limit=50, run_id=None):
     """Run conservative robots-aware technical checks on a bounded candidate batch."""
@@ -269,7 +296,7 @@ def verify_website_candidates(limit=50, run_id=None):
         pool = (db.query(WebsiteDiscoveryResult)
                 .filter(WebsiteDiscoveryResult.status.in_(["candidate", "verification_checked"]))
                 .order_by(WebsiteDiscoveryResult.id.asc()).limit(1000).all())
-        rows = [row for row in pool if _classify(row.result_title, row.result_snippet or "", row.result_domain) == "provider_candidate"][:max(1, min(int(limit), 50))]
+        rows = [row for row in pool if _classify(row.result_title, row.result_snippet or "", row.result_domain) == "provider_candidate"][:max(1, min(int(limit), 250))]
         if run:
             run.total = len(rows); db.commit()
         for candidate in rows:
@@ -297,11 +324,18 @@ def verify_website_candidates(limit=50, run_id=None):
                 if name_collision or postcode_collision or domain_collision:
                     candidate.status = "auto_approval_held_possible_duplicate"
                     approval_state = "held_possible_duplicate"
+                elif not settings.auto_approve_providers:
+                    candidate.status = "held_quality_review"
+                    approval_state = "held_quality_review"
+                    db.add(AuditEvent(entity_type="website_candidate", entity_id=candidate.id, action="automatic_publication_paused_quality_gate",
+                        detail={"verification_id": verification.id, "source_url": candidate.result_url,
+                            "extracted_name": extracted.get("name"), "confidence": extracted.get("confidence"),
+                            "reason": "v1.4 quality safeguard: automatic publication paused pending quality review"}))
                 else:
                     confidence = float(extracted.get("confidence", 0.82))
                     provider = Provider(trading_name=extracted["name"], website=candidate.result_url,
-                        provider_type="funeral_director", status="published", verification_status="approved",
-                        notes="Automatically approved using corroborated funeral-sector website identity signals. Branch details may be enriched when independently evidenced. See source observation and audit event.")
+                        provider_type="funeral_director", status="published", verification_status="approved", quality_status="unassessed",
+                        notes="Automatically approved using corroborated funeral-sector website identity signals. Quality audit remains available.")
                     db.add(provider); db.flush()
                     branch = None
                     if extracted.get("has_complete_branch_address"):
@@ -344,9 +378,36 @@ def verify_website_candidates(limit=50, run_id=None):
             db.commit()
         if run:
             run.status = "completed"; run.completed_at = datetime.now(timezone.utc); run.checked = checked; run.outcomes = dict(outcomes); db.commit()
-        db.add(AuditEvent(entity_type="website_verification", entity_id=0, action="batch_completed",
+        db.add(AuditEvent(entity_type="website_verification", entity_id=run.id if run else 0, action="batch_completed",
                           detail={"checked": checked, "outcomes": outcomes}))
         db.commit()
+
+        # Automatically continue through the backlog in bounded batches. Each batch
+        # is independently tracked, committed and recoverable; no unbounded task is run.
+        if run_id is not None and checked > 0:
+            from app.models import WebsiteVerificationRun
+            from app.routers.website_discovery import _classify
+            remaining_pool = (db.query(WebsiteDiscoveryResult)
+                .filter(WebsiteDiscoveryResult.status.in_(["candidate", "verification_checked"]))
+                .order_by(WebsiteDiscoveryResult.id.asc()).limit(5000).all())
+            has_remaining = any(
+                _classify(row.result_title, row.result_snippet or "", row.result_domain) == "provider_candidate"
+                for row in remaining_pool
+            )
+            if has_remaining:
+                next_run = WebsiteVerificationRun(status="queued", requested_limit=250, total=0, checked=0, outcomes={})
+                db.add(next_run); db.commit(); db.refresh(next_run)
+                try:
+                    next_task = verify_website_candidates.delay(limit=250, run_id=next_run.id)
+                    next_run.celery_task_id = next_task.id; db.commit()
+                except Exception as queue_exc:
+                    db.rollback()
+                    failed_next = db.query(WebsiteVerificationRun).filter(WebsiteVerificationRun.id == next_run.id).first()
+                    if failed_next:
+                        failed_next.status = "failed"
+                        failed_next.error_message = ("Automatic continuation could not be queued: " + str(queue_exc))[:1000]
+                        failed_next.completed_at = datetime.now(timezone.utc)
+                        db.commit()
         return {"status": "completed", "checked": checked, "outcomes": outcomes}
     except Exception as exc:
         # A failed flush/commit leaves the SQLAlchemy session unusable until rollback.

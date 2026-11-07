@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.4.0 — Provider quality safeguards
+- Added provider quality status and an auditable review queue.
+- Flagged obvious generic, directory, cemetery and council-like existing records for review without deleting or unpublishing them.
+- Tightened website identity extraction: structured data alone is insufficient; explicit funeral-sector page language and independent contact/location evidence are required.
+- Paused automatic publication by default. Extracted candidates are retained for quality review until AUTO_APPROVE_PROVIDERS=true is deliberately enabled after quality checks.
+- Added reporting for quality review and missing branch county/postcode enrichment.
+
+# Changelog
+
+## 1.2.0
+- Increased website verification batch size from 50 to 250 candidates.
+- Automatically queues the next independently tracked batch when eligible backlog remains.
+- Preserves per-candidate commits, per-batch progress, duplicate safeguards and interrupted-batch recovery.
+- Updated admin wording to describe automatic backlog processing.
+- No database migration required.
+
+# Changelog
+
 ## 1.1.1
 - Adds backlog reassessment to website verification: previously checked candidates from earlier releases are reprocessed under the expanded v1.1 identity-extraction rules, in batches of up to 50.
 - Includes both never-checked and previously checked candidates; already published providers and possible-duplicate holds are excluded.
@@ -212,3 +230,21 @@
 - Explicitly excludes SAIF/NAFD directory ingestion without written permission.
 - Adds source permission and evidence-check API endpoints and admin controls.
 - Existing Place ID-only Google observations are preserved and are not falsely enriched.
+
+## 1.3.0 — Published directory coverage and quality reporting
+- Adds a reporting endpoint for distinct published providers and branches.
+- Adds automatic-approval audit reporting based on provider audit events, avoiding raw batch-event totals as a proxy for unique providers.
+- Adds published branch counts by county.
+- Adds conservative duplicate signals for exact normalised provider names, shared website domains and shared postcodes across providers. Signals are not automatic merges or proof of duplication.
+- Adds source observation totals and an admin dashboard report.
+- No database migration; existing provider, branch, source and audit records are read only.
+
+## 1.3.0 — Published directory coverage, quality and scheduled discovery
+- Adds distinct provider and branch reporting, auto-approval audit reporting, county-level branch coverage and source-observation totals.
+- Adds conservative duplicate signals for exact normalised provider names, shared website domains and shared postcodes across providers. These are review signals only; no automatic merges occur.
+- Adds weekly England-wide website discovery at 02:00 Europe/London on Sundays via Celery Beat, followed by a bounded verification batch and existing automatic backlog continuation.
+- No database migration; reporting reads existing records.
+- Full periodic revalidation of all already-published provider websites is not included in this release and remains a separate follow-on capability.
+
+## Operational note
+Automatic publication is intentionally paused by default in v1.4.0. Existing providers remain available and are only flagged for quality review; new extracted candidates are held with their evidence for review. Do not enable `AUTO_APPROVE_PROVIDERS` until the quality queue has been sampled and accepted.

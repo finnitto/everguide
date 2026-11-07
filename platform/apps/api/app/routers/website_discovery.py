@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.config import settings
-from app.models import AuditEvent, WebsiteDiscoveryResult, WebsiteVerification, WebsiteVerificationRun, Provider
+from app.models import AuditEvent, WebsiteDiscoveryResult, WebsiteVerification, WebsiteVerificationRun, Provider, Branch, SourceObservation
 from app.tasks import discover_provider_websites, verify_website_candidates
 
 router = APIRouter(prefix="/api/v1/website-discovery", tags=["automatic website discovery"])
@@ -139,16 +139,16 @@ def start_verification_run(db: Session = Depends(get_db)):
     if active:
         return {"status": active.status, "run_id": active.id, "task_id": active.celery_task_id,
                 "message": "A website verification batch is already queued or running. No duplicate batch was created."}
-    run = WebsiteVerificationRun(status="queued", requested_limit=50, total=0, checked=0, outcomes={})
+    run = WebsiteVerificationRun(status="queued", requested_limit=250, total=0, checked=0, outcomes={})
     db.add(run); db.commit(); db.refresh(run)
     try:
-        task = verify_website_candidates.delay(limit=50, run_id=run.id)
+        task = verify_website_candidates.delay(limit=250, run_id=run.id)
         run.celery_task_id = task.id; db.commit()
     except Exception as exc:
         run.status = "failed"; run.error_message = str(exc)[:1000]; run.completed_at = datetime.now(timezone.utc); db.commit()
         raise HTTPException(503, "Could not queue website verification. Check the worker and Redis services.")
     return {"status":"queued", "run_id":run.id, "task_id":task.id,
-            "message":"A batch of up to 50 provider website checks has been queued."}
+            "message":"Automatic backlog processing has started. Everguide will process up to 250 candidates per batch and queue the next batch when work remains."}
 
 @router.get("/verification-runs")
 def verification_runs(limit: int = 10, db: Session = Depends(get_db)):
@@ -158,6 +158,89 @@ def verification_runs(limit: int = 10, db: Session = Depends(get_db)):
         "checked":r.checked,"outcomes":r.outcomes or {},"error_message":r.error_message,
         "created_at":r.created_at,"started_at":r.started_at,"completed_at":r.completed_at,
         "task_id":r.celery_task_id} for r in rows]}
+
+
+@router.get("/analytics")
+def provider_analytics(db: Session = Depends(get_db)):
+    """Distinct provider, branch, geography and duplicate-quality reporting."""
+    providers = db.query(Provider).all()
+    branches = db.query(Branch).all()
+    published = [p for p in providers if p.status == "published"]
+    published_ids = {p.id for p in published}
+    published_branches = [b for b in branches if b.provider_id in published_ids and b.status == "published"]
+
+    def norm(value):
+        return re.sub(r"[^a-z0-9]", "", (value or "").lower())
+
+    name_groups = {}
+    domain_groups = {}
+    for p in published:
+        key = norm(p.trading_name)
+        if key:
+            name_groups.setdefault(key, []).append(p)
+        host = (urlsplit(p.website or "").hostname or "").lower().removeprefix("www.")
+        if host:
+            domain_groups.setdefault(host, []).append(p)
+    postcode_groups = {}
+    for b in published_branches:
+        key = norm(b.postcode)
+        if key:
+            postcode_groups.setdefault(key, set()).add(b.provider_id)
+    duplicate_groups = []
+    seen_pairs = set()
+    for kind, groups in (("provider_name", name_groups), ("website_domain", domain_groups)):
+        for key, values in groups.items():
+            ids = sorted({p.id for p in values})
+            if len(ids) > 1:
+                pair = (kind, tuple(ids))
+                if pair not in seen_pairs:
+                    seen_pairs.add(pair)
+                    duplicate_groups.append({"type": kind, "value": key, "provider_ids": ids,
+                                            "provider_names": [next(p.trading_name for p in values if p.id == i) for i in ids]})
+    for postcode, ids_set in postcode_groups.items():
+        ids = sorted(ids_set)
+        if len(ids) > 1:
+            duplicate_groups.append({"type": "branch_postcode", "value": postcode, "provider_ids": ids,
+                                     "provider_names": [next(p.trading_name for p in published if p.id == i) for i in ids]})
+
+    county_counts = Counter((b.county or "County not recorded").strip() for b in published_branches)
+    region_rows = [{"county": name, "published_branches": count} for name, count in county_counts.most_common()]
+    paused_candidates = db.query(WebsiteDiscoveryResult).filter(WebsiteDiscoveryResult.status == "held_quality_review").order_by(WebsiteDiscoveryResult.id.desc()).limit(100).all()
+    latest_checks = {}
+    if paused_candidates:
+        paused_ids = [c.id for c in paused_candidates]
+        for check in db.query(WebsiteVerification).filter(WebsiteVerification.candidate_id.in_(paused_ids)).order_by(WebsiteVerification.checked_at.desc()).all():
+            latest_checks.setdefault(check.candidate_id, check)
+    paused_candidate_rows = [{"id": c.id, "title": c.result_title, "url": c.result_url,
+        "extracted_data": (latest_checks[c.id].extracted_data if c.id in latest_checks else None),
+        "checked_at": (latest_checks[c.id].checked_at if c.id in latest_checks else None)} for c in paused_candidates]
+    auto_events = db.query(AuditEvent).filter(AuditEvent.action == "auto_approved_published").all()
+    auto_provider_ids = sorted({e.entity_id for e in auto_events if e.entity_type == "provider" and e.entity_id in published_ids})
+    auto_providers = [p for p in published if p.id in set(auto_provider_ids)]
+    recent = sorted([e for e in auto_events if e.entity_type == "provider"], key=lambda e: e.created_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)[:50]
+    return {
+        "providers": {"total": len(providers), "published_distinct": len(published),
+                      "auto_approved_distinct_published": len(auto_provider_ids),
+                      "draft": sum(p.status == "draft" for p in providers),
+                      "needs_review": sum(p.status == "needs_review" for p in providers)},
+        "branches": {"total": len(branches), "published_distinct": len(published_branches),
+                     "published_without_county": sum(not (b.county or "").strip() for b in published_branches),
+                     "published_without_postcode": sum(not (b.postcode or "").strip() for b in published_branches)},
+        "quality": {"needs_review": sum(p.quality_status == "needs_review" for p in providers),
+                    "unassessed": sum(p.quality_status == "unassessed" for p in providers),
+                    "paused_candidate_count": db.query(WebsiteDiscoveryResult).filter(WebsiteDiscoveryResult.status == "held_quality_review").count(),
+                    "paused_candidates": paused_candidate_rows,
+                    "flagged_providers": [{"id": p.id, "name": p.trading_name, "website": p.website,
+                        "status": p.status, "quality_status": p.quality_status, "verification_status": p.verification_status}
+                        for p in providers if p.quality_status == "needs_review"][:100]},
+        "geography": region_rows,
+        "duplicate_checks": {"groups_flagged": len(duplicate_groups), "groups": duplicate_groups[:100]},
+        "auto_approval_audit": [{"provider_id": e.entity_id, "provider_name": next((p.trading_name for p in providers if p.id == e.entity_id), None),
+            "created_at": e.created_at, "detail": e.detail or {}} for e in recent],
+        "source_observations": {"total": db.query(SourceObservation).count(),
+            "accepted": db.query(SourceObservation).filter(SourceObservation.review_status == "accepted").count(),
+            "pending": db.query(SourceObservation).filter(SourceObservation.review_status == "pending").count()}
+    }
 
 @router.get("/candidates")
 def candidates(limit:int=100, db:Session=Depends(get_db)):

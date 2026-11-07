@@ -60,21 +60,29 @@ def _get(url: str, limit: int = 4096):
         return response.status, response.headers, body, None
 
 def _extract_funeral_provider_data(decoded: str):
-    """Extract a small set of factual business fields from permitted page HTML.
+    """Extract factual provider identity only when page-level evidence is strong.
 
-    JSON-LD is treated as one signal, not the sole gate. Generic LocalBusiness and
-    Organization entities are accepted only when the page itself contains explicit
-    funeral-sector context. Raw page HTML is never returned or persisted.
+    Structured data is supporting evidence, never sufficient by itself. Directory,
+    council, cemetery and generic account pages are excluded from provider approval.
     """
     scripts = re.findall(r'<script\b[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script\s*>', decoded, re.I | re.S)
     visible = html.unescape(re.sub(r'<(script|style|noscript)\b[^>]*>.*?</\1\s*>', ' ', decoded, flags=re.I | re.S))
     visible = re.sub(r'<[^>]+>', ' ', visible)
     visible = re.sub(r'\s+', ' ', visible).strip()
-    context = (visible + ' ' + ' '.join(re.findall(r'<title\b[^>]*>(.*?)</title\s*>', decoded, re.I | re.S))).lower()
+    title_match = re.search(r'<title\b[^>]*>(.*?)</title\s*>', decoded, re.I | re.S)
+    title_text = html.unescape(re.sub(r'<[^>]+>', ' ', title_match.group(1))).strip() if title_match else ''
+    context = (title_text + ' ' + visible).lower()
+    exclusion_terms = ('funeral directory', 'funeral directories', 'compare funeral', 'funeral comparison',
+        'cemetery', 'cemeteries', 'burial ground', 'crematorium', 'crematoria',
+        'borough council', 'city council', 'county council', 'local authority',
+        'jobs and careers', 'vacancies', 'login', 'sign in', 'admin dashboard')
+    if any(term in context for term in exclusion_terms):
+        return None
     funeral_terms = ('funeral director', 'funeral directors', 'funeral service', 'funeral services',
-                     'funeral home', 'funeral homes', 'undertaker', 'undertakers', 'funeralcare',
-                     'funeral care', 'cremation service')
-    context_hits = [term for term in funeral_terms if term in context]
+        'funeral home', 'funeral homes', 'undertaker', 'undertakers', 'funeralcare', 'funeral care')
+    context_hits = sorted({term for term in funeral_terms if term in context})
+    # A generic account label is not a business identity.
+    generic_names = {'admin', 'administrator', 'home', 'welcome', 'contact us', 'about us', 'funeral directors'}
     candidates = []
     for raw in scripts[:30]:
         try:
@@ -87,20 +95,20 @@ def _extract_funeral_provider_data(decoded: str):
             if not isinstance(item, dict):
                 continue
             graph = item.get('@graph')
-            if isinstance(graph, list):
-                stack.extend(graph[:150])
+            if isinstance(graph, list): stack.extend(graph[:150])
             typ = item.get('@type', [])
             types = [typ] if isinstance(typ, str) else typ if isinstance(typ, list) else []
             type_names = [str(t).rsplit('/', 1)[-1].lower() for t in types]
             if not any(t in ('funeralhome', 'localbusiness', 'organization', 'professionalservice') for t in type_names):
                 continue
             name = re.sub(r'\s+', ' ', str(item.get('name') or '')).strip()[:240]
+            if not name or name.lower().strip(' .-') in generic_names or len(re.findall(r'[a-zA-Z]{2,}', name)) < 2:
+                continue
             description = str(item.get('description') or '')[:1000]
-            local_context = (name + ' ' + description).lower()
-            hits = list(context_hits)
-            hits.extend(term for term in funeral_terms if term in local_context and term not in hits)
-            explicit_funeral_type = 'funeralhome' in type_names
-            if not explicit_funeral_type and not hits:
+            local_text = (name + ' ' + description).lower()
+            hits = sorted(set(context_hits) | {term for term in funeral_terms if term in local_text})
+            # Require explicit funeral-sector language on the fetched page, not just JSON-LD.
+            if not hits:
                 continue
             address = item.get('address') or {}
             if isinstance(address, list): address = address[0] if address else {}
@@ -117,15 +125,17 @@ def _extract_funeral_provider_data(decoded: str):
             telephone = str(item.get('telephone') or '')[:40] or None
             email = str(item.get('email') or '')[:254] or None
             website = str(item.get('url') or '')[:1000] or None
-            # Strong provider identity can be approved without a complete branch address;
-            # the branch is created only when a complete UK address is available.
-            if name and (explicit_funeral_type or len(hits) >= 1):
-                confidence = 0.96 if explicit_funeral_type and street and town and postcode_ok else 0.90 if explicit_funeral_type else 0.86 if street and town and postcode_ok else 0.82
-                candidates.append({"name": name, "street": street or None, "town": town or None,
-                    "postcode": postcode if postcode_ok else None, "telephone": telephone, "email": email,
-                    "website": website, "source_type": "schema_org_" + (type_names[0] if type_names else "business"),
-                    "country": country_text or "unspecified", "confidence": confidence,
-                    "funeral_signals": sorted(set(hits)), "has_complete_branch_address": bool(street and town and postcode_ok)})
+            complete_address = bool(street and town and postcode_ok)
+            # At least one independent contact/location signal is mandatory.
+            if not (complete_address or telephone or email):
+                continue
+            explicit_funeral_type = 'funeralhome' in type_names
+            confidence = 0.94 if explicit_funeral_type and complete_address and telephone else 0.88 if complete_address and telephone else 0.84
+            candidates.append({'name': name, 'street': street or None, 'town': town or None,
+                'postcode': postcode if postcode_ok else None, 'telephone': telephone, 'email': email,
+                'website': website, 'source_type': 'schema_org_' + (type_names[0] if type_names else 'business'),
+                'country': country_text or 'unspecified', 'confidence': confidence,
+                'funeral_signals': hits, 'has_complete_branch_address': complete_address})
     if not candidates:
         return None
     return sorted(candidates, key=lambda x: (x['confidence'], bool(x['telephone']), bool(x['email'])), reverse=True)[0]
