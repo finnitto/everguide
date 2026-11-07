@@ -1,10 +1,13 @@
 import re
 import html
+import json
+import urllib.request
+import urllib.error
 from collections import Counter
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlsplit, urlunsplit
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.config import settings
@@ -208,6 +211,91 @@ def assess_existing_provider_quality(db: Session = Depends(get_db)):
             "message": "Existing records assessed using retained Everguide evidence only. Insufficient evidence is not treated as proof that a provider is invalid."}
 
 
+@router.post("/branch-enrichment/postcodes")
+def enrich_published_branch_counties(db: Session = Depends(get_db)):
+    """Fill missing published-branch counties from the Postcodes.io bulk API.
+
+    Only explicit admin_county values are written. Unitary-authority and other
+    records with no county-level authority remain blank rather than substituting
+    a district, region, postal town, or guessed ceremonial county.
+    """
+    published_provider_ids = [row[0] for row in db.query(Provider.id).filter(Provider.status == "published").all()]
+    if not published_provider_ids:
+        return {"status": "completed", "checked": 0, "updated": 0, "not_applicable": 0, "not_found": 0, "failed": 0,
+                "message": "No published providers were found."}
+
+    branches = (db.query(Branch).filter(Branch.provider_id.in_(published_provider_ids),
+                 Branch.status == "published", or_(Branch.county.is_(None), func.trim(Branch.county) == ""))
+                .order_by(Branch.id).all())
+    if not branches:
+        return {"status": "completed", "checked": 0, "updated": 0, "not_applicable": 0, "not_found": 0, "failed": 0,
+                "message": "No published branches are currently missing a county."}
+
+    postcodes = sorted({re.sub(r"\s+", " ", (b.postcode or "").strip()).upper() for b in branches if (b.postcode or "").strip()})
+    if not postcodes:
+        return {"status": "completed", "checked": len(branches), "updated": 0, "not_applicable": 0, "not_found": 0,
+                "failed": len(branches), "message": "No usable postcodes were recorded."}
+    if len(postcodes) > 100:
+        raise HTTPException(400, "This enrichment batch exceeds the postcode service limit of 100 unique postcodes.")
+
+    request_body = json.dumps({"postcodes": postcodes}).encode("utf-8")
+    request = urllib.request.Request("https://api.postcodes.io/postcodes", data=request_body,
+        headers={"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "Everguide/1.6.0 postcode enrichment"}, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
+        raise HTTPException(502, f"Postcode lookup service could not be reached: {type(exc).__name__}")
+
+    results = {}
+    for item in payload.get("result") or []:
+        query = re.sub(r"\s+", " ", (item.get("query") or "").strip()).upper()
+        if query:
+            results[query] = item.get("result")
+
+    updated = not_applicable = not_found = failed = 0
+    now = datetime.now(timezone.utc)
+    for branch in branches:
+        postcode = re.sub(r"\s+", " ", (branch.postcode or "").strip()).upper()
+        result = results.get(postcode)
+        if not postcode:
+            outcome = "missing_postcode"
+            failed += 1
+        elif result is None:
+            outcome = "postcode_not_found"
+            not_found += 1
+        elif result.get("country") != "England":
+            outcome = "outside_england"
+            not_applicable += 1
+        elif (result.get("admin_county") or "").strip():
+            # Recheck the field immediately before writing; never overwrite existing data.
+            if (branch.county or "").strip():
+                continue
+            county = result["admin_county"].strip()
+            branch.county = county
+            outcome = "county_enriched"
+            updated += 1
+        else:
+            # A null admin_county is expected for London, unitary authorities and
+            # other areas without a county-level administrative authority.
+            outcome = "no_county_level_authority"
+            not_applicable += 1
+        db.add(AuditEvent(entity_type="branch", entity_id=branch.id, action="postcode_county_lookup",
+            detail={"outcome": outcome, "postcode": postcode, "source": "Postcodes.io", "source_url": "https://postcodes.io/",
+                    "looked_up_at": now.isoformat(), "admin_county": (result or {}).get("admin_county"),
+                    "admin_district": (result or {}).get("admin_district"), "region": (result or {}).get("region"),
+                    "country": (result or {}).get("country")}))
+    db.add(AuditEvent(entity_type="branch_enrichment", entity_id=0, action="postcode_county_enrichment_completed",
+        detail={"checked": len(branches), "updated": updated, "not_applicable": not_applicable,
+                "not_found": not_found, "failed": failed, "unique_postcodes": len(postcodes),
+                "source": "Postcodes.io", "completed_at": now.isoformat()}))
+    db.commit()
+    return {"status": "completed", "checked": len(branches), "updated": updated,
+            "not_applicable": not_applicable, "not_found": not_found, "failed": failed,
+            "unique_postcodes": len(postcodes),
+            "message": "County enrichment completed. Only explicit administrative county values were added; districts and regions were not substituted."}
+
+
 @router.get("/analytics")
 def provider_analytics(db: Session = Depends(get_db)):
     """Distinct provider, branch, geography and duplicate-quality reporting."""
@@ -290,6 +378,9 @@ def provider_analytics(db: Session = Depends(get_db)):
         "duplicate_checks": {"groups_flagged": len(duplicate_groups), "groups": duplicate_groups[:100]},
         "auto_approval_audit": [{"provider_id": e.entity_id, "provider_name": next((p.trading_name for p in providers if p.id == e.entity_id), None),
             "created_at": e.created_at, "detail": e.detail or {}} for e in recent],
+        "branch_enrichment": {"latest_runs": [{"created_at": e.created_at, **(e.detail or {})}
+            for e in db.query(AuditEvent).filter(AuditEvent.action == "postcode_county_enrichment_completed")
+            .order_by(AuditEvent.created_at.desc()).limit(5).all()]},
         "source_observations": {"total": db.query(SourceObservation).count(),
             "accepted": db.query(SourceObservation).filter(SourceObservation.review_status == "accepted").count(),
             "pending": db.query(SourceObservation).filter(SourceObservation.review_status == "pending").count(),

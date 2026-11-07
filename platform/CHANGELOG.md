@@ -258,3 +258,13 @@
 
 ## Operational note
 Automatic publication is intentionally paused by default in v1.4.0. Existing providers remain available and are only flagged for quality review; new extracted candidates are held with their evidence for review. Do not enable `AUTO_APPROVE_PROVIDERS` until the quality queue has been sampled and accepted.
+
+## v1.6.0 — Postcode-based branch county enrichment
+
+- Added an admin action to enrich published branches that have a postcode but no recorded county.
+- Uses the Postcodes.io bulk postcode lookup endpoint (up to 100 unique postcodes per request).
+- Writes only the explicit `admin_county` value returned for an England postcode. It does not substitute an administrative district, region, postal town, or guessed ceremonial county.
+- Leaves existing county values and provider/branch publication statuses unchanged.
+- Records per-branch lookup outcomes and source metadata in the audit log, plus a batch summary shown in the admin report.
+- Reports areas without a county-level authority (including many unitary authorities and London boroughs) separately; these remain blank rather than being assigned a misleading county.
+- No database migration required.
