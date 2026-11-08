@@ -73,9 +73,10 @@ def _extract_funeral_provider_data(decoded: str):
     title_text = html.unescape(re.sub(r'<[^>]+>', ' ', title_match.group(1))).strip() if title_match else ''
     context = (title_text + ' ' + visible).lower()
     exclusion_terms = ('funeral directory', 'funeral directories', 'compare funeral', 'funeral comparison',
-        'cemetery', 'cemeteries', 'burial ground', 'crematorium', 'crematoria',
-        'borough council', 'city council', 'county council', 'local authority',
-        'jobs and careers', 'vacancies', 'login', 'sign in', 'admin dashboard')
+        'find local funeral directors', 'put you in touch with local', 'cemetery', 'cemeteries',
+        'burial ground', 'crematorium', 'crematoria', 'borough council', 'city council',
+        'county council', 'local authority', 'jobs and careers', 'vacancies', 'login',
+        'sign in', 'admin dashboard')
     if any(term in context for term in exclusion_terms):
         return None
     funeral_terms = ('funeral director', 'funeral directors', 'funeral service', 'funeral services',

@@ -1,3 +1,12 @@
+## 1.8.0 — Complete provider identity review and correction planning
+
+- Expands the admin identity review to show every existing provider rather than truncating the report at 30 entries.
+- Adds advisory review categories and recommended actions for directory/comparison results, related public services, location-specific parent/branch URLs, and generic or URL-like trading names.
+- Keeps all recommendations read-only: no provider, branch, name, category, quality or publication data is changed by opening the report.
+- Preserves Google Place ID observations as a separate stream; no Google business details are retrieved or used to populate Everguide.
+- Updates application version reporting to 1.8.0.
+- No database migration.
+
 ## 1.5.0 — Existing provider quality assessment and source reconciliation
 
 - Adds an idempotent bulk assessment endpoint for existing provider records using only evidence already retained in Everguide.
@@ -267,4 +276,13 @@ Automatic publication is intentionally paused by default in v1.4.0. Existing pro
 - Leaves existing county values and provider/branch publication statuses unchanged.
 - Records per-branch lookup outcomes and source metadata in the audit log, plus a batch summary shown in the admin report.
 - Reports areas without a county-level authority (including many unitary authorities and London boroughs) separately; these remain blank rather than being assigned a misleading county.
+- No database migration required.
+
+## 1.7.0 — Provider identity and evidence reassessment
+
+- Tightens independent search-result classification: known funeral directories/comparison sites are excluded from provider verification; cemetery, crematorium and council results are classified as related public services rather than funeral-director candidates.
+- Adds a retained-evidence reassessment action that recognises accepted Schema.org/structured-data observations as evidence when provider name and website domain are consistent. It does not fetch new pages or prove legal status.
+- Adds an identity-anomaly report showing generic/URL-like provider names, accepted-source name suggestions and original discovery context. Suggestions do not silently rename records.
+- Existing provider names, provider publication states, branches and Google Place ID observations are preserved. Quality-status changes are audited.
+- Fixes application version reporting to 1.7.0 across API configuration, Docker Compose and package metadata.
 - No database migration required.

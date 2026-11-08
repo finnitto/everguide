@@ -36,7 +36,7 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-development}
       APP_NAME: ${APP_NAME:-Everguide}
-      APP_VERSION: "1.5.0"
+      APP_VERSION: "1.8.0"
       GOOGLE_PLACES_API_KEY: ${GOOGLE_PLACES_API_KEY:-}
       BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
       SEARCH_PROVIDER: ${SEARCH_PROVIDER:-brave}

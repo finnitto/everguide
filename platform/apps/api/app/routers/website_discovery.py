@@ -13,16 +13,16 @@ from app.database import get_db
 from app.config import settings
 from app.models import AuditEvent, WebsiteDiscoveryResult, WebsiteVerification, WebsiteVerificationRun, Provider, Branch, SourceObservation
 from app.tasks import discover_provider_websites, verify_website_candidates
+from app.identity_rules import _classify, _normalise_identity_name, _provider_quality_assessment
 
 router = APIRouter(prefix="/api/v1/website-discovery", tags=["automatic website discovery"])
 
-DIRECTORY_TERMS = ("directory", "funeral guide", "compare funeral", "find a funeral", "reviews", "listings")
-IRRELEVANT_TERMS = ("jobs", "careers", "vacancies", "wikipedia", "news", "facebook", "instagram", "linkedin")
 
 def _clean_text(value):
     value = html.unescape(value or "")
     value = re.sub(r"<[^>]*>", " ", value)
     return re.sub(r"\s+", " ", value).strip()
+
 
 def _canonical_url(url):
     parsed = urlsplit(url)
@@ -30,15 +30,6 @@ def _canonical_url(url):
     path = re.sub(r"/{2,}", "/", parsed.path or "/").rstrip("/") or "/"
     return urlunsplit(("https", host, path, "", ""))
 
-def _classify(title, snippet, domain):
-    text = f"{title} {snippet} {domain}".lower()
-    if any(term in text for term in IRRELEVANT_TERMS):
-        return "likely_irrelevant"
-    if any(term in text for term in DIRECTORY_TERMS) or domain in {"funeralguide.co.uk", "funeral-directory.co.uk"}:
-        return "directory_or_comparison"
-    if any(term in text for term in ("funeral directors", "funeral director", "funeral services", "undertakers", "funeral care")):
-        return "provider_candidate"
-    return "uncertain"
 
 def _name_tokens(value):
     ignored = {"limited", "ltd", "plc", "the", "and", "funeral", "directors", "director", "services"}
@@ -164,26 +155,6 @@ def verification_runs(limit: int = 10, db: Session = Depends(get_db)):
         "task_id":r.celery_task_id} for r in rows]}
 
 
-def _provider_quality_assessment(provider: Provider, observations: list[SourceObservation]):
-    """Assess only evidence already retained by Everguide; never fetch or infer facts."""
-    name = (provider.trading_name or "").strip().lower()
-    domain = (urlsplit(provider.website or "").hostname or "").lower().removeprefix("www.")
-    generic_names = {"admin", "administrator", "test", "unknown", "localfuneral", "funeral directors", "home", "welcome"}
-    exclusion_terms = ("cemetery", "cemeteries", "crematorium", "council", "funeralguide", "funeral-directory", "localfuneral", "compare-funeral", "directory")
-    if name in generic_names or any(term in name or term in domain for term in exclusion_terms):
-        return "needs_review", "Name or website contains a generic, directory, civic or cemetery signal; manual identity check required."
-    domain_observations = []
-    for obs in observations:
-        obs_domain = (urlsplit(obs.source_url or "").hostname or "").lower().removeprefix("www.")
-        data = obs.observed_data or {}
-        signals = data.get("funeral_signals") or []
-        observed_name = re.sub(r"[^a-z0-9]", "", str(data.get("provider_name") or "").lower())
-        provider_name = re.sub(r"[^a-z0-9]", "", name)
-        if obs.review_status == "accepted" and domain and obs_domain == domain and signals and observed_name == provider_name:
-            domain_observations.append(obs)
-    if domain_observations:
-        return "confirmed", "Existing accepted provider-website observation matches the provider name and domain and records funeral-sector signals."
-    return "insufficient_evidence", "Existing retained records do not contain enough independent evidence to confirm provider identity; no external facts were inferred."
 
 
 @router.post("/quality-assessments", status_code=200)
@@ -209,6 +180,105 @@ def assess_existing_provider_quality(db: Session = Depends(get_db)):
     db.commit()
     return {"status": "completed", "total_providers": len(providers), "results": assessed,
             "message": "Existing records assessed using retained Everguide evidence only. Insufficient evidence is not treated as proof that a provider is invalid."}
+
+
+@router.post("/quality-assessments/reassess", status_code=200)
+def reassess_existing_provider_quality(db: Session = Depends(get_db)):
+    """Re-evaluate all providers using the corrected retained-evidence rules.
+
+    Provider publication status and branch records are deliberately untouched.
+    Every changed quality assessment is audited.
+    """
+    providers = db.query(Provider).order_by(Provider.id.asc()).all()
+    observations = db.query(SourceObservation).all()
+    by_provider = {}
+    for observation in observations:
+        if observation.provider_id is not None:
+            by_provider.setdefault(observation.provider_id, []).append(observation)
+    changed = {"confirmed": 0, "needs_review": 0, "insufficient_evidence": 0, "unchanged": 0}
+    now = datetime.now(timezone.utc)
+    for provider in providers:
+        old_status = provider.quality_status or "unassessed"
+        new_status, reason = _provider_quality_assessment(provider, by_provider.get(provider.id, []))
+        if old_status == new_status:
+            changed["unchanged"] += 1
+            continue
+        provider.quality_status = new_status
+        db.add(AuditEvent(entity_type="provider", entity_id=provider.id, action="provider_quality_reassessed",
+            detail={"previous_quality_status": old_status, "quality_status": new_status, "reason": reason,
+                    "assessment_basis": "retained_everguide_records_corrected_rules", "assessed_at": now.isoformat()}))
+        changed[new_status] += 1
+    db.commit()
+    return {"status": "completed", "total_providers": len(providers), "results": changed,
+            "message": "Quality statuses re-evaluated using retained evidence. Provider publication and branch records were not changed."}
+
+
+@router.get("/identity-review")
+def provider_identity_review(db: Session = Depends(get_db)):
+    """Return evidence-backed identity anomalies without changing provider records."""
+    providers = db.query(Provider).order_by(Provider.id.asc()).all()
+    observations = db.query(SourceObservation).filter(SourceObservation.review_status == "accepted").all()
+    by_provider = {}
+    for observation in observations:
+        if observation.provider_id is not None:
+            by_provider.setdefault(observation.provider_id, []).append(observation)
+    auto_events = (db.query(AuditEvent).filter(AuditEvent.entity_type == "provider",
+                    AuditEvent.action == "auto_approved_published").all())
+    candidate_ids = {event.entity_id: (event.detail or {}).get("candidate_id") for event in auto_events}
+    candidate_rows = {row.id: row for row in db.query(WebsiteDiscoveryResult).filter(
+        WebsiteDiscoveryResult.id.in_([v for v in candidate_ids.values() if isinstance(v, int)] or [-1])).all()}
+    results = []
+    for provider in providers:
+        current = (provider.trading_name or "").strip()
+        current_norm = _normalise_identity_name(current)
+        domain = (urlsplit(provider.website or "").hostname or "").lower().removeprefix("www.")
+        suggestions = []
+        flags = []
+        if current.lower() in {"admin", "administrator", "unknown", "home", "welcome"} or current.lower().startswith(("http://", "https://", "www.")):
+            flags.append("generic_or_url_provider_name")
+        for obs in by_provider.get(provider.id, []):
+            obs_domain = (urlsplit(obs.source_url or "").hostname or "").lower().removeprefix("www.")
+            if not domain or obs_domain != domain:
+                continue
+            data = obs.observed_data or {}
+            proposed = str(data.get("provider_name") or "").strip()
+            proposed_norm = _normalise_identity_name(proposed)
+            if proposed and proposed_norm and proposed_norm != current_norm and proposed.lower() not in {"admin", "unknown", "home", "welcome"}:
+                suggestions.append({"name": proposed, "source_url": obs.source_url, "observation_id": obs.id,
+                                    "confidence": obs.confidence, "source_type": obs.source_type})
+        discovery = candidate_rows.get(candidate_ids.get(provider.id))
+        if discovery:
+            # Search title/snippet are context for an administrator, not proof of a rename.
+            flags.append("original_discovery_context_available")
+        discovery_context = None
+        recommendation = "retain_and_monitor"
+        category = "identity_review"
+        if discovery:
+            discovery_context = {"title": discovery.result_title, "snippet": discovery.result_snippet,
+                                 "url": discovery.result_url, "domain": discovery.result_domain}
+            classification = _classify(discovery.result_title, discovery.result_snippet, discovery.result_domain)
+            if classification == "directory_or_comparison":
+                category, recommendation = "directory_or_comparison", "exclude_from_funeral_director_category_review_existing_record"
+                flags.append("discovery_source_appears_to_be_directory")
+            elif classification == "related_service_not_funeral_director":
+                category, recommendation = "related_service", "reclassify_service_type_review_existing_record"
+                flags.append("discovery_source_appears_to_be_related_public_service")
+            elif any(term in (discovery.result_url or "").lower() for term in ("/locations/", "/our-branches/", "/funeral-directors/manchester/")):
+                category, recommendation = "parent_branch_relationship", "review_canonical_parent_and_branch_urls"
+                flags.append("discovery_url_appears_location_specific")
+        if current.lower() in {"admin", "administrator", "unknown", "home", "welcome"}:
+            recommendation = "review_trading_name_against_independent_website_evidence"
+            category = "trading_name_extraction"
+        elif current.lower().startswith(("http://", "https://", "www.")):
+            recommendation = "review_trading_name_against_independent_website_evidence"
+            category = "trading_name_extraction"
+        results.append({"provider_id": provider.id, "current_name": current, "website": provider.website,
+                        "quality_status": provider.quality_status, "flags": flags,
+                        "review_category": category, "recommended_action": recommendation,
+                        "name_suggestions": suggestions[:3],
+                        "discovery_context": discovery_context})
+    return {"items": results, "count": len(results),
+            "message": "Complete read-only identity review. Recommendations are advisory; no provider names, publication statuses or branches were changed."}
 
 
 @router.post("/branch-enrichment/postcodes")
@@ -240,7 +310,7 @@ def enrich_published_branch_counties(db: Session = Depends(get_db)):
 
     request_body = json.dumps({"postcodes": postcodes}).encode("utf-8")
     request = urllib.request.Request("https://api.postcodes.io/postcodes", data=request_body,
-        headers={"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "Everguide/1.6.0 postcode enrichment"}, method="POST")
+        headers={"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "Everguide/1.7.0 postcode enrichment"}, method="POST")
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
             payload = json.loads(response.read().decode("utf-8"))
@@ -420,5 +490,6 @@ def candidates(limit:int=100, db:Session=Depends(get_db)):
                       "possible_matches":possible_matches[:5],"created_at":x.created_at})
     summary = Counter(item["candidate_type"] for item in items)
     return {"items":items,"summary":{"shown":len(items),"provider_candidates":summary["provider_candidate"],
-            "directories":summary["directory_or_comparison"],"uncertain":summary["uncertain"],
-            "likely_irrelevant":summary["likely_irrelevant"],"unique_domains_in_database":len(domain_counts)}}
+            "directories":summary["directory_or_comparison"],"related_services":summary["related_service_not_funeral_director"],
+            "uncertain":summary["uncertain"],"likely_irrelevant":summary["likely_irrelevant"],
+            "unique_domains_in_database":len(domain_counts)}}
