@@ -14,7 +14,7 @@ def audit(db, entity_type, entity_id, action, detail=None):
     db.add(AuditEvent(entity_type=entity_type, entity_id=entity_id, action=action, detail=detail or {}))
 
 def provider_dict(p):
-    return {"id":p.id,"trading_name":p.trading_name,"registered_name":p.registered_name,"website":p.website,"provider_type":p.provider_type,"status":p.status,"verification_status":p.verification_status,"quality_status":p.quality_status,"notes":p.notes,"created_at":p.created_at,"updated_at":p.updated_at,"branches":[branch_dict(b) for b in p.branches]}
+    return {"id":p.id,"trading_name":p.trading_name,"display_name":p.display_name,"registered_name":p.registered_name,"website":p.website,"provider_type":p.provider_type,"status":p.status,"verification_status":p.verification_status,"quality_status":p.quality_status,"notes":p.notes,"created_at":p.created_at,"updated_at":p.updated_at,"branches":[branch_dict(b) for b in p.branches]}
 
 def branch_dict(b):
     return {"id":b.id,"provider_id":b.provider_id,"branch_name":b.branch_name,"address_line_1":b.address_line_1,"address_line_2":b.address_line_2,"town_city":b.town_city,"county":b.county,"postcode":b.postcode,"telephone":b.telephone,"email":b.email,"website":b.website,"latitude":b.latitude,"longitude":b.longitude,"services":b.services or [],"status":b.status}
@@ -180,5 +180,5 @@ def matching_queue(limit: int = Query(100, ge=1, le=250), offset: int = Query(0,
 @router.get("/directory/search")
 def public_search(q: str = Query(min_length=2), limit: int = Query(50,ge=1,le=100), db: Session = Depends(get_db)):
     like=f"%{q.strip()}%"
-    rows=(db.query(Branch,Provider).join(Provider).filter(Provider.status=="published",Branch.status=="published").filter(or_(Provider.trading_name.ilike(like),Branch.branch_name.ilike(like),Branch.town_city.ilike(like),Branch.postcode.ilike(like))).order_by(Branch.town_city,Provider.trading_name).limit(limit).all())
-    return {"items":[{"provider_name":p.trading_name,"provider_id":p.id,**branch_dict(b)} for b,p in rows],"count":len(rows)}
+    rows=(db.query(Branch,Provider).join(Provider).filter(Provider.status=="published",Provider.provider_type=="funeral_director",Branch.status=="published").filter(or_(Provider.trading_name.ilike(like),Branch.branch_name.ilike(like),Branch.town_city.ilike(like),Branch.postcode.ilike(like))).order_by(Branch.town_city,Provider.trading_name).limit(limit).all())
+    return {"items":[{"provider_name":p.display_name or p.trading_name,"provider_business_name":p.trading_name,"provider_id":p.id,**branch_dict(b)} for b,p in rows],"count":len(rows)}

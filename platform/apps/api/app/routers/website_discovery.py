@@ -11,7 +11,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.config import settings
-from app.models import AuditEvent, WebsiteDiscoveryResult, WebsiteVerification, WebsiteVerificationRun, Provider, Branch, SourceObservation
+from app.models import AuditEvent, WebsiteDiscoveryResult, WebsiteVerification, WebsiteVerificationRun, Provider, Branch, SourceObservation, ProviderQualityAction
 from app.tasks import discover_provider_websites, verify_website_candidates
 from app.identity_rules import _classify, _normalise_identity_name, _provider_quality_assessment
 
@@ -279,6 +279,152 @@ def provider_identity_review(db: Session = Depends(get_db)):
                         "discovery_context": discovery_context})
     return {"items": results, "count": len(results),
             "message": "Complete read-only identity review. Recommendations are advisory; no provider names, publication statuses or branches were changed."}
+
+
+@router.get("/quality-actions")
+def list_quality_actions(status: str | None = "pending", db: Session = Depends(get_db)):
+    query = db.query(ProviderQualityAction)
+    if status and status != "all":
+        query = query.filter(ProviderQualityAction.status == status)
+    rows = query.order_by(ProviderQualityAction.created_at.desc(), ProviderQualityAction.id.desc()).limit(500).all()
+    provider_ids = {row.provider_id for row in rows}
+    providers = {p.id: p for p in db.query(Provider).filter(Provider.id.in_(provider_ids or [-1])).all()}
+    return {"items": [{"id": r.id, "provider_id": r.provider_id,
+        "provider_name": providers[r.provider_id].trading_name if r.provider_id in providers else "(deleted)",
+        "action_type": r.action_type, "category": r.category, "proposed_value": r.proposed_value,
+        "evidence": r.evidence, "confidence": r.confidence, "status": r.status,
+        "decision_note": r.decision_note, "created_at": r.created_at, "decided_at": r.decided_at}
+        for r in rows], "count": len(rows)}
+
+
+@router.post("/quality-actions/seed")
+def seed_quality_actions(db: Session = Depends(get_db)):
+    """Create idempotent, evidence-linked proposals; never mutate live providers."""
+    report = provider_identity_review(db)
+    created = 0
+    # Explicit proposals are intentionally limited to cases supported by the retained report.
+    proposals = {
+        17: ("rename", "trading_name_correction", {"trading_name": "Desmond L Bannon & Sons", "display_name": "Bannon’s"}, "high"),
+        41: ("reclassify", "directory_or_comparison", {"provider_type": "directory"}, "high"),
+        42: ("rename", "trading_name_correction", {"trading_name": "AH Freemantle Funeral Directors"}, "high"),
+        58: ("reclassify", "related_service", {"provider_type": "related_service"}, "high"),
+        65: ("rename", "trading_name_correction", {"trading_name": "S.C. & B.S. Cocks"}, "high"),
+        72: ("reclassify", "directory_or_comparison", {"provider_type": "directory"}, "high"),
+    }
+    by_id = {item["provider_id"]: item for item in report["items"]}
+    for provider_id, (action_type, category, value, confidence) in proposals.items():
+        item = by_id.get(provider_id)
+        provider = db.get(Provider, provider_id)
+        if not item or not provider:
+            continue
+        if provider_id == 17:
+            obsolete = db.query(ProviderQualityAction).filter(
+                ProviderQualityAction.provider_id == 17,
+                ProviderQualityAction.status == "pending").all()
+            for old_action in obsolete:
+                if (old_action.proposed_value or {}).get("trading_name") == "Bannons Funerals":
+                    old_action.status = "superseded"
+                    old_action.decision_note = "Superseded by a more specific evidence-linked distinction between business name and public display name."
+                    old_action.decided_by = "system"
+                    old_action.decided_at = datetime.now(timezone.utc)
+                    db.add(AuditEvent(entity_type="provider_quality_action", entity_id=old_action.id,
+                        action="superseded", detail={"reason": "More specific website name evidence"}, actor="system"))
+        # Idempotency is based on the complete proposed payload, not merely
+        # provider + action type. A superseded or older rename must not block
+        # creation of a materially different replacement proposal.
+        existing_rows = db.query(ProviderQualityAction).filter(
+            ProviderQualityAction.provider_id == provider_id,
+            ProviderQualityAction.action_type == action_type,
+            ProviderQualityAction.status.in_(["pending", "approved"])).all()
+        if any((row.proposed_value or {}) == value for row in existing_rows):
+            continue
+        evidence = {"website": provider.website, "discovery_context": item.get("discovery_context"),
+                    "flags": item.get("flags", []), "report_category": item.get("review_category")}
+        if provider_id == 17:
+            evidence["name_interpretation"] = {
+                "business_name": "Desmond L Bannon & Sons",
+                "public_display_name": "Bannon’s",
+                "registered_name": None,
+                "registered_name_note": "Not inferred from website wording; requires independent legal-entity evidence."
+            }
+        db.add(ProviderQualityAction(provider_id=provider_id, action_type=action_type,
+            category=category, proposed_value=value, evidence=evidence, confidence=confidence, status="pending"))
+        created += 1
+    # Parent/branch relationships are surfaced as non-executable review items.
+    for item in report["items"]:
+        if item.get("review_category") != "parent_branch_relationship":
+            continue
+        provider_id = item["provider_id"]
+        exists = db.query(ProviderQualityAction).filter(ProviderQualityAction.provider_id == provider_id,
+            ProviderQualityAction.category == "parent_branch_relationship",
+            ProviderQualityAction.status.in_(["pending", "approved"])).first()
+        if exists:
+            continue
+        db.add(ProviderQualityAction(provider_id=provider_id, action_type="review_only",
+            category="parent_branch_relationship", proposed_value={},
+            evidence={"website": item.get("website"), "discovery_context": item.get("discovery_context"),
+                      "flags": item.get("flags", [])}, confidence="review", status="pending"))
+        created += 1
+    db.commit()
+    return {"created": created, "message": "Proposals created. No provider data or publication status was changed."}
+
+
+@router.post("/quality-actions/{action_id}/decide")
+def decide_quality_action(action_id: int, decision: dict, db: Session = Depends(get_db)):
+    action = db.get(ProviderQualityAction, action_id)
+    if not action:
+        raise HTTPException(404, "Quality action not found")
+    if action.status != "pending":
+        raise HTTPException(409, "This proposal has already been decided")
+    outcome = decision.get("decision")
+    if outcome not in {"approve", "reject"}:
+        raise HTTPException(400, "Decision must be approve or reject")
+    provider = db.get(Provider, action.provider_id)
+    if not provider:
+        raise HTTPException(404, "Provider not found")
+    if outcome == "approve":
+        if action.action_type == "rename":
+            new_name = (action.proposed_value or {}).get("trading_name", "").strip()
+            if not new_name or len(new_name) > 240:
+                raise HTTPException(400, "Proposed trading name is invalid")
+            old_name = provider.trading_name
+            old_display_name = provider.display_name
+            proposed_display = (action.proposed_value or {}).get("display_name")
+            provider.trading_name = new_name
+            if proposed_display:
+                if not isinstance(proposed_display, str) or len(proposed_display.strip()) > 240:
+                    raise HTTPException(400, "Proposed display name is invalid")
+                provider.display_name = proposed_display.strip()
+            db.add(AuditEvent(entity_type="provider", entity_id=provider.id, action="quality_name_correction_approved",
+                detail={"old_trading_name": old_name, "new_trading_name": new_name,
+                        "old_display_name": old_display_name, "new_display_name": provider.display_name,
+                        "registered_name_unchanged": provider.registered_name,
+                        "quality_action_id": action.id, "evidence": action.evidence}, actor="local-admin"))
+        elif action.action_type == "reclassify":
+            new_type = (action.proposed_value or {}).get("provider_type")
+            if new_type not in {"directory", "related_service"}:
+                raise HTTPException(400, "Unsupported provider reclassification")
+            old_type = provider.provider_type
+            provider.provider_type = new_type
+            db.add(AuditEvent(entity_type="provider", entity_id=provider.id, action="quality_reclassification_approved",
+                detail={"old_provider_type": old_type, "new_provider_type": new_type,
+                        "quality_action_id": action.id, "evidence": action.evidence}, actor="local-admin"))
+        else:
+            raise HTTPException(400, "This proposal is review-only and cannot be applied automatically")
+        action.status = "approved"
+    else:
+        action.status = "rejected"
+    action.decision_note = str(decision.get("note") or "")[:2000] or None
+    action.decided_by = "local-admin"
+    action.decided_at = datetime.now(timezone.utc)
+    db.add(AuditEvent(entity_type="provider_quality_action", entity_id=action.id,
+        action=("approved" if outcome == "approve" else "rejected"), detail={"provider_id": provider.id, "category": action.category,
+        "action_type": action.action_type, "note": action.decision_note}, actor="local-admin"))
+    db.commit()
+    return {"id": action.id, "status": action.status, "provider_id": provider.id,
+            "provider_status": provider.status, "provider_type": provider.provider_type,
+            "trading_name": provider.trading_name, "display_name": provider.display_name,
+            "registered_name": provider.registered_name}
 
 
 @router.post("/branch-enrichment/postcodes")
