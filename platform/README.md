@@ -1,4 +1,4 @@
-# Everguide v2.2.4
+# Everguide v2.3.0
 
 Companies House-led discovery foundation for the Everguide funeral director directory.
 

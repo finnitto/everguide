@@ -324,42 +324,13 @@ def verify_website_candidates(limit=50, run_id=None):
                 if name_collision or postcode_collision or domain_collision:
                     candidate.status = "auto_approval_held_possible_duplicate"
                     approval_state = "held_possible_duplicate"
-                elif not settings.auto_approve_providers:
+                else:
                     candidate.status = "held_quality_review"
                     approval_state = "held_quality_review"
-                    db.add(AuditEvent(entity_type="website_candidate", entity_id=candidate.id, action="automatic_publication_paused_quality_gate",
+                    db.add(AuditEvent(entity_type="website_candidate", entity_id=candidate.id, action="publication_held_for_human_approval",
                         detail={"verification_id": verification.id, "source_url": candidate.result_url,
                             "extracted_name": extracted.get("name"), "confidence": extracted.get("confidence"),
-                            "reason": "v1.4 quality safeguard: automatic publication paused pending quality review"}))
-                else:
-                    confidence = float(extracted.get("confidence", 0.82))
-                    provider = Provider(trading_name=extracted["name"], website=candidate.result_url,
-                        provider_type="funeral_director", status="published", verification_status="approved", quality_status="unassessed",
-                        notes="Automatically approved using corroborated funeral-sector website identity signals. Quality audit remains available.")
-                    db.add(provider); db.flush()
-                    branch = None
-                    if extracted.get("has_complete_branch_address"):
-                        branch = Branch(provider_id=provider.id, branch_name=extracted["name"],
-                            address_line_1=extracted["street"], town_city=extracted["town"], postcode=extracted["postcode"],
-                            telephone=extracted.get("telephone"), email=extracted.get("email"), website=candidate.result_url,
-                            status="published")
-                        db.add(branch); db.flush()
-                    db.add(SourceObservation(provider_id=provider.id, branch_id=branch.id if branch else None,
-                        source_type="provider_website_business_identity", source_name="Provider website business identity evidence",
-                        source_url=candidate.result_url, confidence=confidence,
-                        observed_data={"provider_name": extracted["name"], "branch_name": extracted["name"] if branch else None,
-                            "address_line_1": extracted.get("street"), "town_city": extracted.get("town"),
-                            "postcode": extracted.get("postcode"), "telephone": extracted.get("telephone"),
-                            "email": extracted.get("email"), "website": candidate.result_url,
-                            "funeral_signals": extracted.get("funeral_signals", []), "verification_id": verification.id,
-                            "content_sha256": result.get("content_sha256"), "branch_created": bool(branch)},
-                        review_status="accepted", notes="Automatically published as a new provider; only extracted factual fields retained. Branch created only when a complete UK address was evidenced."))
-                    db.add(AuditEvent(entity_type="provider", entity_id=provider.id, action="auto_approved_published",
-                        detail={"candidate_id": candidate.id, "verification_id": verification.id,
-                            "source_url": candidate.result_url, "confidence": confidence,
-                            "branch_created": bool(branch), "rule": "reachable_https_robots_allowed_funeral_business_identity_no_name_postcode_or_domain_collision"}))
-                    candidate.status = "auto_approved_published"
-                    approval_state = "auto_approved_published"
+                            "reason": "Everguide publication requires explicit human approval; automated checks only create review evidence."}))
             # A candidate that did not qualify under the expanded rules is marked
             # as reassessed so future batches do not loop over the same negative
             # result. Duplicate holds and published providers retain their explicit
@@ -427,5 +398,110 @@ def verify_website_candidates(limit=50, run_id=None):
             except Exception:
                 db.rollback()
         raise
+    finally:
+        db.close()
+
+
+@celery_app.task(name="everguide.companies_house.discover_websites")
+def discover_company_websites(run_id: int):
+    """Search and cautiously verify official-site leads linked to Companies House candidates.
+
+    Work is committed in small batches. A provider/search outage pauses the run; it
+    never converts the current legal-entity candidate into a permanent failure.
+    No Provider, Branch or publication rows are created.
+    """
+    import time
+    import ipaddress
+    from urllib.parse import urlsplit
+    from sqlalchemy import or_
+    from app.models import CompaniesHouseCandidate, CompanyWebsiteCandidate, CompanyWebsiteDiscoveryRun, AuditEvent
+    from app.search_providers import search_web, SearchProviderError
+    from app.website_checks import verify_candidate
+    db=SessionLocal()
+    run=db.get(CompanyWebsiteDiscoveryRun,run_id)
+    if not run: db.close(); return {"status":"missing","run_id":run_id}
+    run.status="running"; run.started_at=run.started_at or datetime.now(timezone.utc); db.commit()
+    batch_size=max(1,min(int(run.batch_size or 25),50))
+    try:
+        query=(db.query(CompaniesHouseCandidate).filter(CompaniesHouseCandidate.company_status=="active",
+            CompaniesHouseCandidate.profile_status=="completed", CompaniesHouseCandidate.classification.in_(["likely_funeral_director","uncertain"]),
+            CompaniesHouseCandidate.website_discovery_status.in_(["not_requested","search_failed"])).order_by(
+            (CompaniesHouseCandidate.classification=="likely_funeral_director").desc(),CompaniesHouseCandidate.id.asc()).limit(batch_size))
+        companies=query.all()
+        if not companies:
+            run.status="completed"; run.completed_at=datetime.now(timezone.utc); db.commit()
+            return {"status":"completed","run_id":run_id,"processed":run.processed_candidates}
+        excluded={"nafd.org.uk","funeral-directory.co.uk","saif.org.uk","yell.com","facebook.com","instagram.com","linkedin.com","trustpilot.com"}
+        for company in companies:
+            address=company.registered_office_address or {}
+            town=(address.get("locality") or address.get("postal_town") or address.get("town") or "").strip()
+            q=f'"{company.company_name}" funeral director {town} England official website'.strip()
+            try:
+                results=search_web(q,provider=settings.search_provider,brave_api_key=settings.brave_search_api_key,count=5)
+            except SearchProviderError as exc:
+                run.status="paused"; run.error_message=str(exc)[:1200]; run.completed_at=datetime.now(timezone.utc)
+                db.add(AuditEvent(entity_type="company_website_discovery",entity_id=run.id,action="paused_search_provider_error",detail={"company_number":company.company_number,"error":run.error_message,"processed":run.processed_candidates}))
+                db.commit(); return {"status":"paused","run_id":run_id,"reason":run.error_message}
+            accepted=[]
+            for rank,item in enumerate(results,1):
+                url=(item.get("url") or "").strip(); title=(item.get("title") or "").strip()
+                if not url or not title: continue
+                parsed=urlsplit(url)
+                if parsed.scheme.lower()!="https" or not parsed.hostname or parsed.username or parsed.password or parsed.port not in (None,443): continue
+                domain=parsed.hostname.lower().removeprefix("www.")
+                if domain in excluded or any(domain.endswith("."+x) for x in excluded): continue
+                if any(x in domain for x in ("gov.uk","council","directory","compare")): continue
+                tokens={x for x in re.findall(r"[a-z0-9]+",company.company_name.lower()) if len(x)>2 and x not in {"limited","ltd","plc","the","and","funeral","directors","director","services"}}
+                hay=" ".join([title,item.get("description") or "",domain]).lower()
+                hits=sum(1 for token in tokens if token in hay)
+                score=min(1.0,hits/max(1,min(len(tokens),4)))
+                accepted.append((score,rank,item,domain))
+            accepted.sort(key=lambda x:(x[0],-x[1]),reverse=True)
+            if not accepted:
+                company.website_discovery_status="no_results"; company.website_discovery_checked_at=datetime.now(timezone.utc); company.website_discovery_error=None
+                run.no_results+=1
+            else:
+                for result_index,(score,rank,item,domain) in enumerate(accepted[:3],1):
+                    url=item["url"][:1000]
+                    exists=db.query(CompanyWebsiteCandidate).filter(CompanyWebsiteCandidate.companies_house_candidate_id==company.id,CompanyWebsiteCandidate.result_url==url).first()
+                    if exists: continue
+                    row=CompanyWebsiteCandidate(companies_house_candidate_id=company.id,discovery_run_id=run.id,
+                        result_title=(item.get("title") or "")[:500],result_url=url,result_domain=domain[:255],
+                        result_snippet=(item.get("description") or "")[:1500],search_provider=item.get("provider") or settings.search_provider,match_score=score)
+                    db.add(row); db.flush(); run.results_found+=1
+                    # Verify only the strongest two leads per company; all extracted fields remain proposals.
+                    if result_index<=2:
+                        try:
+                            verified=verify_candidate(url)
+                            row.verification_status="identity_signals_found" if verified.get("status")=="reachable" and verified.get("extracted_data") else verified.get("status","checked")
+                            row.final_url=verified.get("final_url"); row.http_status=verified.get("http_status")
+                            row.robots_allowed=verified.get("robots_allowed"); row.page_title=verified.get("page_title")
+                            row.content_sha256=verified.get("content_sha256"); row.extracted_data={k:v for k,v in (verified.get("extracted_data") or {}).items() if k in {"name","street","town","postcode","telephone","website","source_type","country","confidence","funeral_signals","has_complete_branch_address"}} or None
+                            row.detail=verified.get("detail"); row.checked_at=datetime.now(timezone.utc); run.websites_checked+=1
+                            if row.verification_status=="identity_signals_found": run.identity_signals+=1
+                        except Exception as exc:
+                            row.verification_status="check_blocked_or_failed"; row.detail=str(exc)[:1000]; row.checked_at=datetime.now(timezone.utc); run.websites_checked+=1
+                company.website_discovery_status="searched"; company.website_discovery_checked_at=datetime.now(timezone.utc); company.website_discovery_error=None
+            run.processed_candidates+=1
+            db.commit()
+            time.sleep(1.1)
+        # Queue the next bounded batch. This is a single tracked run, not an unbounded worker loop.
+        remaining=db.query(CompaniesHouseCandidate.id).filter(CompaniesHouseCandidate.company_status=="active",
+            CompaniesHouseCandidate.profile_status=="completed",CompaniesHouseCandidate.classification.in_(["likely_funeral_director","uncertain"]),
+            CompaniesHouseCandidate.website_discovery_status.in_(["not_requested","search_failed"])).first()
+        if remaining:
+            next_task=discover_company_websites.delay(run.id); run.celery_task_id=next_task.id; db.commit()
+            return {"status":"running","run_id":run.id,"processed":run.processed_candidates,"next_task_id":next_task.id}
+        run.status="completed"; run.completed_at=datetime.now(timezone.utc); run.error_message=None
+        db.add(AuditEvent(entity_type="company_website_discovery",entity_id=run.id,action="completed",detail={"processed":run.processed_candidates,"results_found":run.results_found,"websites_checked":run.websites_checked,"identity_signals":run.identity_signals,"no_results":run.no_results,"publication_changes":0}))
+        db.commit()
+        return {"status":"completed","run_id":run.id,"processed":run.processed_candidates,"results_found":run.results_found,"identity_signals":run.identity_signals}
+    except Exception as exc:
+        db.rollback(); run=db.get(CompanyWebsiteDiscoveryRun,run_id)
+        if run:
+            run.status="paused"; run.error_message=f"Discovery paused safely: {type(exc).__name__}: {exc}"[:1200]; run.completed_at=datetime.now(timezone.utc)
+            db.add(AuditEvent(entity_type="company_website_discovery",entity_id=run.id,action="paused_unexpected_error",detail={"error":run.error_message,"processed":run.processed_candidates}))
+            db.commit()
+        return {"status":"paused","run_id":run_id,"reason":str(exc)[:1000]}
     finally:
         db.close()

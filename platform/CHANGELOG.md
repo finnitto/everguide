@@ -65,3 +65,13 @@
 - Added profile enrichment status, completion and failure metrics to admin.
 - Kept legal-entity enrichment separate from provider creation, branch discovery and publication.
 - Added migration `0015_ch_profiles`.
+
+## 2.3.0 — Companies House-linked website discovery foundation
+- Adds a separate website-discovery run and candidate model linked to each Companies House legal-entity candidate.
+- Searches active, profile-enriched likely-funeral-director and uncertain candidates using the configured Brave Search API, in resumable batches of 25.
+- Verifies up to two strongest HTTPS leads per company using existing public-host, robots.txt, response-size and no-redirect safeguards.
+- Stores search provenance, result metadata, verification outcome, content digest and minimised extracted business identity signals; response page bodies are discarded and personal email fields are not retained.
+- Pauses safely on search-provider or unexpected errors and supports resuming without re-searching completed candidates.
+- Does not create or publish providers, branches, addresses, prices or public listings. Registered-office addresses are query context only.
+- Requires SEARCH_PROVIDER=brave and BRAVE_SEARCH_API_KEY.
+- Adds migration 0017_company_websites; existing candidate/profile data is preserved.
