@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "Everguide"
     app_env: str = "development"
-    app_version: str = "2.1.0"
+    app_version: str = "2.2.4"
     database_url: str = "postgresql+psycopg://everguide:change-this-local-password@db:5432/everguide"
     redis_url: str = "redis://redis:6379/0"
     celery_broker_url: str = "redis://redis:6379/1"

@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.2.4
+- Pause the whole enrichment batch immediately on HTTP 429, transient HTTP 5xx, authentication/permission errors, network errors or timeouts.
+- Preserve the current candidate status and profile data when a transient service condition interrupts a run.
+- Mark the run `interrupted`, record the reason and audit the processed count; a later run resumes only failed and unprocessed candidates.
+- Pace successful profile requests at 1.1 seconds, including 404 responses, and remove blind per-candidate retries after a rate limit.
+- Keep previous-company-name lookup out of the critical path and correct the admin UI wording.
+- No schema migration, provider creation, branch creation or publication.
+
+## 2.2.3 — Web container bind-address correction
+- Explicitly sets `HOSTNAME=0.0.0.0` in the production web image. Next.js standalone server otherwise inherited Docker's injected container hostname and bound only to the container interface, causing the loopback Docker health check to fail.
+- Keeps the existing loopback health check; no health-check masking.
+- No database migration or data changes. Companies House enrichment remains paused until separately verified.
+
+
+## 2.2.2 — Companies House enrichment recovery
+- Removed the failing previous-company-names request from the critical profile lookup path; previous names remain optional and existing values are preserved.
+- Added conservative request pacing and bounded HTTP 429 retries using Retry-After when provided, with exponential backoff otherwise.
+- Failed and not-requested candidates remain eligible for a subsequent enrichment run; completed profiles are not fetched again.
+- Added migration 0016 to mark an interrupted enrichment run as interrupted after a worker termination, without modifying candidate/profile data.
+- No provider, branch, or publication records are created.
+
+## 2.2.1
+- Fix Candidate TypeScript definition for profile enrichment status.
+- Fix ESLint flat-config handling for eslint-config-next 15.5.6 by treating exported configs as config objects rather than iterables.
+- No database migration; preserves the v2.2.0 schema and imported Companies House data.
+
+# Changelog
+
 ## 2.0.0 — Companies House-led discovery foundation
 
 - One-time PostgreSQL migration clears the early development provider directory, branches, Google Places observations, website discovery/verification records, correction proposals, source permissions and related discovery activity.

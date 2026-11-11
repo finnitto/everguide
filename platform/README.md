@@ -1,4 +1,4 @@
-# Everguide v2.0.0
+# Everguide v2.2.4
 
 Companies House-led discovery foundation for the Everguide funeral director directory.
 
@@ -54,4 +54,4 @@ The import history exposes the API-reported total, response page size, pages fet
 
 ## v2.2 company profile enrichment
 
-After importing and classifying Companies House candidates, use **Enrich Companies House profiles** in the admin console. This background job fetches each active candidate's official company profile and previous company names, stores legal-entity evidence, and records retryable failures. It does not create providers, branches or publication records. Requests are paced conservatively.
+After importing and classifying Companies House candidates, use **Enrich Companies House profiles** in the admin console. This background job fetches each active candidate's official company profile and stores legal-entity evidence. Previous-name history is not requested because the endpoint returned server errors during the initial integration test. It does not create providers, branches or publication records. Requests are paced at 1.1 seconds between successful requests. If Companies House returns HTTP 429, a temporary HTTP 5xx, an authentication/permission error, or a network timeout, the batch is marked interrupted and stops without changing the current candidate. A later enrichment run retries only candidates still marked failed or not requested; completed profiles are not fetched again.
