@@ -1,4 +1,4 @@
-# Everguide v2.3.0
+# Everguide v2.4.0
 
 Companies House-led discovery foundation for the Everguide funeral director directory.
 
@@ -55,3 +55,14 @@ The import history exposes the API-reported total, response page size, pages fet
 ## v2.2 company profile enrichment
 
 After importing and classifying Companies House candidates, use **Enrich Companies House profiles** in the admin console. This background job fetches each active candidate's official company profile and stores legal-entity evidence. Previous-name history is not requested because the endpoint returned server errors during the initial integration test. It does not create providers, branches or publication records. Requests are paced at 1.1 seconds between successful requests. If Companies House returns HTTP 429, a temporary HTTP 5xx, an authentication/permission error, or a network timeout, the batch is marked interrupted and stops without changing the current candidate. A later enrichment run retries only candidates still marked failed or not requested; completed profiles are not fetched again.
+
+### v2.4.2 identity assessment
+
+Identity assessment is queued to the Celery worker and processed in batches of 25 companies. Progress is persisted in `identity_assessment_runs`; a failed/interrupted run can be resumed from its last committed company using `POST /api/v1/identity-review/runs/{run_id}/resume`. Inspect progress with `GET /api/v1/identity-review/runs`.
+
+Branch proposals require complete structured address evidence, a positive England postcode/country assessment, and a source page on the same domain as the business website declared in its structured data. Devolved-nation and ambiguous postcode areas are excluded. Numeric telephone values are omitted because they may have lost formatting or precision. Assessment creates review-only proposals; it does not create or publish providers or branches.
+
+
+### Docker Desktop proxy for web builds (v2.4.3)
+
+The web image passes Docker Desktop's `http.docker.internal:3128` proxy to npm during the dependency-install stage. This is a build-time setting only. For another environment, override `HTTP_PROXY` and `HTTPS_PROXY` in the shell or `.env`; set both to empty values to disable the local defaults. The npm cache uses a BuildKit cache mount.

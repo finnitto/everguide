@@ -257,3 +257,53 @@ class CompanyWebsiteCandidate(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+
+class CompanyIdentityReview(Base):
+    __tablename__ = "company_identity_reviews"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    companies_house_candidate_id: Mapped[int] = mapped_column(ForeignKey("companies_house_candidates.id", ondelete="CASCADE"), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    suggested_trading_name: Mapped[str | None] = mapped_column(String(240))
+    suggested_website: Mapped[str | None] = mapped_column(String(1000))
+    suggested_domain: Mapped[str | None] = mapped_column(String(255), index=True)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    duplicate_leads_collapsed: Mapped[int] = mapped_column(Integer, default=0)
+    review_notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+class CompanyBranchProposal(Base):
+    __tablename__ = "company_branch_proposals"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    companies_house_candidate_id: Mapped[int] = mapped_column(ForeignKey("companies_house_candidates.id", ondelete="CASCADE"), index=True)
+    website_candidate_id: Mapped[int] = mapped_column(ForeignKey("company_website_candidates.id", ondelete="CASCADE"), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    proposed_branch_name: Mapped[str | None] = mapped_column(String(240))
+    address_line: Mapped[str | None] = mapped_column(String(500))
+    town_city: Mapped[str | None] = mapped_column(String(120))
+    postcode: Mapped[str | None] = mapped_column(String(12), index=True)
+    telephone: Mapped[str | None] = mapped_column(String(40))
+    website: Mapped[str | None] = mapped_column(String(1000))
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    review_notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class IdentityAssessmentRun(Base):
+    __tablename__ = "identity_assessment_runs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
+    total_companies: Mapped[int] = mapped_column(Integer, default=0)
+    processed_companies: Mapped[int] = mapped_column(Integer, default=0)
+    identity_reviews_created: Mapped[int] = mapped_column(Integer, default=0)
+    branch_proposals_created: Mapped[int] = mapped_column(Integer, default=0)
+    branch_evidence_skipped: Mapped[int] = mapped_column(Integer, default=0)
+    last_company_candidate_id: Mapped[int] = mapped_column(Integer, default=0)
+    celery_task_id: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -1,4 +1,29 @@
+## v2.4.4 — Identity assessment resilience and conservative scoring
+
+- Prevents promotional page descriptions from being stored as trading names; only concise candidate labels within the 240-character field limit are accepted, with original extracted data retained in evidence.
+- Replaces relevance-driven confidence inflation with a conservative evidence-priority score capped at 0.75; known directories and adjacent sectors such as pet cremation and funeral-plan services are capped at 0.20. Scores are explicitly not probabilities or proof of provider identity.
+- Excludes adjacent-sector signals from branch proposals. Existing pending branch proposals that fail the stricter reassessment are moved to `needs_more_evidence`; accepted/rejected human decisions are not changed.
+- Isolates unexpected per-company processing errors with database savepoints, records an audit event and continues the batch. Runs finish as `completed_with_errors` when any company failed, rather than losing the remaining national assessment.
+- Reprocesses pending identity/branch proposals idempotently; original website leads and extracted evidence remain intact. No provider or branch is created or published.
+- No schema migration.
+
+## v2.4.3 — Docker Desktop proxy-aware web builds
+
+- Pass Docker Desktop's local HTTP proxy to the web dependency-install build stage by default, fixing environments where direct container egress is unavailable.
+- Keep proxy values build-time-only; they are not copied into the runtime image or application environment.
+- Add a BuildKit npm cache mount to reduce repeat downloads and improve recovery from interrupted builds.
+- Allow other build environments to override `HTTP_PROXY` and `HTTPS_PROXY`; set both to empty values to disable the local proxy defaults.
+- No database schema or data changes.
+- Dependency installation still uses the existing pinned `package.json`; a lockfile has not yet been introduced.
+
 # Changelog
+
+## 2.4.1
+- Tightened identity confidence so third-party directory results cannot receive high identity confidence from search relevance alone.
+- Restricted branch proposals to complete UK addresses extracted from structured business data on non-directory domains.
+- Preserved original website candidate rows and evidence; no provider or branch publication is performed.
+- Kept telephone values as text when transferring extracted evidence into branch proposals.
+
 
 ## 2.2.4
 - Pause the whole enrichment batch immediately on HTTP 429, transient HTTP 5xx, authentication/permission errors, network errors or timeouts.
@@ -75,3 +100,24 @@
 - Does not create or publish providers, branches, addresses, prices or public listings. Registered-office addresses are query context only.
 - Requires SEARCH_PROVIDER=brave and BRAVE_SEARCH_API_KEY.
 - Adds migration 0017_company_websites; existing candidate/profile data is preserved.
+
+
+## 2.4.0 — Website identity and branch review
+
+- Adds company-level identity review records derived from existing website leads.
+- Consolidates repeated leads by company and canonical domain for review while preserving every original lead and verification attempt.
+- Adds review-only branch proposals only when a website extraction explicitly supplies a complete address and marks it complete. Registered-office data is never used to create a branch proposal.
+- Adds idempotent review-queue preparation, summary/list endpoints, decision endpoints and audit events.
+- Adds an admin panel for preparing and inspecting identity and branch review queues.
+- No provider or branch records are created or published.
+- Adds migration `0018_identity_branch_review`; existing Companies House candidates and website leads are preserved.
+
+## v2.4.2 — England-only resumable identity assessment
+
+- Replaced synchronous identity queue preparation with a Celery-backed assessment run, processed in committed batches of 25 Companies House candidates.
+- Added persistent run progress, counters, last committed candidate cursor, failure detail, and a resume endpoint. Re-running is idempotent and preserves human decisions.
+- Restricted branch proposals to complete structured addresses with positive England postcode/country evidence. Scottish, Welsh, Northern Irish and ambiguous cross-border postcode areas are excluded; unconfirmed geography is skipped for review rather than guessed.
+- Require the page carrying structured address evidence to be on the same domain as the website declared by that structured data, and exclude known directory domains.
+- Numeric telephone values are omitted rather than rendered as corrupted numbers; textual phone values are preserved.
+- Added `GET /api/v1/identity-review/runs` and `POST /api/v1/identity-review/runs/{run_id}/resume`.
+- No provider or branch records are created or published. Existing source leads and evidence are not deleted.

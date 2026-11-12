@@ -1,7 +1,19 @@
+# syntax=docker/dockerfile:1.7
 FROM node:24-alpine AS dependencies
 WORKDIR /app
 COPY package*.json ./
-RUN npm install
+# Docker Desktop on some Windows/WSL2 setups requires its internal proxy for
+# outbound HTTPS. Keep proxy settings build-time-only; never copy them to runtime.
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    if [ -n "${HTTPS_PROXY:-}" ] || [ -n "${HTTP_PROXY:-}" ]; then \
+      npm_config_proxy="${HTTP_PROXY:-$HTTPS_PROXY}" \
+      npm_config_https_proxy="${HTTPS_PROXY:-$HTTP_PROXY}" \
+      npm install; \
+    else \
+      npm install; \
+    fi
 
 FROM node:24-alpine AS builder
 WORKDIR /app

@@ -1,4 +1,4 @@
-# Company-linked website discovery (v2.3.0)
+# Company-linked website discovery (v2.4.0)
 
 ## Purpose
 Find likely official website leads for the existing Companies House candidate set. This is an evidence-gathering stage, not provider approval or branch publication.

@@ -126,7 +126,7 @@ def _get_company_resource(api_key: str, path: str):
     req = urllib.request.Request(url, headers={
         "Authorization": "Basic " + token,
         "Accept": "application/json",
-        "User-Agent": "Everguide/2.3.0 company enrichment",
+        "User-Agent": "Everguide/2.4.0 company enrichment",
     })
     try:
         with urllib.request.urlopen(req, timeout=30) as response:

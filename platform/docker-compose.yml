@@ -36,7 +36,7 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-development}
       APP_NAME: ${APP_NAME:-Everguide}
-      APP_VERSION: "2.3.0"
+      APP_VERSION: "2.4.3"
       COMPANIES_HOUSE_API_KEY: ${COMPANIES_HOUSE_API_KEY:-}
       COMPANIES_HOUSE_SIC_CODES: ${COMPANIES_HOUSE_SIC_CODES:-96030}
       GOOGLE_PLACES_API_KEY: ${GOOGLE_PLACES_API_KEY:-}
@@ -112,6 +112,11 @@ services:
     build:
       context: ./apps/web
       dockerfile: Dockerfile
+      args:
+        # Local Docker Desktop default. Override HTTP_PROXY/HTTPS_PROXY in the
+        # shell or .env for another build environment; set them empty to disable.
+        HTTP_PROXY: ${HTTP_PROXY:-http://http.docker.internal:3128}
+        HTTPS_PROXY: ${HTTPS_PROXY:-http://http.docker.internal:3128}
     environment:
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
       NODE_ENV: production
