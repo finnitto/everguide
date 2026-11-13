@@ -557,7 +557,7 @@ def provider_analytics(db: Session = Depends(get_db)):
 
     county_counts = Counter((b.county or "County not recorded").strip() for b in published_branches)
     region_rows = [{"county": name, "published_branches": count} for name, count in county_counts.most_common()]
-    paused_candidates = db.query(WebsiteDiscoveryResult).filter(WebsiteDiscoveryResult.status == "held_quality_review").order_by(WebsiteDiscoveryResult.id.desc()).limit(100).all()
+    paused_candidates = db.query(WebsiteDiscoveryResult).filter(WebsiteDiscoveryResult.status.in_(["exception_review", "held_quality_review", "auto_approval_held_possible_duplicate"])).order_by(WebsiteDiscoveryResult.id.desc()).limit(100).all()
     latest_checks = {}
     if paused_candidates:
         paused_ids = [c.id for c in paused_candidates]
@@ -582,7 +582,7 @@ def provider_analytics(db: Session = Depends(get_db)):
                     "confirmed": sum(p.quality_status == "confirmed" for p in providers),
                     "insufficient_evidence": sum(p.quality_status == "insufficient_evidence" for p in providers),
                     "unassessed": sum(p.quality_status == "unassessed" for p in providers),
-                    "paused_candidate_count": db.query(WebsiteDiscoveryResult).filter(WebsiteDiscoveryResult.status == "held_quality_review").count(),
+                    "paused_candidate_count": db.query(WebsiteDiscoveryResult).filter(WebsiteDiscoveryResult.status.in_(["exception_review", "held_quality_review", "auto_approval_held_possible_duplicate"])).count(),
                     "paused_candidates": paused_candidate_rows,
                     "flagged_providers": [{"id": p.id, "name": p.trading_name, "website": p.website,
                         "status": p.status, "quality_status": p.quality_status, "verification_status": p.verification_status}
@@ -592,6 +592,11 @@ def provider_analytics(db: Session = Depends(get_db)):
                         for p in providers if p.quality_status != "unassessed"][:200]},
         "geography": region_rows,
         "duplicate_checks": {"groups_flagged": len(duplicate_groups), "groups": duplicate_groups[:100]},
+        "auto_approval": {"enabled": settings.auto_approve_providers,
+            "minimum_confidence": settings.auto_approval_min_confidence,
+            "published_providers": len(auto_provider_ids),
+            "exception_candidates": db.query(WebsiteDiscoveryResult).filter(WebsiteDiscoveryResult.status.in_(["exception_review", "held_quality_review", "auto_approval_held_possible_duplicate"])).count(),
+            "not_eligible_candidates": db.query(WebsiteDiscoveryResult).filter(WebsiteDiscoveryResult.status == "reassessed_not_eligible").count()},
         "auto_approval_audit": [{"provider_id": e.entity_id, "provider_name": next((p.trading_name for p in providers if p.id == e.entity_id), None),
             "created_at": e.created_at, "detail": e.detail or {}} for e in recent],
         "branch_enrichment": {"latest_runs": [{"created_at": e.created_at, **(e.detail or {})}

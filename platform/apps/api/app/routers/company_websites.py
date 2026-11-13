@@ -4,7 +4,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.config import settings
-from app.models import (CompaniesHouseCandidate, CompanyWebsiteCandidate, CompanyWebsiteDiscoveryRun)
+from app.models import (CompaniesHouseCandidate, CompanyWebsiteCandidate, CompanyWebsiteDiscoveryRun, Provider, AuditEvent)
 from app.tasks import discover_company_websites
 
 router = APIRouter(prefix="/api/v1/company-websites", tags=["company website discovery"])
@@ -25,12 +25,20 @@ def status(db: Session = Depends(get_db)):
         CompaniesHouseCandidate.profile_status == "completed", CompaniesHouseCandidate.classification.in_(["likely_funeral_director", "uncertain"]),
         CompaniesHouseCandidate.website_discovery_status.in_(["not_requested", "search_failed"])).scalar() or 0
     found = db.query(func.count(CompanyWebsiteCandidate.id)).scalar() or 0
-    verified = db.query(func.count(CompanyWebsiteCandidate.id)).filter(CompanyWebsiteCandidate.verification_status == "identity_signals_found").scalar() or 0
+    verified = db.query(func.count(CompanyWebsiteCandidate.id)).filter(CompanyWebsiteCandidate.verification_status.in_(["identity_signals_found", "auto_approved_published", "exception_review"])).scalar() or 0
     latest = db.query(CompanyWebsiteDiscoveryRun).order_by(CompanyWebsiteDiscoveryRun.id.desc()).first()
+    auto_approved = db.query(func.count(AuditEvent.id)).filter(
+        AuditEvent.entity_type == "provider", AuditEvent.action == "auto_approved_published").scalar() or 0
+    exceptions = db.query(func.count(CompanyWebsiteCandidate.id)).filter(
+        CompanyWebsiteCandidate.verification_status == "exception_review").scalar() or 0
     return {"configured": settings.search_provider == "brave" and bool(settings.brave_search_api_key),
         "provider": settings.search_provider, "eligible_companies": eligible,"unsearched_companies":unsearched,
         "website_candidates":found,"identity_signal_candidates":verified,"latest_run":_run_dict(latest),
-        "note":"Search results are leads only. Website checks obey robots.txt, use HTTPS/public-host safeguards, discard page bodies and never create or publish providers or branches."}
+        "auto_approval": {"enabled": settings.auto_approve_providers,
+            "minimum_confidence": settings.auto_approval_min_confidence,
+            "published_providers": auto_approved, "exception_candidates": exceptions,
+            "published_provider_total": db.query(Provider).filter(Provider.status == "published").count()},
+        "note":"Eligible high-confidence first-party provider website evidence is automatically approved and published. Incomplete, conflicting, low-confidence and duplicate candidates are routed to the administrator exception queue. Website page bodies are discarded."}
 
 @router.get("/runs")
 def runs(limit: int = 10, db: Session = Depends(get_db)):
@@ -60,7 +68,7 @@ def start_run(db: Session = Depends(get_db)):
         db.rollback(); failed=db.get(CompanyWebsiteDiscoveryRun,run.id)
         if failed: failed.status="failed"; failed.error_message=str(exc)[:1000]; failed.completed_at=datetime.now(timezone.utc); db.commit()
         raise HTTPException(503,"Could not queue company website discovery. Check worker and Redis services.")
-    return {"message":f"England-wide website discovery queued for up to {remaining:,} eligible companies in batches of 25. No providers or branches will be created or published.","run":_run_dict(run),"task_id":task.id}
+    return {"message":f"England-wide website discovery queued for up to {remaining:,} eligible companies in batches of 25. High-confidence first-party candidates will be approved and published automatically; ambiguous or incomplete candidates will enter the exception queue.","run":_run_dict(run),"task_id":task.id}
 
 @router.post("/runs/{run_id}/resume", status_code=202)
 def resume_run(run_id: int, db: Session = Depends(get_db)):

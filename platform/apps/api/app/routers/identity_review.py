@@ -36,7 +36,7 @@ def summary(db: Session = Depends(get_db)):
         "published_providers_created": 0,
         "published_branches_created": 0,
         "latest_assessment_run": (lambda r: ({"id":r.id,"status":r.status,"processed_companies":r.processed_companies,"total_companies":r.total_companies} if r else None))(db.query(IdentityAssessmentRun).order_by(IdentityAssessmentRun.id.desc()).first()),
-        "note": "All outputs are review-only proposals. No provider or branch records are created or published."
+        "note": "This queue is reserved for candidates not automatically approved, including ambiguous identity and branch evidence. High-confidence candidates are published by the automatic approval workflow; this exception queue does not re-review them."
     }
 
 @router.get("/runs")
@@ -58,13 +58,14 @@ def prepare_review_queues(db: Session = Depends(get_db)):
         return {"status":active.status,"run_id":active.id,"message":"An identity assessment is already queued or running."}
     total = (db.query(func.count(func.distinct(CompanyWebsiteCandidate.companies_house_candidate_id)))
         .join(CompaniesHouseCandidate, CompaniesHouseCandidate.id == CompanyWebsiteCandidate.companies_house_candidate_id)
-        .filter(CompaniesHouseCandidate.company_status == "active").scalar() or 0)
+        .filter(CompaniesHouseCandidate.company_status == "active",
+                CompanyWebsiteCandidate.verification_status != "auto_approved_published").scalar() or 0)
     run = IdentityAssessmentRun(status="queued", total_companies=total)
     db.add(run); db.commit(); db.refresh(run)
     task = run_identity_assessment.delay(run.id)
     run.celery_task_id = task.id; db.commit()
     return {"status":"queued","run_id":run.id,"total_companies":total,
-        "message":"Identity and England-only branch assessment queued. Processing is resumable; no providers or branches will be published."}
+        "message":"Exception-only identity and England-only branch assessment queued. Automatically approved providers are excluded; unresolved proposals remain for administrator review."}
 
 @router.post("/runs/{run_id}/resume")
 def resume_assessment(run_id: int, db: Session = Depends(get_db)):

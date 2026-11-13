@@ -134,7 +134,7 @@ def _extract_funeral_provider_data(decoded: str):
             confidence = 0.94 if explicit_funeral_type and complete_address and telephone else 0.88 if complete_address and telephone else 0.84
             candidates.append({'name': name, 'street': street or None, 'town': town or None,
                 'postcode': postcode if postcode_ok else None, 'telephone': telephone, 'email': email,
-                'website': website, 'source_type': 'schema_org_' + (type_names[0] if type_names else 'business'),
+                'website': website, 'source_type': 'schema_org_funeralhome' if explicit_funeral_type else 'schema_org_' + (type_names[0] if type_names else 'business'),
                 'country': country_text or 'unspecified', 'confidence': confidence,
                 'funeral_signals': hits, 'has_complete_branch_address': complete_address})
     if not candidates:

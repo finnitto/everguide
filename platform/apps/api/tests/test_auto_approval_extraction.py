@@ -7,6 +7,7 @@ def test_extracts_complete_uk_funeral_home():
     assert result["name"] == "Example Funeral Directors"
     assert result["postcode"] == "YO1 1AA"
     assert result["has_complete_branch_address"] is True
+    assert result["source_type"] == "schema_org_funeralhome"
 
 
 def test_accepts_localbusiness_when_page_has_funeral_context():

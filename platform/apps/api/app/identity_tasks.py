@@ -24,7 +24,8 @@ def run_identity_assessment(self, run_id: int):
             ids = [r[0] for r in db.query(CompanyWebsiteCandidate.companies_house_candidate_id)
                 .join(CompaniesHouseCandidate, CompaniesHouseCandidate.id == CompanyWebsiteCandidate.companies_house_candidate_id)
                 .filter(CompaniesHouseCandidate.id > run.last_company_candidate_id,
-                        CompaniesHouseCandidate.company_status == "active")
+                        CompaniesHouseCandidate.company_status == "active",
+                        CompanyWebsiteCandidate.verification_status != "auto_approved_published")
                 .distinct().order_by(CompanyWebsiteCandidate.companies_house_candidate_id).limit(BATCH_SIZE).all()]
             if not ids:
                 run.status="completed_with_errors" if run.error_message else "completed"

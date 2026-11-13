@@ -1,6 +1,6 @@
-# Everguide v2.5.1
+# Everguide v2.6.1
 
-Companies House-led discovery foundation for the Everguide funeral director directory.
+Automation-first discovery, verification and publication foundation for the Everguide funeral director directory.
 
 ## Important deployment behaviour
 
@@ -121,3 +121,35 @@ revision and retain a database backup before restarting, especially if the
 database has not previously been upgraded through migration `0019`.
 
 Never run `docker compose down -v` for this update; `-v` removes named volumes.
+
+
+## v2.6.1 — Automation-first provider approval
+
+Everguide's normal operating model is automation-first. The system automatically creates and publishes a provider and its first branch when first-party website evidence passes every configured high-confidence rule. Administrators handle exceptions; they do not approve every ordinary provider manually.
+
+The first implemented ruleset (`provider-auto-approval-v1.1`) requires explicit Schema.org `FuneralHome` structured data, explicit funeral-sector page context, a complete UK street address/locality/postcode, a telephone number, a matching candidate/structured-data website domain, meaningful name alignment with the linked Companies House candidate, confidence at or above the configured threshold, and no existing provider/branch name, domain, postcode or telephone collision. Generic `LocalBusiness` and other structured-data types do not qualify for automatic publication. Existing records are never overwritten, merged or deleted by this path.
+
+Eligible candidates create a published provider and branch, an accepted source observation and audit events. The source page body is discarded; selected structured facts and a content digest are retained. Incomplete, conflicting, low-confidence, ambiguous or duplicate candidates enter the administrator exception queue with explicit reasons. Candidates without sufficient identity evidence are marked not eligible.
+
+### Automatic approval configuration
+
+The default operating model is enabled:
+
+```dotenv
+AUTO_APPROVE_PROVIDERS=true
+AUTO_APPROVAL_MIN_CONFIDENCE=0.94
+```
+
+Add or update these variables in your existing `.env` if it currently sets `AUTO_APPROVE_PROVIDERS=false`. Set it to `false` only to pause automatic publication while continuing discovery and evidence collection. The threshold is configurable; lowering it reduces the precision guardrail and should only follow measured validation. API, worker and scheduler services share these settings.
+
+See `docs/AUTOMATIC-PROVIDER-APPROVAL.md` for the full rules, exception reasons and source-permission safeguards. Directory approval does not imply NAFD/SAIF membership, FCA regulatory status or price approval.
+
+### Thurrock Overture exception pilot
+
+The Thurrock workbook remains an offline exception-review tool for the 16 Overture-derived observations. It does not write to the production database. These source-derived records are not eligible for automatic publication while the upstream licence and source-level permitted use remain unresolved. Use it to resolve the licence question, postcode/address conflicts and branch ambiguity—not as a manual approval queue for all Everguide providers. See `google_analysis/verification_pilot/README.md`.
+
+No new Alembic migration is added in v2.6.1.
+
+## Updating an existing installation to v2.6.1
+
+Follow the same safe overlay process described above for v2.5.1: back up PostgreSQL, extract the full ZIP into the existing project root, preserve `.env` and Docker volumes, then run `docker compose up -d --build`. This release adds no database migration. Do not run `docker compose down -v`.

@@ -29,3 +29,15 @@
 - Pricing discovery, extraction and approval
 - Scheduled revalidation and exception workflows
 - AWS deployment and infrastructure as code
+
+## v2.6.1 – Automation-first provider approval (implemented first pathway)
+- [x] Configurable automatic approval switch and confidence threshold.
+- [x] High-precision first-party website approval using explicit Schema.org `FuneralHome`, complete UK address, telephone, matching website domain, Companies House name relationship and duplicate checks.
+- [x] Automatic creation/publication of eligible provider and first branch, with accepted source observation and audit events.
+- [x] Exception routing for incomplete, conflicting, low-confidence, duplicate or ambiguous candidates.
+- [x] Exclude auto-approved records from the manual identity/branch exception workflow.
+- [ ] Extend independent evidence pathways to providers not represented in Companies House (sole traders and partnerships).
+- [ ] Automate multi-branch discovery and branch-level revalidation.
+- [ ] Automate NAFD, SAIF/SAIFCharter and FCA checks with independent status records.
+- [ ] Add source-permission policy configuration and legal review before commercial rollout.
+- [ ] Expand the ruleset with calibrated validation data and false-positive/false-negative monitoring.

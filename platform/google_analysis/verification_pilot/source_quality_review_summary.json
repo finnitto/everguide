@@ -1,0 +1,31 @@
+{
+  "generated_utc": "2026-11-13T12:16:30.478708+00:00",
+  "boundary_name": "Thurrock",
+  "boundary_code": "E06000034",
+  "boundary_source": "ONS ArcGIS FeatureServer",
+  "input_file": "google_analysis\\overture_candidates.csv",
+  "records_reviewed": 16,
+  "service_class_counts": {
+    "funeral_director_candidate": 13,
+    "memorial_or_masonry": 1,
+    "celebrant": 1,
+    "cemetery": 1
+  },
+  "review_decision_counts": {
+    "retain_candidate_pending_provider_verification": 8,
+    "exclude_from_funeral_director_category": 3,
+    "retain_but_review_address_relationship": 2,
+    "hold_for_manual_location_review": 1,
+    "retain_but_review_possible_duplicate": 2
+  },
+  "funeral_director_candidate_rows": 13,
+  "inside_boundary_funeral_director_rows": 13,
+  "geographically_eligible_rows_pending_provider_verification": 12,
+  "unique_branch_fingerprints_among_eligible_rows": 11,
+  "suggested_provider_groups_among_eligible_rows": 8,
+  "possible_duplicate_groups": 1,
+  "source_confidence_is_not_verification": true,
+  "production_database_accessed": false,
+  "google_places_data_used": false,
+  "important_note": "Review signals only. No records are created, merged, deleted, published or changed in Everguide."
+}

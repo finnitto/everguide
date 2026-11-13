@@ -1,6 +1,6 @@
 {
   "product": "Everguide",
-  "version": "2.5.1",
+  "version": "2.6.1",
   "archive_layout": "project files at archive root for direct overlay extraction",
   "database_migrations_added": [],
   "production_database_accessed_during_build": false,
@@ -11,11 +11,20 @@
     ".env.production"
   ],
   "postgres_data_excluded": true,
-  "included_overture_pilot_input": "google_analysis/overture_candidates.csv",
+  "automatic_approval": {
+    "enabled_by_default": true,
+    "ruleset": "provider-auto-approval-v1.1",
+    "minimum_confidence_default": 0.94,
+    "eligible_evidence": "first-party provider website with explicit Schema.org FuneralHome, complete UK branch address, telephone, matching website domain and Companies House name relationship",
+    "exceptions": "incomplete, conflicting, ambiguous, low-confidence or duplicate candidates are routed to administrator review"
+  },
+  "thurrock_overture_pilot": "offline exception-review only; no production DB access or publication while source permissions are unresolved",
   "tests": {
-    "focused_api_tests": "27 passed",
-    "overture_review_script_tests": "2 passed",
-    "python_syntax_checks": "7 files passed",
-    "full_api_suite": "not run; local build environment missing redis/celery runtime dependencies"
+    "focused_api_tests": "56 passed (SQLite in-memory for model-dependent tests)",
+    "overture_and_pilot_script_tests": "3 passed",
+    "python_syntax_checks": "10 changed API modules/tests passed",
+    "docker_compose_yaml": "parsed successfully",
+    "full_api_suite": "not run; build environment lacks psycopg, celery and redis runtime dependencies",
+    "frontend_build": "not run; node_modules not installed in build environment"
   }
 }

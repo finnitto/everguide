@@ -156,7 +156,8 @@ def process_company(db, company_id):
     company = db.get(CompaniesHouseCandidate, company_id)
     if not company or company.company_status != "active": return {"identity":0,"branch":0,"skipped":0}
     leads = (db.query(CompanyWebsiteCandidate)
-        .filter(CompanyWebsiteCandidate.companies_house_candidate_id == company_id)
+        .filter(CompanyWebsiteCandidate.companies_house_candidate_id == company_id,
+                CompanyWebsiteCandidate.verification_status != "auto_approved_published")
         .order_by(CompanyWebsiteCandidate.match_score.desc(), CompanyWebsiteCandidate.id.asc()).all())
     unique = {}
     for lead in leads:

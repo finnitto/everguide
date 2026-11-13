@@ -141,3 +141,26 @@
 - Duplicate branch proposals for the same company and normalized address are retained but secondary pending records are moved to `needs_more_evidence` with a link to the retained canonical proposal.
 - Existing pending identity reviews are reassessed in place; accepted/rejected human decisions are not overwritten. Existing evidence is retained.
 - No migration, provider creation, branch publication, Companies House import, or paid search is triggered by this release.
+
+
+## 2.6.0 — Thurrock provider verification pilot
+
+- Adds provider-group and branch-candidate verification registers from the ONS-boundary Thurrock quality review.
+- Adds a formatted Excel workbook with Provider Review, Branch Review, Evidence Log, Decision Log and Evidence Standards sheets.
+- Adds reviewer guidance covering source permissions, provider activity, trading status, provider identity, operating branches, addresses, postcodes and contact details.
+- Adds a completeness validator that blocks verified provider/branch outcomes when required evidence and parent-provider approval are missing.
+- Preserves all source observations; duplicate and address conflicts remain review-only.
+- Keeps the pilot offline and separate from the Everguide database and public directory. No provider/branch creation, merge, deletion or publication.
+- No database schema migration.
+
+
+## 2.6.1 — Automation-first provider approval
+
+- Implements deterministic automatic provider and first-branch creation/publication for high-confidence first-party provider website evidence.
+- Requires explicit Schema.org `FuneralHome`, complete UK address and postcode, telephone, matching candidate/structured website domain, meaningful Companies House/provider name alignment, configured confidence threshold and no provider/branch collision.
+- Routes incomplete, conflicting, ambiguous, low-confidence and duplicate cases to an administrator exception queue with machine-readable reasons.
+- Adds accepted source observations and audit events for automatic provider, branch and candidate decisions.
+- Defaults automatic approval to enabled; adds `AUTO_APPROVE_PROVIDERS` and `AUTO_APPROVAL_MIN_CONFIDENCE` controls.
+- Exposes automatic approval settings and outcome counts in the discovery summary.
+- Keeps the Thurrock Overture workbook as an exception-review aid; source-derived candidates are not auto-published while licence/permission remains unresolved.
+- No new database migration.

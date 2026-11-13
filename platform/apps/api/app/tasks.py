@@ -314,27 +314,79 @@ def verify_website_candidates(limit=50, run_id=None):
             approval_state = "not_eligible"
             extracted = result.get("extracted_data")
             if result.get("status") == "reachable" and extracted:
-                # Conservative duplicate gate: exact normalized business name or postcode collision
-                # sends the candidate to exception review; existing records are never overwritten.
-                norm = re.sub(r"[^a-z0-9]", "", extracted["name"].lower())
-                providers = db.query(Provider).all()
-                name_collision = any(re.sub(r"[^a-z0-9]", "", p.trading_name.lower()) == norm for p in providers)
-                postcode_collision = bool(extracted.get("postcode") and db.query(Branch).filter(Branch.postcode == extracted["postcode"]).first())
-                domain_collision = db.query(Provider).filter(Provider.website.ilike(f"%{candidate.result_domain}%")).first() is not None
-                if name_collision or postcode_collision or domain_collision:
-                    candidate.status = "auto_approval_held_possible_duplicate"
-                    approval_state = "held_possible_duplicate"
+                from app.provider_approval import assess_auto_approval
+                existing_providers = [{"trading_name": p.trading_name, "website": p.website}
+                                      for p in db.query(Provider).all()]
+                existing_branches = [{"postcode": b.postcode, "telephone": b.telephone}
+                                     for b in db.query(Branch).all()]
+                decision = assess_auto_approval(
+                    candidate_url=candidate.result_url,
+                    verification=result,
+                    candidate_company_name=candidate.result_title,
+                    existing_providers=existing_providers,
+                    existing_branches=existing_branches,
+                    enabled=settings.auto_approve_providers,
+                    minimum_confidence=settings.auto_approval_min_confidence,
+                )
+                if decision["eligible"]:
+                    # Create a new provider and one evidenced branch atomically.
+                    # Existing records are never overwritten or merged by this path.
+                    provider_website = extracted.get("website") or f"https://{candidate.result_domain}"
+                    provider = Provider(
+                        trading_name=extracted["name"], display_name=extracted["name"],
+                        website=provider_website, provider_type="funeral_director",
+                        status="published", verification_status="approved", quality_status="confirmed",
+                        notes="Automatically approved under " + decision["ruleset_version"],
+                    )
+                    branch = Branch(
+                        branch_name=extracted["name"], address_line_1=extracted["street"],
+                        town_city=extracted["town"], postcode=re.sub(r"\s+", " ", extracted["postcode"]).strip().upper(),
+                        telephone=extracted["telephone"], email=extracted.get("email"),
+                        website=provider_website, status="published", services=[],
+                    )
+                    provider.branches.append(branch)
+                    db.add(provider)
+                    db.flush()
+                    observation = SourceObservation(
+                        provider_id=provider.id, branch_id=branch.id,
+                        source_type="provider_owned_website_structured_data",
+                        source_name="Provider website (Schema.org FuneralHome)",
+                        source_url=candidate.result_url, confidence=extracted.get("confidence"),
+                        observed_data={k: extracted.get(k) for k in (
+                            "name", "street", "town", "postcode", "telephone", "email", "website",
+                            "source_type", "country", "confidence", "funeral_signals", "has_complete_branch_address")},
+                        review_status="accepted",
+                        notes="Automatically accepted as first-party structured identity evidence; source page body was discarded.",
+                    )
+                    db.add(observation)
+                    db.flush()
+                    candidate.status = "auto_approved_published"
+                    approval_state = "auto_approved_published"
+                    audit_detail = {
+                        "candidate_id": candidate.id, "verification_id": verification.id,
+                        "observation_id": observation.id, "branch_id": branch.id,
+                        "source_url": candidate.result_url, "confidence": decision["confidence"],
+                        "minimum_confidence": decision["minimum_confidence"],
+                        "ruleset_version": decision["ruleset_version"],
+                        "reasons": [], "source_page_body_retained": False,
+                    }
+                    db.add(AuditEvent(entity_type="provider", entity_id=provider.id,
+                        action="auto_approved_published", detail=audit_detail, actor="system-auto-approval"))
+                    db.add(AuditEvent(entity_type="branch", entity_id=branch.id,
+                        action="auto_approved_published", detail=audit_detail, actor="system-auto-approval"))
+                    db.add(AuditEvent(entity_type="website_candidate", entity_id=candidate.id,
+                        action="auto_approved_published", detail=audit_detail, actor="system-auto-approval"))
                 else:
-                    candidate.status = "held_quality_review"
-                    approval_state = "held_quality_review"
-                    db.add(AuditEvent(entity_type="website_candidate", entity_id=candidate.id, action="publication_held_for_human_approval",
+                    candidate.status = "exception_review"
+                    approval_state = "exception_review"
+                    db.add(AuditEvent(entity_type="website_candidate", entity_id=candidate.id,
+                        action="routed_to_exception_review",
                         detail={"verification_id": verification.id, "source_url": candidate.result_url,
-                            "extracted_name": extracted.get("name"), "confidence": extracted.get("confidence"),
-                            "reason": "Everguide publication requires explicit human approval; automated checks only create review evidence."}))
-            # A candidate that did not qualify under the expanded rules is marked
-            # as reassessed so future batches do not loop over the same negative
-            # result. Duplicate holds and published providers retain their explicit
-            # terminal statuses. Verification evidence remains in its own table.
+                                "extracted_name": extracted.get("name"), "confidence": decision["confidence"],
+                                "ruleset_version": decision["ruleset_version"], "exception_reasons": decision["reasons"]},
+                        actor="system-auto-approval"))
+            # Negative or insufficient checks are terminally reassessed. Candidates
+            # with positive but ambiguous evidence enter the exception queue.
             if approval_state == "not_eligible":
                 candidate.status = "reassessed_not_eligible"
                 db.add(AuditEvent(entity_type="website_candidate", entity_id=candidate.id,
@@ -406,22 +458,25 @@ def verify_website_candidates(limit=50, run_id=None):
 def discover_company_websites(run_id: int):
     """Search and cautiously verify official-site leads linked to Companies House candidates.
 
-    Work is committed in small batches. A provider/search outage pauses the run; it
-    never converts the current legal-entity candidate into a permanent failure.
-    No Provider, Branch or publication rows are created.
+    Work is committed in small batches. High-confidence first-party website evidence
+    is automatically approved and published; ambiguous cases enter the exception
+    queue. A provider/search outage pauses the run without corrupting candidates.
     """
     import time
     import ipaddress
     from urllib.parse import urlsplit
     from sqlalchemy import or_
-    from app.models import CompaniesHouseCandidate, CompanyWebsiteCandidate, CompanyWebsiteDiscoveryRun, AuditEvent
+    from app.models import CompaniesHouseCandidate, CompanyWebsiteCandidate, CompanyWebsiteDiscoveryRun, AuditEvent, Provider, Branch, SourceObservation
     from app.search_providers import search_web, SearchProviderError
     from app.website_checks import verify_candidate
+    from app.provider_approval import assess_auto_approval
     db=SessionLocal()
     run=db.get(CompanyWebsiteDiscoveryRun,run_id)
     if not run: db.close(); return {"status":"missing","run_id":run_id}
     run.status="running"; run.started_at=run.started_at or datetime.now(timezone.utc); db.commit()
     batch_size=max(1,min(int(run.batch_size or 25),50))
+    auto_approved_count = 0
+    exception_count = 0
     try:
         query=(db.query(CompaniesHouseCandidate).filter(CompaniesHouseCandidate.company_status=="active",
             CompaniesHouseCandidate.profile_status=="completed", CompaniesHouseCandidate.classification.in_(["likely_funeral_director","uncertain"]),
@@ -469,7 +524,7 @@ def discover_company_websites(run_id: int):
                         result_title=(item.get("title") or "")[:500],result_url=url,result_domain=domain[:255],
                         result_snippet=(item.get("description") or "")[:1500],search_provider=item.get("provider") or settings.search_provider,match_score=score)
                     db.add(row); db.flush(); run.results_found+=1
-                    # Verify only the strongest two leads per company; all extracted fields remain proposals.
+                    # Verify only the strongest two official-site leads per company; eligible records can pass the automatic approval gate.
                     if result_index<=2:
                         try:
                             verified=verify_candidate(url)
@@ -478,7 +533,74 @@ def discover_company_websites(run_id: int):
                             row.robots_allowed=verified.get("robots_allowed"); row.page_title=verified.get("page_title")
                             row.content_sha256=verified.get("content_sha256"); row.extracted_data={k:v for k,v in (verified.get("extracted_data") or {}).items() if k in {"name","street","town","postcode","telephone","website","source_type","country","confidence","funeral_signals","has_complete_branch_address"}} or None
                             row.detail=verified.get("detail"); row.checked_at=datetime.now(timezone.utc); run.websites_checked+=1
-                            if row.verification_status=="identity_signals_found": run.identity_signals+=1
+                            if row.verification_status=="identity_signals_found":
+                                run.identity_signals+=1
+                                decision = assess_auto_approval(
+                                    candidate_url=url,
+                                    verification=verified,
+                                    candidate_company_name=company.company_name,
+                                    existing_providers=[{"trading_name": p.trading_name, "website": p.website} for p in db.query(Provider).all()],
+                                    existing_branches=[{"postcode": b.postcode, "telephone": b.telephone} for b in db.query(Branch).all()],
+                                    enabled=settings.auto_approve_providers,
+                                    minimum_confidence=settings.auto_approval_min_confidence,
+                                )
+                                if decision["eligible"]:
+                                    extracted = verified["extracted_data"]
+                                    provider_website = extracted.get("website") or f"{parsed.scheme}://{parsed.netloc}"
+                                    provider = Provider(
+                                        trading_name=extracted["name"], display_name=extracted["name"],
+                                        website=provider_website, provider_type="funeral_director",
+                                        status="published", verification_status="approved", quality_status="confirmed",
+                                        notes="Automatically approved under " + decision["ruleset_version"],
+                                    )
+                                    branch = Branch(
+                                        branch_name=extracted["name"], address_line_1=extracted["street"],
+                                        town_city=extracted["town"], postcode=re.sub(r"\s+", " ", extracted["postcode"]).strip().upper(),
+                                        telephone=extracted["telephone"], email=extracted.get("email"),
+                                        website=provider_website, status="published", services=[],
+                                    )
+                                    provider.branches.append(branch)
+                                    db.add(provider); db.flush()
+                                    observation = SourceObservation(
+                                        provider_id=provider.id, branch_id=branch.id,
+                                        source_type="provider_owned_website_structured_data",
+                                        source_name="Provider website (Schema.org FuneralHome)", source_url=url,
+                                        confidence=extracted.get("confidence"),
+                                        observed_data={k: extracted.get(k) for k in (
+                                            "name", "street", "town", "postcode", "telephone", "email", "website",
+                                            "source_type", "country", "confidence", "funeral_signals", "has_complete_branch_address")}
+                                            | {"companies_house_candidate_id": company.id, "company_number": company.company_number},
+                                        review_status="accepted",
+                                        notes="Automatically accepted as first-party structured identity evidence; source page body was discarded.",
+                                    )
+                                    db.add(observation); db.flush()
+                                    row.verification_status="auto_approved_published"
+                                    auto_approved_count += 1
+                                    audit_detail = {
+                                        "company_number": company.company_number,
+                                        "website_candidate_id": row.id, "source_observation_id": observation.id,
+                                        "branch_id": branch.id, "source_url": url,
+                                        "confidence": decision["confidence"],
+                                        "minimum_confidence": decision["minimum_confidence"],
+                                        "ruleset_version": decision["ruleset_version"],
+                                        "source_page_body_retained": False,
+                                    }
+                                    db.add(AuditEvent(entity_type="provider", entity_id=provider.id,
+                                        action="auto_approved_published", detail=audit_detail, actor="system-auto-approval"))
+                                    db.add(AuditEvent(entity_type="branch", entity_id=branch.id,
+                                        action="auto_approved_published", detail=audit_detail, actor="system-auto-approval"))
+                                    db.add(AuditEvent(entity_type="company_website_candidate", entity_id=row.id,
+                                        action="auto_approved_published", detail=audit_detail, actor="system-auto-approval"))
+                                else:
+                                    row.verification_status="exception_review"
+                                    row.detail=(row.detail or "") + " Auto-approval exception: " + "; ".join(decision["reasons"])
+                                    exception_count += 1
+                                    db.add(AuditEvent(entity_type="company_website_candidate", entity_id=row.id,
+                                        action="routed_to_exception_review",
+                                        detail={"company_number": company.company_number, "source_url": url,
+                                            "extracted_name": (verified.get("extracted_data") or {}).get("name"),
+                                            "confidence": decision["confidence"], "ruleset_version": decision["ruleset_version"],
+                                            "exception_reasons": decision["reasons"]}, actor="system-auto-approval"))
                         except Exception as exc:
                             row.verification_status="check_blocked_or_failed"; row.detail=str(exc)[:1000]; row.checked_at=datetime.now(timezone.utc); run.websites_checked+=1
                 company.website_discovery_status="searched"; company.website_discovery_checked_at=datetime.now(timezone.utc); company.website_discovery_error=None
@@ -492,10 +614,16 @@ def discover_company_websites(run_id: int):
         if remaining:
             next_task=discover_company_websites.delay(run.id); run.celery_task_id=next_task.id; db.commit()
             return {"status":"running","run_id":run.id,"processed":run.processed_candidates,"next_task_id":next_task.id}
+        run_auto_approved = db.query(CompanyWebsiteCandidate).filter(
+            CompanyWebsiteCandidate.discovery_run_id == run.id,
+            CompanyWebsiteCandidate.verification_status == "auto_approved_published").count()
+        run_exceptions = db.query(CompanyWebsiteCandidate).filter(
+            CompanyWebsiteCandidate.discovery_run_id == run.id,
+            CompanyWebsiteCandidate.verification_status == "exception_review").count()
         run.status="completed"; run.completed_at=datetime.now(timezone.utc); run.error_message=None
-        db.add(AuditEvent(entity_type="company_website_discovery",entity_id=run.id,action="completed",detail={"processed":run.processed_candidates,"results_found":run.results_found,"websites_checked":run.websites_checked,"identity_signals":run.identity_signals,"no_results":run.no_results,"publication_changes":0}))
+        db.add(AuditEvent(entity_type="company_website_discovery",entity_id=run.id,action="completed",detail={"processed":run.processed_candidates,"results_found":run.results_found,"websites_checked":run.websites_checked,"identity_signals":run.identity_signals,"no_results":run.no_results,"publication_changes":run_auto_approved,"auto_approved":run_auto_approved,"exception_candidates":run_exceptions}))
         db.commit()
-        return {"status":"completed","run_id":run.id,"processed":run.processed_candidates,"results_found":run.results_found,"identity_signals":run.identity_signals}
+        return {"status":"completed","run_id":run.id,"processed":run.processed_candidates,"results_found":run.results_found,"identity_signals":run.identity_signals,"auto_approved":run_auto_approved,"exception_candidates":run_exceptions}
     except Exception as exc:
         db.rollback(); run=db.get(CompanyWebsiteDiscoveryRun,run_id)
         if run:

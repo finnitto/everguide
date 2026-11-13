@@ -1,0 +1,7 @@
+Input rows: 16
+Funeral director candidate rows: 13
+Provider groups represented (including held groups): 9
+Evidence log rows: 0 (blank template)
+Decision log rows: 0 (blank template)
+
+All review fields are intentionally unverified and pending. No provider or branch has been approved.
