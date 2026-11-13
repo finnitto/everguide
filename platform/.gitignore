@@ -25,3 +25,5 @@ uploads/
 backups/
 *.sqlite
 *.db
+*.zip
+*.gpkg

@@ -1,0 +1,6 @@
+Everguide pilot scripts: provided for evaluation.
+Data downloaded by this tool remains subject to the licences and terms of its respective providers.
+OpenStreetMap data: © OpenStreetMap contributors, ODbL 1.0.
+Overture Places: review sources[] and upstream licences for each record; see https://docs.overturemaps.org/guides/places/ and https://docs.overturemaps.org/guides/attribution/.
+Boundary: ONS/Ordnance Survey intellectual property rights; consult source metadata before redistribution.
+Google Places data is not included.

@@ -1,4 +1,4 @@
-# Everguide v2.4.0
+# Everguide v2.5.1
 
 Companies House-led discovery foundation for the Everguide funeral director directory.
 
@@ -66,3 +66,58 @@ Branch proposals require complete structured address evidence, a positive Englan
 ### Docker Desktop proxy for web builds (v2.4.3)
 
 The web image passes Docker Desktop's `http.docker.internal:3128` proxy to npm during the dependency-install stage. This is a build-time setting only. For another environment, override `HTTP_PROXY` and `HTTPS_PROXY` in the shell or `.env`; set both to empty values to disable the local defaults. The npm cache uses a BuildKit cache mount.
+
+### v2.5.0 identity assessment notes
+Identity confidence is a review-priority score, not a probability or approval. The assessment now requires alignment between the Companies House name and website-extracted identity for scores above the low-confidence band. Third-party directories and adjacent services are limited to 10%. Directory pages remain useful discovery leads but cannot independently establish provider identity or a branch. Duplicate pending branch proposals for the same company/address are retained as evidence and marked `needs_more_evidence` with a canonical proposal reference. Human decisions are not overwritten. No migration is required.
+
+
+## v2.5.1 — Conservative candidate-quality validation
+
+- Adds reusable, deterministic service classification for funeral-director candidates, cemeteries, crematoria, celebrants, memorial/masonry businesses, civic services and directories.
+- Explicit adjacent-service evidence takes precedence over broad Overture taxonomy labels such as `family_service` and `funeral_service`.
+- Adds UK telephone normalisation, postcode checks, same-branch duplicate fingerprints and suggested provider grouping while preserving separate branch locations.
+- Adds a Thurrock Overture review script using the official ONS December 2025 boundary `E06000034`. It writes a CSV, JSON summary and Markdown report; it does not access the Everguide database.
+- Adds conservative checks for postcode/coordinate conflicts, duplicate coordinate variance and multiple branches sharing a provider identity.
+- Tightens Companies House website identity assessment: fuzzy character similarity cannot raise an unrelated company-name match unless at least one meaningful token overlaps.
+- Keeps all decisions review-only. No provider/branch records are created, merged, deleted or published.
+- No database schema migration.
+
+### Re-run the Thurrock Overture candidate review
+
+The pilot CSV is included at `google_analysis/overture_candidates.csv`. From the project root:
+
+```powershell
+python -m pip install -r google_analysis/requirements.txt
+python google_analysis/review_overture_candidates.py `
+  --input google_analysis/overture_candidates.csv `
+  --out google_analysis/quality_review
+```
+
+The script downloads the official ONS Thurrock boundary. If the boundary cannot be retrieved, it stops unless `--allow-no-boundary` is explicitly supplied. Without a verified boundary, all funeral-director candidates remain on hold for location review.
+
+The review outputs are local analysis files only. They are not imported into Everguide automatically. Check Overture and upstream source licence terms before reusing candidate data.
+
+
+## Updating an existing local installation to v2.5.1
+
+This release ZIP is structured with project files at its root so it can be
+extracted directly into the existing Everguide project directory.
+
+1. Back up the PostgreSQL database before updating. Do not delete Docker volumes.
+2. Stop the stack if you prefer a quiet file replacement:
+   `docker compose stop`
+3. Extract the ZIP into the existing project root and allow files to overwrite.
+   The release archive does not contain `.env`, PostgreSQL data directories,
+   Docker volumes, or local database files, so these are not replaced.
+4. Rebuild and start:
+   `docker compose up -d --build`
+5. Check:
+   `docker compose ps`
+   `docker compose logs --tail=100 api`
+
+This patch adds no Alembic migration. The API container still runs the project's
+existing `alembic upgrade head` startup command. Confirm your current migration
+revision and retain a database backup before restarting, especially if the
+database has not previously been upgraded through migration `0019`.
+
+Never run `docker compose down -v` for this update; `-v` removes named volumes.

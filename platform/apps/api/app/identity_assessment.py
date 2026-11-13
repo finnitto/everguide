@@ -2,6 +2,7 @@
 import re
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
+from difflib import SequenceMatcher
 from sqlalchemy import func
 from app.models import (CompaniesHouseCandidate, CompanyWebsiteCandidate,
     CompanyIdentityReview, CompanyBranchProposal, AuditEvent)
@@ -14,7 +15,12 @@ DIRECTORY_DOMAINS = {
 NON_PROVIDER_TERMS = (
     "pet cremation", "pet crematorium", "animal cremation", "funeral plan",
     "funeral plans", "pre-paid funeral", "prepaid funeral", "comparison",
-    "directory", "cemetery", "crematorium", "burial ground", "council",
+    "directory",
+)
+ADJACENT_SERVICE_IDENTITY_TERMS = (
+    "cemetery", "cemeteries", "cemetary", "cemetaries", "crematorium",
+    "crematoria", "burial ground", "council", "celebrant", "memorial",
+    "headstone", "monumental mason", "stonemason", "stone mason",
 )
 NAME_MAX_LENGTH = 240
 
@@ -39,9 +45,19 @@ def _clean_business_name(*values):
 
 def _non_provider_signal(lead, data):
     host = domain(lead.final_url or lead.result_url)
-    text = " ".join(str(data.get(k) or "") for k in ("name", "description", "type", "category"))
-    text = f"{text} {lead.page_title or ''} {lead.result_title or ''}".lower()
-    return any(term in text or term in host for term in NON_PROVIDER_TERMS)
+    identity_text = " ".join(
+        str(data.get(k) or "")
+        for k in ("name", "type", "category", "business_type")
+    )
+    identity_text = f"{identity_text} {lead.page_title or ''} {lead.result_title or ''} {host}".lower()
+    # Strong identity/category signals for adjacent services are checked against
+    # the candidate identity and page title, not promotional body copy. This
+    # avoids excluding a genuine funeral director merely for mentioning a
+    # memorial service in a paragraph.
+    if any(term in identity_text for term in ADJACENT_SERVICE_IDENTITY_TERMS):
+        return True
+    context_text = f"{identity_text} {data.get('description') or ''}".lower()
+    return any(term in context_text for term in NON_PROVIDER_TERMS)
 # Postcode areas wholly/overwhelmingly associated with Scotland, Wales or NI,
 # plus cross-border/ambiguous areas that must be reviewed rather than inferred.
 ENGLAND_POSTCODE_AREAS = set("AL B BA BB BD BH BL BN BR BS CA CB CM CO CR CT CV CW DA DE DH DL DN DT DY E EC EN EX FY GL GU HA HD HG HP HR HU HX IG IP KT L LA LE LN LS LU M ME MK N NE NG NN NR NW OL OX PE PL PO PR RG RH RM S SE SG SK SL SM SN SO SP SR SS ST SW TA TF TN TQ TR TS TW UB W WC WD WF WN WR WS WV YO".split())
@@ -55,24 +71,53 @@ def is_directory(lead):
     host = domain(lead.final_url or lead.result_url)
     return any(host == d or host.endswith("." + d) for d in DIRECTORY_DOMAINS)
 
-def confidence(lead):
-    """Conservative review-priority score, not a probability of provider identity.
+def _normalise_name(value):
+    words = re.findall(r"[a-z0-9]+", str(value or "").lower())
+    ignored = {"limited", "ltd", "plc", "the", "and", "funeral", "director", "directors", "services", "service", "son"}
+    return {w for w in words if w not in ignored and len(w) > 1}
 
-    Search relevance is deliberately not treated as identity proof. A reachable
-    page and extracted structured identity add limited evidence; directories and
-    adjacent sectors are capped at a low score.
-    """
-    score = min(max(float(lead.match_score or 0), 0.0), 1.0) * 0.35
-    if lead.http_status == 200 and lead.robots_allowed is True:
-        score += 0.15
-    if lead.verification_status == "identity_signals_found":
-        score += 0.15
+def _name_relationship(company_name, observed_name):
+    a, b = _normalise_name(company_name), _normalise_name(observed_name)
+    if not a or not b:
+        return 0.0
+    shared = a & b
+    # Fuzzy character similarity alone can produce misleading matches between
+    # unrelated funeral-sector names. Require at least one meaningful token
+    # overlap before allowing the fuzzy component to raise the relationship.
+    if not shared:
+        return 0.0
+    overlap = len(shared) / max(1, len(a | b))
+    compact_a = re.sub(r"[^a-z0-9]", "", str(company_name or "").lower())
+    compact_b = re.sub(r"[^a-z0-9]", "", str(observed_name or "").lower())
+    fuzzy = SequenceMatcher(None, compact_a, compact_b).ratio() * 0.65
+    return max(overlap, fuzzy)
+
+def confidence(lead, company=None):
+    """Identity evidence score for triage; never a probability or approval."""
     data = lead.extracted_data or {}
-    if str(data.get("source_type") or "").lower().startswith("schema_org_"):
+    score = min(max(float(lead.match_score or 0), 0.0), 1.0) * 0.10
+    if lead.http_status == 200 and lead.robots_allowed is True:
+        score += 0.05
+    if lead.verification_status == "identity_signals_found":
         score += 0.10
+    structured = str(data.get("source_type") or "").lower().startswith("schema_org_")
+    if structured:
+        score += 0.05
+    host = domain(lead.final_url or lead.result_url)
+    declared_host = domain(data.get("website"))
+    official = bool(host and declared_host and host == declared_host and not is_directory(lead))
+    if official:
+        score += 0.10
+    if company is not None:
+        observed = data.get("name") or lead.page_title or lead.result_title
+        relation = _name_relationship(company.company_name, observed)
+        score += min(relation, 1.0) * 0.35
+        # A company-name mismatch is a strong warning; unrelated directory
+        # profiles must not inherit the candidate company's identity.
+        if relation < 0.20:
+            score = min(score, 0.20)
     if is_directory(lead) or _non_provider_signal(lead, data):
-        return min(score, 0.20)
-    # Scores are triage aids only; no website candidate can reach 100% identity.
+        return round(min(score, 0.10), 3)
     return round(min(score, 0.75), 3)
 
 def england_address(data):
@@ -117,8 +162,8 @@ def process_company(db, company_id):
     for lead in leads:
         host = domain(lead.final_url or lead.result_url)
         if not host: continue
-        if host not in unique or confidence(lead) > confidence(unique[host]): unique[host] = lead
-    ranked = sorted(unique.values(), key=lambda x:(confidence(x),x.match_score or 0), reverse=True)
+        if host not in unique or confidence(lead, company) > confidence(unique[host], company): unique[host] = lead
+    ranked = sorted(unique.values(), key=lambda x:(confidence(x, company),x.match_score or 0), reverse=True)
     best = ranked[0] if ranked else None
     created_identity = created_branches = skipped = 0
     now = datetime.now(timezone.utc)
@@ -135,15 +180,17 @@ def process_company(db, company_id):
             )
             review.suggested_website = best.final_url or best.result_url
             review.suggested_domain = domain(review.suggested_website)
-            review.confidence = confidence(best)
+            review.confidence = confidence(best, company)
             review.duplicate_leads_collapsed = max(0,len(leads)-len(unique))
             review.evidence = {"source_url":best.final_url or best.result_url,"search_title":best.result_title,
                 "verification_status":best.verification_status,"http_status":best.http_status,
                 "robots_allowed":best.robots_allowed,"extracted_fields":extracted,
                 "lead_ids":[x.id for x in leads],"distinct_domains":len(unique),
                 "same_domain_leads":{d:[x.id for x in leads if domain(x.final_url or x.result_url)==d] for d in unique},
-                "assessment_version":"identity_rules_v2",
-                "confidence_note":"Conservative evidence-priority score; not a probability or proof of funeral-director identity.",
+                "assessment_version":"identity_rules_v3",
+                "confidence_note":"Identity relationship triage score using Companies House name alignment and same-domain structured evidence; not a probability or approval.",
+                "company_name_relationship":round(_name_relationship(company.company_name, extracted.get("name") or best.page_title or best.result_title),3),
+                "official_domain_match":bool(domain(best.final_url or best.result_url) and domain(best.final_url or best.result_url)==domain(extracted.get("website"))),
                 "name_rejected_as_description": bool(extracted.get("name") and not _clean_business_name(extracted.get("name")))}
             review.updated_at = now
     for lead in leads:
@@ -175,13 +222,34 @@ def process_company(db, company_id):
             # or precision (e.g. scientific notation); omit rather than corrupt.
             proposal.telephone = str(phone).strip()[:40] if isinstance(phone, str) and phone.strip() else None
             proposal.website = (lead.final_url or lead.result_url)[:1000]
-            proposal.confidence = confidence(lead)
+            proposal.confidence = confidence(lead, company)
             proposal.evidence = {"source_url":lead.final_url or lead.result_url,"verification_status":lead.verification_status,
                 "http_status":lead.http_status,"robots_allowed":lead.robots_allowed,"extracted_data":data,
                 "registered_office_used_as_branch":False,"source_domain":domain(lead.final_url or lead.result_url),
                 "source_type":data.get("source_type"),"geography_assessment":geo_reason,
                 "branch_eligibility_rule":"complete structured address; England-only postcode/country evidence; source page domain must match declared business website; non-directory domain; adjacent sectors excluded",
-                "assessment_version":"identity_rules_v2",
+                "assessment_version":"identity_rules_v3",
                 "telephone_omitted_numeric_source": isinstance(data.get("telephone"), float)}
             proposal.updated_at=now
+    # Collapse duplicate proposals for the same company and normalized address.
+    # Keep every row and its evidence; mark later duplicates for review rather than deleting.
+    proposals = (db.query(CompanyBranchProposal)
+        .filter(CompanyBranchProposal.companies_house_candidate_id == company_id)
+        .order_by(CompanyBranchProposal.id.asc()).all())
+    seen_addresses = {}
+    for item in proposals:
+        key = (re.sub(r"[^a-z0-9]", "", str(item.postcode or "").lower()),
+               re.sub(r"[^a-z0-9]", "", str(item.address_line or "").lower()),
+               re.sub(r"[^a-z0-9]", "", str(item.town_city or "").lower()))
+        if not any(key):
+            continue
+        if key in seen_addresses and item.status == "pending":
+            canonical = seen_addresses[key]
+            item.status = "needs_more_evidence"
+            item.evidence = {**(item.evidence or {}), "assessment_version":"identity_rules_v3",
+                "duplicate_of_proposal_id":canonical.id,
+                "duplicate_reason":"Same company and normalized branch address; retained as supporting evidence."}
+            item.updated_at = now
+        else:
+            seen_addresses[key] = item
     return {"identity":created_identity,"branch":created_branches,"skipped":skipped}

@@ -1,3 +1,13 @@
+## v2.5.1 — Conservative candidate-quality validation
+
+- Adds reusable, deterministic classification for funeral-director candidates and adjacent services, with explicit adjacent-service signals taking precedence over broad source taxonomy labels.
+- Adds UK telephone normalisation, postcode validation, same-branch duplicate fingerprints and suggested provider grouping while preserving separate branch records.
+- Adds a local Thurrock Overture review tool using the official ONS December 2025 boundary (E06000034); outputs are review-only and do not modify the database.
+- Flags postcode/coordinate conflicts, duplicate coordinate variance and same-provider multi-branch relationships for human review.
+- Prevents fuzzy character similarity alone from inflating identity scores for unrelated Companies House and website names.
+- Adds regression tests for adjacent-service classification, branch identity, duplicate detection, postcode conflicts and review-only behaviour.
+- No database migration; no provider or branch records are automatically created, merged, deleted or published.
+
 ## v2.4.4 — Identity assessment resilience and conservative scoring
 
 - Prevents promotional page descriptions from being stored as trading names; only concise candidate labels within the 240-character field limit are accepted, with original extracted data retained in evidence.
@@ -121,3 +131,13 @@
 - Numeric telephone values are omitted rather than rendered as corrupted numbers; textual phone values are preserved.
 - Added `GET /api/v1/identity-review/runs` and `POST /api/v1/identity-review/runs/{run_id}/resume`.
 - No provider or branch records are created or published. Existing source leads and evidence are not deleted.
+
+## 2.5.0 — Identity matching and evidence quality
+
+- Identity triage now compares extracted website identity with the Companies House legal name; unrelated name matches are capped at 20%.
+- Third-party directories and adjacent services are capped at 10% and remain discovery leads only.
+- Stronger identity scores require same-domain declared website evidence plus name alignment; scores remain triage aids, not approval probabilities.
+- Branch eligibility continues to require complete England address evidence on the same official domain as the declared business website; directory sources cannot establish branch identity.
+- Duplicate branch proposals for the same company and normalized address are retained but secondary pending records are moved to `needs_more_evidence` with a link to the retained canonical proposal.
+- Existing pending identity reviews are reassessed in place; accepted/rejected human decisions are not overwritten. Existing evidence is retained.
+- No migration, provider creation, branch publication, Companies House import, or paid search is triggered by this release.

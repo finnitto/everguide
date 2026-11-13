@@ -41,3 +41,22 @@ def test_pet_cremation_cannot_create_branch_proposal():
     eligible, reason = branch_eligible(item, data)
     assert not eligible
     assert reason == "adjacent_sector_or_non_provider_signal"
+
+
+def test_unrelated_company_name_is_capped_even_on_official_looking_site():
+    item = lead(result_url="https://staffordshirefunerals.co.uk/",
+                extracted_data={"name":"Staffordshire Funerals", "website":"https://staffordshirefunerals.co.uk"})
+    company = SimpleNamespace(company_name="MY EASY FUNERAL LTD")
+    assert confidence(item, company) <= 0.20
+
+def test_matching_company_name_can_score_above_unrelated_match():
+    item = lead(result_url="https://derwentsidefuneralservice.co.uk/",
+                extracted_data={"name":"Derwentside Funeral Service", "website":"https://derwentsidefuneralservice.co.uk"})
+    matching = SimpleNamespace(company_name="DERWENTSIDE FUNERAL SERVICE LIMITED")
+    unrelated = SimpleNamespace(company_name="YOGI ALLIANCE LIMITED")
+    assert confidence(item, matching) > confidence(item, unrelated)
+
+def test_directory_score_is_capped_at_ten_percent():
+    item = lead(result_url="https://ashesregister.com/example",
+                extracted_data={"name":"Example Funeral Directors"})
+    assert confidence(item, SimpleNamespace(company_name="Example Funeral Directors Ltd")) <= 0.10

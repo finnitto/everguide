@@ -11,6 +11,7 @@ EXCLUDED_DIRS = {
     ".git", ".next", "node_modules", ".venv", "venv", "__pycache__",
     ".pytest_cache", ".mypy_cache", ".ruff_cache", "dist", "build",
     "coverage", "htmlcov", "data", "uploads", "backups", "releases",
+    "postgres_data", "pgdata", "postgres", "quality_review", "test-output",
 }
 EXCLUDED_FILES = {".env", ".env.local", ".env.development", ".env.production",
                   ".DS_Store", "Thumbs.db"}

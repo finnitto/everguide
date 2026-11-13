@@ -1,0 +1,21 @@
+{
+  "product": "Everguide",
+  "version": "2.5.1",
+  "archive_layout": "project files at archive root for direct overlay extraction",
+  "database_migrations_added": [],
+  "production_database_accessed_during_build": false,
+  "secrets_excluded": [
+    ".env",
+    ".env.local",
+    ".env.development",
+    ".env.production"
+  ],
+  "postgres_data_excluded": true,
+  "included_overture_pilot_input": "google_analysis/overture_candidates.csv",
+  "tests": {
+    "focused_api_tests": "27 passed",
+    "overture_review_script_tests": "2 passed",
+    "python_syntax_checks": "7 files passed",
+    "full_api_suite": "not run; local build environment missing redis/celery runtime dependencies"
+  }
+}

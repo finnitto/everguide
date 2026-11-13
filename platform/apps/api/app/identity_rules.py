@@ -1,6 +1,7 @@
 """Pure identity classification and retained-evidence assessment rules."""
 import re
 from urllib.parse import urlsplit
+from app.candidate_quality import classify_service, website_domain
 
 DIRECTORY_TERMS = (
     "directory", "funeral guide", "compare funeral", "compare 53 local", "find a funeral",
@@ -26,11 +27,20 @@ def _classify(title, snippet, domain):
         return "directory_or_comparison"
     if any(term in text for term in DIRECTORY_TERMS):
         return "directory_or_comparison"
-    # Related public services are not funeral-director providers, even when their
-    # pages mention funeral services or support families.
-    if any(term in text for term in NON_DIRECTOR_TERMS):
+    # Explicit adjacent services take precedence over broad funeral taxonomy
+    # wording. The shared classifier also catches celebrants, memorial/masonry
+    # providers and the common "cemetary" misspelling.
+    service_class = classify_service(name=title, website=domain, description=snippet)
+    if service_class in {
+        "cemetery", "crematorium", "celebrant", "memorial_or_masonry",
+        "civic_or_council_service",
+    }:
         return "related_service_not_funeral_director"
-    if any(term in text for term in ("funeral directors", "funeral director", "funeral services", "undertakers", "funeral care")):
+    if service_class == "directory_or_comparison":
+        return "directory_or_comparison"
+    if service_class == "likely_irrelevant":
+        return "likely_irrelevant"
+    if service_class == "funeral_director_candidate":
         return "provider_candidate"
     return "uncertain"
 
@@ -47,7 +57,7 @@ def _provider_quality_assessment(provider, observations):
     name = (provider.trading_name or "").strip().lower()
     domain = (urlsplit(provider.website or "").hostname or "").lower().removeprefix("www.")
     generic_names = {"admin", "administrator", "test", "unknown", "localfuneral", "funeral directors", "home", "welcome"}
-    exclusion_terms = ("cemetery", "cemeteries", "crematorium", "council", "funeralguide", "funeral-directory", "funeralfinder", "localfuneral", "compare-funeral", "directory")
+    exclusion_terms = ("cemetery", "cemeteries", "cemetary", "crematorium", "council", "celebrant", "memorial", "headstone", "stonemason", "monumental", "funeralguide", "funeral-directory", "funeralfinder", "localfuneral", "compare-funeral", "directory")
     if (name in generic_names or name.startswith(("http://", "https://", "www."))
             or any(term in name or term in domain for term in exclusion_terms)):
         return "needs_review", "Name or website contains a generic, directory, civic or cemetery signal; manual identity check required."

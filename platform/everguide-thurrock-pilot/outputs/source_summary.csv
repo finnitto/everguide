@@ -1,0 +1,3 @@
+source,candidate_records,address_coverage_pct,postcode_coverage_pct,phone_coverage_pct,website_coverage_pct,postcode_review_count,possible_duplicate_rows
+OpenStreetMap,0,0.0,0.0,0.0,0.0,0,0
+Overture Places,16,100.0,100.0,100.0,93.8,2,2
