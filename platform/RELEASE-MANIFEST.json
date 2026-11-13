@@ -1,6 +1,6 @@
 {
   "product": "Everguide",
-  "version": "2.6.1",
+  "version": "2.6.2",
   "archive_layout": "project files at archive root for direct overlay extraction",
   "database_migrations_added": [],
   "production_database_accessed_during_build": false,
@@ -20,11 +20,25 @@
   },
   "thurrock_overture_pilot": "offline exception-review only; no production DB access or publication while source permissions are unresolved",
   "tests": {
-    "focused_api_tests": "56 passed (SQLite in-memory for model-dependent tests)",
-    "overture_and_pilot_script_tests": "3 passed",
-    "python_syntax_checks": "10 changed API modules/tests passed",
-    "docker_compose_yaml": "parsed successfully",
-    "full_api_suite": "not run; build environment lacks psycopg, celery and redis runtime dependencies",
+    "overture_auto_approval_tests": "7 passed",
+    "provider_auto_approval_tests": "9 passed",
+    "full_api_suite": "not run; build environment lacks psycopg and runtime services",
+    "docker_compose_yaml": "validated with PyYAML",
     "frontend_build": "not run; node_modules not installed in build environment"
+  },
+  "overture_auto_approval": {
+    "ruleset": "overture-auto-approval-v1.0",
+    "source_confidence_is_not_approval_proof": true,
+    "requires_independent_first_party_website_evidence": true,
+    "requires_source_level_licence_recording": true,
+    "requires_official_thurrock_boundary_confirmation": true,
+    "production_database_ingestion_and_publication_integrated": false,
+    "current_thurrock_snapshot": {
+      "records_assessed": 16,
+      "awaiting_enrichment": 10,
+      "exception_review": 3,
+      "excluded": 3,
+      "auto_approved": 0
+    }
   }
 }

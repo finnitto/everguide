@@ -1,4 +1,4 @@
-# Everguide v2.6.1
+# Everguide v2.6.2
 
 Automation-first discovery, verification and publication foundation for the Everguide funeral director directory.
 
@@ -153,3 +153,8 @@ No new Alembic migration is added in v2.6.1.
 ## Updating an existing installation to v2.6.1
 
 Follow the same safe overlay process described above for v2.5.1: back up PostgreSQL, extract the full ZIP into the existing project root, preserve `.env` and Docker volumes, then run `docker compose up -d --build`. This release adds no database migration. Do not run `docker compose down -v`.
+
+
+## Overture automatic approval (v2.6.2)
+
+See [docs/OVERTURE-AUTOMATIC-APPROVAL.md](docs/OVERTURE-AUTOMATIC-APPROVAL.md) for the Overture evidence rules, Thurrock assessment command and current production-integration boundary.

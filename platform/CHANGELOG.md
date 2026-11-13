@@ -164,3 +164,11 @@
 - Exposes automatic approval settings and outcome counts in the discovery summary.
 - Keeps the Thurrock Overture workbook as an exception-review aid; source-derived candidates are not auto-published while licence/permission remains unresolved.
 - No new database migration.
+
+
+## 2.6.2 - Overture evidence-led approval
+
+- Added a deterministic Overture candidate assessment ruleset that treats Overture confidence as provenance, not proof.
+- Added source-level licence checks, Thurrock postcode/boundary checks, independent first-party evidence requirements, and duplicate/branch exception handling.
+- Added a reproducible assessment CLI for the supplied Thurrock Overture snapshot and regression tests.
+- Explicitly documents that this release does not yet perform production DB ingestion/publication for Overture; no record is published from the offline CSV.
