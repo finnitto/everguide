@@ -28,6 +28,35 @@
 
 # Changelog
 
+## 2.7.1 - PostgreSQL Alembic revision-length fix
+
+- Fixes API startup failure on PostgreSQL by shortening migration 0020's Alembic revision identifier to `0020_overture_feed` (18 characters), within the default `alembic_version.version_num VARCHAR(32)` limit.
+- Keeps the migration filename and parent revision unchanged; the migration remains additive and creates the same Overture tables and indexes.
+- No database reset, manual SQL, data deletion or Docker volume changes are required. A failed PostgreSQL migration transaction is rolled back and can be retried by the normal API startup command.
+- Bumps application, web and Compose version metadata to 2.7.1.
+
+## 2.7.0 - Scheduled England-wide Overture Places feed
+
+- Adds daily Celery Beat polling of Overture's authoritative STAC catalogue and idempotent detection of new Places releases.
+- Queries the latest cloud-hosted Places GeoParquet in place using pinned DuckDB, HTTPFS and spatial extensions; does not download the full global release.
+- Scans a broad England bounding box and filters candidates against validated ONS December 2025 English county/unitary-authority geometry before ingestion.
+- Identifies potential funeral-related records using Overture taxonomy and name signals, then upserts by GERS ID with contributor-level licence, record ID, release and retrieval provenance.
+- Extends the evidence-led automatic approval rules to England-wide candidates rather than applying Thurrock-only postcode/boundary checks.
+- Processes candidates in bounded, resumable Celery batches and prevents an endless retry loop for records awaiting additional evidence.
+- Replaces the admin CSV-upload workflow with feed monitoring, last-check/release status and diagnostic check/retry controls. The old CSV API remains for compatibility only.
+- No new database migration; uses the existing Overture tables introduced in migration 0020.
+- Feed polling and ingestion require outbound access to Overture STAC/S3, ONS ArcGIS and DuckDB extension distribution.
+
+## 2.6.3 - Overture production verification and publication pipeline
+
+- Adds durable Overture import runs and GERS-keyed candidate records with contributor-level source/licence provenance, release metadata, retrieval timestamps and audit events.
+- Adds Celery-backed Overture import and evidence-processing jobs, official ONS Thurrock polygon validation, safe first-party website verification and optional Brave Search website discovery.
+- Automatically creates and publishes eligible providers and branch records in one transaction after service, licence, boundary, identity, address, telephone, confidence and collision checks pass.
+- Supports multiple verified branches under the same provider identity without overwriting existing branch details; duplicate branch locations and ambiguous parent/provider identities remain exceptions.
+- Adds Overture import, status, candidate and run-history API endpoints plus an admin CSV import and monitoring section.
+- Adds migration `0020_overture_production_pipeline`; migration is additive and does not reset existing provider data.
+- The CSV adapter is production-connected, but direct downloading/querying of the complete Overture Parquet release is not included yet.
+
 ## 2.4.1
 - Tightened identity confidence so third-party directory results cannot receive high identity confidence from search relevance alone.
 - Restricted branch proposals to complete UK addresses extracted from structured business data on non-directory domains.
@@ -62,6 +91,16 @@
 - No database migration; preserves the v2.2.0 schema and imported Companies House data.
 
 # Changelog
+
+## 2.6.3 - Overture production verification and publication pipeline
+
+- Adds durable Overture import runs and GERS-keyed candidate records with contributor-level source/licence provenance, release metadata, retrieval timestamps and audit events.
+- Adds Celery-backed Overture import and evidence-processing jobs, official ONS Thurrock polygon validation, safe first-party website verification and optional Brave Search website discovery.
+- Automatically creates and publishes eligible providers and branch records in one transaction after service, licence, boundary, identity, address, telephone, confidence and collision checks pass.
+- Supports multiple verified branches under the same provider identity without overwriting existing branch details; duplicate branch locations and ambiguous parent/provider identities remain exceptions.
+- Adds Overture import, status, candidate and run-history API endpoints plus an admin CSV import and monitoring section.
+- Adds migration `0020_overture_production_pipeline`; migration is additive and does not reset existing provider data.
+- The CSV adapter is production-connected, but direct downloading/querying of the complete Overture Parquet release is not included yet.
 
 ## 2.0.0 — Companies House-led discovery foundation
 

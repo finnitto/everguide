@@ -1,4 +1,4 @@
-# Everguide v2.6.2
+# Everguide v2.7.1
 
 Automation-first discovery, verification and publication foundation for the Everguide funeral director directory.
 
@@ -155,6 +155,27 @@ No new Alembic migration is added in v2.6.1.
 Follow the same safe overlay process described above for v2.5.1: back up PostgreSQL, extract the full ZIP into the existing project root, preserve `.env` and Docker volumes, then run `docker compose up -d --build`. This release adds no database migration. Do not run `docker compose down -v`.
 
 
-## Overture automatic approval (v2.6.2)
+## Overture scheduled discovery and automatic publication (v2.7.1)
 
-See [docs/OVERTURE-AUTOMATIC-APPROVAL.md](docs/OVERTURE-AUTOMATIC-APPROVAL.md) for the Overture evidence rules, Thurrock assessment command and current production-integration boundary.
+Everguide checks the official Overture STAC catalogue daily and discovers new Places releases. When a new release appears, the worker queries Overture's cloud-hosted Places GeoParquet directly using a broad England bounding box, then filters candidate points against the official ONS England county/unitary-authority boundaries. It does not download the full global Places dataset and does not require an administrator to upload a CSV.
+
+Potential funeral-director records are identified using Overture taxonomy and name signals, then upserted by GERS ID with contributor-level source IDs, licence metadata, release/version and retrieval timestamps. The existing first-party evidence pipeline independently checks official websites, robots.txt permission, funeral-director service evidence, identity, complete branch address, postcode, telephone, source licence and provider/branch collisions. Overture existence confidence remains provenance only. Qualifying providers and branches are automatically published; incomplete records remain in enrichment and unresolved conflicts go to the exception queue. Directory and price publication remain separate.
+
+The admin Overture panel is for monitoring feed status, release history, candidate outcomes and exceptions. **No routine CSV import is required.** A one-off **Check for new Overture release** action is available for diagnostics; the scheduled daily check remains the normal operating path.
+
+Default configuration:
+
+```dotenv
+OVERTURE_FEED_ENABLED=true
+OVERTURE_FEED_DAILY_HOUR=4
+OVERTURE_FEED_DAILY_MINUTE=30
+OVERTURE_FEED_BATCH_SIZE=500
+OVERTURE_AUTO_PROCESS=true
+AUTO_APPROVE_PROVIDERS=true
+AUTO_APPROVAL_MIN_CONFIDENCE=0.94
+```
+
+DuckDB and its HTTPFS/spatial extensions are used by the worker to query public Parquet data in place. The first feed check after deployment may take longer while extensions are installed and the England area is queried. A new Overture release is ingested once; unchanged daily catalogue checks do not rescan the dataset.
+
+See [docs/OVERTURE-AUTOMATIC-APPROVAL.md](docs/OVERTURE-AUTOMATIC-APPROVAL.md) for the feed design, API and safeguards. The API retains the old CSV import endpoint for compatibility, but it is no longer exposed as a normal admin workflow.
+

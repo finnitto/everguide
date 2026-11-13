@@ -8,6 +8,7 @@ only when independent first-party verification and source-rights checks pass.
 from __future__ import annotations
 
 import re
+from difflib import SequenceMatcher
 from urllib.parse import urlsplit
 
 from app.candidate_quality import (
@@ -47,7 +48,9 @@ def _source_licences(sources: object) -> tuple[bool, list[str]]:
             return False, []
     if not isinstance(sources, list) or not sources:
         return False, []
-    licences = sorted({str(item.get("license") or "").strip() for item in sources if isinstance(item, dict)})
+    if any(not isinstance(item, dict) or not str(item.get("license") or "").strip() for item in sources):
+        return False, sorted({str(item.get("license") or "").strip() for item in sources if isinstance(item, dict) and item.get("license")})
+    licences = sorted({str(item.get("license") or "").strip() for item in sources})
     valid = bool(licences) and all(item in KNOWN_LICENCES for item in licences)
     return valid, licences
 
@@ -57,6 +60,8 @@ def assess_overture_candidate(
     *,
     first_party_evidence: dict | None = None,
     point_in_thurrock: bool | None = None,
+    point_in_england: bool | None = None,
+    geography_scope: str = "thurrock",
     duplicate_conflict: bool = False,
     existing_provider_conflict: bool = False,
     auto_approval_enabled: bool = True,
@@ -76,13 +81,22 @@ def assess_overture_candidate(
         return _result(row, "excluded", [f"not_funeral_director:{service_class}"], service_class, [], None)
 
     postcode = str(row.get("postcode") or "").strip().upper()
+    scope = str(geography_scope or "thurrock").lower()
     outward = re.match(r"^([A-Z]{1,2}\d{1,2}[A-Z]?)", normalise_postcode(postcode))
     if not is_valid_uk_postcode(postcode):
         reasons.append("invalid_or_missing_uk_postcode")
-    elif not outward or outward.group(1) not in THURROCK_OUTWARD_CODES:
-        reasons.append("postcode_outside_thurrock_area")
-    if point_in_thurrock is not True:
-        reasons.append("official_thurrock_boundary_not_confirmed")
+    if scope == "england":
+        if point_in_england is False:
+            reasons.append("point_outside_official_england_boundary")
+        elif point_in_england is not True:
+            reasons.append("official_england_boundary_not_confirmed")
+    else:
+        if not outward or outward.group(1) not in THURROCK_OUTWARD_CODES:
+            reasons.append("postcode_outside_thurrock_area")
+        if point_in_thurrock is False:
+            reasons.append("point_outside_official_thurrock_boundary")
+        elif point_in_thurrock is not True:
+            reasons.append("official_thurrock_boundary_not_confirmed")
     if duplicate_conflict or str(row.get("possible_duplicate", "")).lower() in {"true", "1", "yes"}:
         reasons.append("possible_duplicate_or_branch_identity_conflict")
     if existing_provider_conflict:
@@ -118,6 +132,18 @@ def assess_overture_candidate(
         or evidence_domain.endswith("." + candidate_domain)
     )):
         reasons.append("first_party_website_domain_mismatch")
+    if evidence.get("business_name"):
+        candidate_raw = str(row.get("name") or "").lower()
+        evidence_raw = str(evidence.get("business_name") or "").lower()
+        candidate_name = re.sub(r"[^a-z0-9]", "", candidate_raw)
+        evidence_name = re.sub(r"[^a-z0-9]", "", evidence_raw)
+        stop = {"the", "and", "funeral", "funerals", "director", "directors", "service", "services", "limited", "ltd", "plc"}
+        candidate_tokens = {token for token in re.findall(r"[a-z0-9]+", candidate_raw) if token not in stop}
+        evidence_tokens = {token for token in re.findall(r"[a-z0-9]+", evidence_raw) if token not in stop}
+        token_match = (len(candidate_tokens & evidence_tokens) / max(1, min(len(candidate_tokens), len(evidence_tokens)))) >= 0.8
+        sequence_match = bool(candidate_name and evidence_name and SequenceMatcher(None, candidate_name, evidence_name).ratio() >= 0.72)
+        if not candidate_name or not evidence_name or not (token_match or sequence_match):
+            reasons.append("first_party_identity_name_mismatch")
     if evidence.get("complete_branch_address") is not True:
         reasons.append("first_party_complete_branch_address_not_confirmed")
     if evidence.get("postcode") and normalise_postcode(evidence.get("postcode")) != normalise_postcode(postcode):
@@ -146,6 +172,9 @@ def assess_overture_candidate(
         "postcode_outside_thurrock_area", "possible_duplicate_or_branch_identity_conflict",
         "existing_provider_or_branch_conflict", "first_party_website_domain_mismatch",
         "first_party_postcode_does_not_match_overture", "conflicting_identity_or_branch_evidence",
+        "point_outside_official_thurrock_boundary", "point_outside_official_england_boundary",
+        "source_level_licence_missing_or_unrecognised",
+        "first_party_identity_name_mismatch",
     )):
         outcome = "exception_review"
     else:

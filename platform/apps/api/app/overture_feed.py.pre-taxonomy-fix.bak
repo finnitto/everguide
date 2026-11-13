@@ -1,0 +1,220 @@
+"""Scheduled England-wide ingestion of the latest Overture Places release.
+
+The feed discovers releases from Overture's authoritative STAC catalogue and
+queries the public cloud-hosted Places GeoParquet in place. It never downloads
+the global release and never uses Overture confidence as approval evidence.
+"""
+from __future__ import annotations
+
+import json
+import urllib.request
+from datetime import datetime, timezone
+from typing import Any
+
+from app.celery_app import celery_app
+from app.config import settings
+from app.database import SessionLocal
+from app.models import AuditEvent, OvertureImportRun
+from app.overture_tasks import import_overture_records, _fetch_ons_england_geometry, _inside_boundary
+
+STAC_CATALOG_URL = "https://stac.overturemaps.org/catalog.json"
+PLACES_S3_TEMPLATE = "s3://overturemaps-us-west-2/release/{release}/theme=places/type=place/*.parquet"
+# Broad pre-filter only. Every retained point is subsequently checked against
+# official ONS England geometry before it can enter the candidate pipeline.
+ENGLAND_BBOX = (-6.5, 49.8, 2.1, 55.9)
+DISCOVERY_SQL = r"""
+SELECT
+  id AS gers_id,
+  names.primary AS name,
+  CAST(basic_category AS VARCHAR) AS basic_category,
+  taxonomy.primary AS taxonomy_primary,
+  CAST(confidence AS VARCHAR) AS confidence,
+  to_json(addresses) AS addresses_json,
+  to_json(phones) AS phones_json,
+  to_json(websites) AS websites_json,
+  to_json(sources) AS sources_json,
+  ST_X(geometry) AS longitude,
+  ST_Y(geometry) AS latitude
+FROM read_parquet(? , hive_partitioning = true)
+WHERE bbox.xmin <= ? AND bbox.xmax >= ?
+  AND bbox.ymin <= ? AND bbox.ymax >= ?
+  AND (
+    lower(coalesce(taxonomy.primary, '')) LIKE '%funeral%'
+    OR lower(coalesce(to_json(taxonomy), '')) LIKE '%funeral%'
+    OR regexp_matches(lower(coalesce(names.primary, '')), '(funeral|undertaker|undertaking|mortuary|cremation|burial)')
+  )
+"""
+
+
+def _now():
+    return datetime.now(timezone.utc)
+
+
+def _get_latest_release() -> str:
+    request = urllib.request.Request(STAC_CATALOG_URL, headers={"User-Agent": "EverguideOvertureFeed/1.0"})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        catalog = json.loads(response.read().decode("utf-8"))
+    latest = catalog.get("latest")
+    if isinstance(latest, dict):
+        latest = latest.get("id") or latest.get("version")
+    release = str(latest or "").strip()
+    import re
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}\.\d+", release):
+        raise RuntimeError("Overture STAC catalogue did not return a valid latest release identifier.")
+    return release
+
+
+def _json_value(value: Any, default):
+    if value in (None, ""):
+        return default
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (TypeError, ValueError):
+            return default
+    return value
+
+
+def _first_value(items: Any, keys: tuple[str, ...] = ()) -> str | None:
+    if isinstance(items, str):
+        return items.strip() or None
+    if isinstance(items, dict):
+        for key in keys:
+            value = items.get(key)
+            if value:
+                return str(value).strip() or None
+        return None
+    if isinstance(items, list):
+        for item in items:
+            found = _first_value(item, keys)
+            if found:
+                return found
+    return None
+
+
+def _normalise_record(row: tuple) -> dict | None:
+    (gers_id, name, basic_category, taxonomy_primary, confidence,
+     addresses_json, phones_json, websites_json, sources_json, longitude, latitude) = row
+    if not gers_id or not name or longitude is None or latitude is None:
+        return None
+    addresses = _json_value(addresses_json, [])
+    phones = _json_value(phones_json, [])
+    websites = _json_value(websites_json, [])
+    sources = _json_value(sources_json, [])
+    address = addresses[0] if isinstance(addresses, list) and addresses else {}
+    if not isinstance(address, dict):
+        address = {}
+    website = _first_value(websites, ("value", "url", "website"))
+    phone = _first_value(phones, ("value", "number", "phone"))
+    return {
+        "gers_id": str(gers_id), "name": str(name),
+        "basic_category": basic_category or "", "taxonomy_primary": taxonomy_primary or "",
+        "confidence": confidence or "", "address": address.get("freeform") or address.get("locality") or "",
+        "postcode": address.get("postcode") or "", "phone": phone or "", "website": website or "",
+        "latitude": float(latitude), "longitude": float(longitude),
+        "addresses_json": addresses, "phones_json": phones, "websites_json": websites,
+        "sources_json": sources, "source": "Overture Places", "geography_scope": "england",
+        "source_release": None,
+    }
+
+
+def _query_latest_places(release: str):
+    try:
+        import duckdb
+    except ImportError as exc:
+        raise RuntimeError("DuckDB is required for automatic Overture Parquet ingestion.") from exc
+    connection = duckdb.connect(database=":memory:")
+    try:
+        connection.execute("INSTALL httpfs")
+        connection.execute("LOAD httpfs")
+        connection.execute("INSTALL spatial")
+        connection.execute("LOAD spatial")
+        connection.execute("SET s3_region='us-west-2'")
+        min_lon, min_lat, max_lon, max_lat = ENGLAND_BBOX
+        cursor = connection.execute(DISCOVERY_SQL, [PLACES_S3_TEMPLATE.format(release=release), max_lon, min_lon, max_lat, min_lat])
+        while True:
+            rows = cursor.fetchmany(max(100, min(int(settings.overture_feed_batch_size), 2000)))
+            if not rows:
+                break
+            batch = []
+            for row in rows:
+                record = _normalise_record(row)
+                if record:
+                    batch.append(record)
+            if batch:
+                yield batch
+    finally:
+        connection.close()
+
+
+@celery_app.task(name="everguide.overture.poll_latest_release", bind=True, max_retries=3, default_retry_delay=300)
+def poll_latest_overture_release(self):
+    """Check STAC daily; ingest only when a previously unseen release appears."""
+    if not settings.overture_feed_enabled:
+        return {"status": "disabled"}
+    db = SessionLocal()
+    try:
+        release = _get_latest_release()
+        recent_runs = db.query(OvertureImportRun).order_by(OvertureImportRun.id.desc()).limit(30).all()
+        for previous in recent_runs:
+            meta = (previous.outcomes or {}).get("_meta", {})
+            if meta.get("ingestion_method") == "scheduled_parquet" and previous.source_release == release and previous.status in {"imported", "processing", "completed"}:
+                db.add(AuditEvent(entity_type="overture_feed", entity_id=0, action="latest_release_unchanged",
+                    detail={"latest_release": release, "checked_at": _now().isoformat()}))
+                db.commit()
+                return {"status": "no_new_release", "latest_release": release}
+        run = OvertureImportRun(status="running", source_release=release,
+            outcomes={"_meta": {"ingestion_method": "scheduled_parquet", "geography_scope": "england", "catalogue_url": STAC_CATALOG_URL}},
+            started_at=_now(), created_at=_now())
+        db.add(run)
+        db.flush()
+        run_id = run.id
+        db.add(AuditEvent(entity_type="overture_feed", entity_id=0, action="release_ingestion_started",
+            detail={"release": release, "run_id": run_id, "scope": "england"}))
+        db.commit()
+        # Fail closed if official England geometry cannot be retrieved. The
+        # broad bbox query is only a cloud-scan optimisation, never the final
+        # geography decision.
+        england_geometry = _fetch_ons_england_geometry()
+        total = 0
+        for batch in _query_latest_places(release):
+            england_batch = [record for record in batch if _inside_boundary(
+                england_geometry, record.get("longitude"), record.get("latitude")) is True]
+            for record in england_batch:
+                record["source_release"] = release
+                record["version"] = release
+            if not england_batch:
+                continue
+            import_overture_records.run(run_id, england_batch, release, finalize=False)
+            total += len(england_batch)
+        # Finalise and queue candidate enrichment exactly once after all batches.
+        run = db.get(OvertureImportRun, run_id)
+        run.records_received = total
+        run.status = "imported"
+        run.completed_at = _now()
+        run.outcomes = {**(run.outcomes or {}), "_meta": {**((run.outcomes or {}).get("_meta", {})), "ingestion_method": "scheduled_parquet", "geography_scope": "england", "latest_release": release}}
+        db.add(AuditEvent(entity_type="overture_import_run", entity_id=run_id, action="scheduled_parquet_ingestion_completed",
+            detail={"release": release, "records_discovered": total, "scope": "england"}))
+        db.add(AuditEvent(entity_type="overture_feed", entity_id=0, action="release_ingestion_completed",
+            detail={"latest_release": release, "records_discovered": total, "run_id": run_id, "scope": "england"}))
+        db.commit()
+        if settings.overture_auto_process:
+            from app.overture_tasks import process_overture_candidates
+            process_overture_candidates.delay(run_id, min(max(total, 1), 20))
+        return {"status": "imported", "run_id": run_id, "latest_release": release, "records_discovered": total}
+    except Exception as exc:
+        db.rollback()
+        db.add(AuditEvent(entity_type="overture_feed", entity_id=0, action="release_ingestion_failed",
+            detail={"error": str(exc)[:1000], "checked_at": _now().isoformat()}))
+        if "run_id" in locals():
+            run = db.get(OvertureImportRun, run_id)
+            if run:
+                run.status = "failed"
+                run.error_message = str(exc)[:2000]
+                run.completed_at = _now()
+                db.add(AuditEvent(entity_type="overture_import_run", entity_id=run_id,
+                    action="scheduled_parquet_ingestion_failed", detail={"error": str(exc)[:1000]}))
+                db.commit()
+        raise self.retry(exc=exc)
+    finally:
+        db.close()

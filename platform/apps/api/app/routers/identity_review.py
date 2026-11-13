@@ -12,6 +12,34 @@ from app.identity_tasks import run_identity_assessment
 
 router = APIRouter(prefix="/api/v1/identity-review", tags=["identity and branch review"])
 
+# Backwards-compatible helpers retained for older tests and integrations.
+def _domain(url):
+    host = (urlsplit(url or "").hostname or "").lower().removeprefix("www.")
+    return host or None
+
+
+def _confidence(lead):
+    from app.candidate_quality import DIRECTORY_DOMAINS
+    domain = _domain(getattr(lead, "result_url", None) or getattr(lead, "final_url", None))
+    if domain and any(domain == item or domain.endswith("." + item) for item in DIRECTORY_DOMAINS):
+        return min(float(getattr(lead, "match_score", 0) or 0), 0.49)
+    if getattr(lead, "verification_status", None) == "identity_signals_found":
+        return max(float(getattr(lead, "match_score", 0) or 0), 0.75)
+    return float(getattr(lead, "match_score", 0) or 0)
+
+
+def _branch_eligible(lead, data):
+    from app.candidate_quality import DIRECTORY_DOMAINS, is_valid_uk_postcode
+    domain = _domain(getattr(lead, "result_url", None) or getattr(lead, "final_url", None))
+    if not domain or any(domain == item or domain.endswith("." + item) for item in DIRECTORY_DOMAINS):
+        return False
+    country = str(data.get("country") or "").strip().lower()
+    source_type = str(data.get("source_type") or "").strip().lower()
+    return bool(data.get("has_complete_branch_address") and data.get("street") and data.get("town")
+        and is_valid_uk_postcode(data.get("postcode")) and country in {"gb", "uk", "england", "united kingdom"}
+        and source_type in {"schema_org_localbusiness", "schema_org_funeralhome"})
+
+
 def _identity_dict(row, company):
     return {"id":row.id,"company_id":company.id,"company_number":company.company_number,
         "legal_name":company.company_name,"classification":company.classification,"status":row.status,

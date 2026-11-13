@@ -24,3 +24,4 @@ footer{display:flex;align-items:center;justify-content:space-between;padding:30p
 @media(max-width:760px){.admin-shell{padding:24px 15px}.stat-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.admin-header h1{font-size:34px}}
 
 .provider-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}.provider-actions .secondary-button{font-size:12px;padding:7px 10px}
+.admin-file-input{display:block;width:100%;margin-top:12px;padding:10px;border:1px solid #dfe4dd;border-radius:6px;background:#fff;color:#526158;font-size:12px}

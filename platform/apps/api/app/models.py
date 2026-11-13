@@ -307,3 +307,41 @@ class IdentityAssessmentRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class OvertureImportRun(Base):
+    __tablename__ = "overture_import_runs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
+    source_release: Mapped[str | None] = mapped_column(String(80))
+    records_received: Mapped[int] = mapped_column(Integer, default=0)
+    records_imported: Mapped[int] = mapped_column(Integer, default=0)
+    records_updated: Mapped[int] = mapped_column(Integer, default=0)
+    records_processed: Mapped[int] = mapped_column(Integer, default=0)
+    outcomes: Mapped[dict] = mapped_column(JSON, default=dict)
+    celery_task_id: Mapped[str | None] = mapped_column(String(100), index=True)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class OvertureCandidate(Base):
+    __tablename__ = "overture_candidates"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    gers_id: Mapped[str] = mapped_column(String(80), nullable=False, unique=True)
+    source_release: Mapped[str | None] = mapped_column(String(80))
+    candidate_name: Mapped[str] = mapped_column(String(240), nullable=False, index=True)
+    postcode: Mapped[str | None] = mapped_column(String(12), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="awaiting_enrichment", index=True)
+    outcome: Mapped[str] = mapped_column(String(32), default="awaiting_enrichment", index=True)
+    raw_data: Mapped[dict] = mapped_column(JSON, default=dict)
+    assessment: Mapped[dict] = mapped_column(JSON, default=dict)
+    first_party_evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    source_observation_id: Mapped[int | None] = mapped_column(ForeignKey("source_observations.id", ondelete="SET NULL"), index=True)
+    provider_id: Mapped[int | None] = mapped_column(ForeignKey("providers.id", ondelete="SET NULL"), index=True)
+    branch_id: Mapped[int | None] = mapped_column(ForeignKey("branches.id", ondelete="SET NULL"), index=True)
+    last_import_run_id: Mapped[int | None] = mapped_column(ForeignKey("overture_import_runs.id", ondelete="SET NULL"), index=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)

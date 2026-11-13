@@ -18,7 +18,7 @@ def row(**updates):
 
 def evidence(**updates):
     value = {
-        "source_type": "first_party_website", "reachable": True,
+        "source_type": "first_party_website", "business_name": "Example Funeral Directors", "reachable": True,
         "robots_allowed": True, "explicit_funeral_director_service": True,
         "website_url": "https://examplefunerals.co.uk", "complete_branch_address": True,
         "postcode": "RM17 5LS", "telephone": "01375 555000", "confidence": 0.97,
@@ -52,7 +52,7 @@ def test_postcode_conflict_is_exception():
 
 def test_unknown_contributor_licence_blocks_auto_approval():
     result = assess_overture_candidate(row(sources_json='[{"dataset":"Unknown","license":"UNKNOWN"}]'), first_party_evidence=evidence(), point_in_thurrock=True)
-    assert result["outcome"] == "awaiting_enrichment"
+    assert result["outcome"] == "exception_review"
     assert "source_level_licence_missing_or_unrecognised" in result["reasons"]
 
 
@@ -65,3 +65,22 @@ def test_boundary_not_confirmed_blocks_auto_approval():
     result = assess_overture_candidate(row(), first_party_evidence=evidence())
     assert result["outcome"] == "awaiting_enrichment"
     assert "official_thurrock_boundary_not_confirmed" in result["reasons"]
+
+
+def test_point_confirmed_outside_official_boundary_is_exception():
+    result = assess_overture_candidate(row(), first_party_evidence=evidence(), point_in_thurrock=False)
+    assert result["outcome"] == "exception_review"
+    assert "point_outside_official_thurrock_boundary" in result["reasons"]
+
+
+def test_first_party_business_name_mismatch_is_exception():
+    result = assess_overture_candidate(row(), first_party_evidence=evidence(business_name="Different Funeral Company"), point_in_thurrock=True)
+    assert result["outcome"] == "exception_review"
+    assert "first_party_identity_name_mismatch" in result["reasons"]
+
+
+def test_business_name_matching_ignores_common_funeral_service_suffixes():
+    candidate = row(name="W Howard and Son Funeral Directors")
+    evidence_row = evidence(business_name="W Howard & Son")
+    result = assess_overture_candidate(candidate, first_party_evidence=evidence_row, point_in_thurrock=True)
+    assert result["outcome"] == "auto_approved_eligible"

@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "Everguide"
     app_env: str = "development"
-    app_version: str = "2.6.2"
+    app_version: str = "2.7.1"
     database_url: str = "postgresql+psycopg://everguide:change-this-local-password@db:5432/everguide"
     redis_url: str = "redis://redis:6379/0"
     celery_broker_url: str = "redis://redis:6379/1"
@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     search_provider: str = "brave"
     auto_approve_providers: bool = True
     auto_approval_min_confidence: float = 0.94
+    overture_auto_process: bool = True
+    overture_feed_enabled: bool = True
+    overture_feed_daily_hour: int = 4
+    overture_feed_daily_minute: int = 30
+    overture_feed_batch_size: int = 500
     model_config = SettingsConfigDict(case_sensitive=False, extra="ignore")
 
 settings = Settings()

@@ -1,8 +1,9 @@
 {
   "product": "Everguide",
-  "version": "2.6.2",
+  "version": "2.7.1",
   "archive_layout": "project files at archive root for direct overlay extraction",
   "database_migrations_added": [],
+  "migration_revision_fix": "0020_overture_feed (18 characters), within PostgreSQL default alembic_version.version_num VARCHAR(32)",
   "production_database_accessed_during_build": false,
   "secrets_excluded": [
     ".env",
@@ -13,32 +14,34 @@
   "postgres_data_excluded": true,
   "automatic_approval": {
     "enabled_by_default": true,
-    "ruleset": "provider-auto-approval-v1.1",
-    "minimum_confidence_default": 0.94,
-    "eligible_evidence": "first-party provider website with explicit Schema.org FuneralHome, complete UK branch address, telephone, matching website domain and Companies House name relationship",
-    "exceptions": "incomplete, conflicting, ambiguous, low-confidence or duplicate candidates are routed to administrator review"
+    "minimum_first_party_confidence_default": 0.94,
+    "overture_confidence_used_as_approval_proof": false,
+    "requires_first_party_website_and_robots_permission": true,
+    "requires_source_level_licence": true,
+    "requires_official_ons_england_boundary": true,
+    "creates_provider_and_branch_atomically": true,
+    "existing_provider_branch_fields_overwritten": false,
+    "exception_only_for_unresolved_conflicts": true
   },
-  "thurrock_overture_pilot": "offline exception-review only; no production DB access or publication while source permissions are unresolved",
+  "overture_pipeline": {
+    "database_ingestion_and_publication_integrated": true,
+    "ingestion_adapter": "Scheduled daily STAC release detection; DuckDB queries public Places GeoParquet for England in place",
+    "admin_csv_upload": "removed from normal admin workflow; legacy API retained for compatibility",
+    "candidate_identity": "GERS ID",
+    "geography_scope": "England; broad bbox followed by official ONS county/unitary authority point-in-polygon validation",
+    "new_release_only": "yes; daily STAC checks do not rescan an unchanged release"
+  },
   "tests": {
-    "overture_auto_approval_tests": "7 passed",
-    "provider_auto_approval_tests": "9 passed",
-    "full_api_suite": "not run; build environment lacks psycopg and runtime services",
-    "docker_compose_yaml": "validated with PyYAML",
-    "frontend_build": "not run; node_modules not installed in build environment"
-  },
-  "overture_auto_approval": {
-    "ruleset": "overture-auto-approval-v1.0",
-    "source_confidence_is_not_approval_proof": true,
-    "requires_independent_first_party_website_evidence": true,
-    "requires_source_level_licence_recording": true,
-    "requires_official_thurrock_boundary_confirmation": true,
-    "production_database_ingestion_and_publication_integrated": false,
-    "current_thurrock_snapshot": {
-      "records_assessed": 16,
-      "awaiting_enrichment": 10,
-      "exception_review": 3,
-      "excluded": 3,
-      "auto_approved": 0
-    }
+    "api_suite": "97 passed using SQLite and lightweight Celery/Redis test doubles; actual production PostgreSQL/Celery/Redis runtime not available",
+    "python_compileall": "passed",
+    "duckdb_s3_parquet_live_query": "not run; DuckDB unavailable in offline build environment",
+    "ons_live_boundary_service": "not run in build environment",
+    "docker_compose_yaml_parse": "passed with PyYAML",
+    "docker_compose_config": "not run",
+    "docker_build": "not run; Docker unavailable",
+    "frontend_build": "not run; web dependencies absent and package network unavailable",
+    "migration_revision_length": "passed",
+    "alembic_history": "passed; single head 0020_overture_feed",
+    "focused_pytest": "not run: psycopg driver is unavailable in packaging environment; test collection fails before test execution"
   }
 }
