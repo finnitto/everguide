@@ -318,42 +318,53 @@ def import_overture_records(self, run_id: int, records: list[dict], source_relea
             name = str(raw.get("name") or "").strip()
             if not gers_id or not name:
                 continue
+            incoming_release = str(source_release or raw.get("version") or "")[:80] or None
             candidate = db.query(OvertureCandidate).filter(OvertureCandidate.gers_id == gers_id).first()
             if candidate is None:
                 candidate = OvertureCandidate(gers_id=gers_id, candidate_name=name[:240], postcode=str(raw.get("postcode") or "")[:12])
                 db.add(candidate)
                 db.flush()
                 imported += 1
+                previous_run_id = None
+                previous_release = None
             else:
-                updated += 1
+                previous_run_id = candidate.last_import_run_id
+                previous_release = candidate.source_release
                 candidate.candidate_name = name[:240]
                 candidate.postcode = str(raw.get("postcode") or "")[:12]
-            candidate.source_release = str(source_release or raw.get("version") or "")[:80] or None
+                if not (previous_run_id == run.id and previous_release == incoming_release):
+                    updated += 1
+            candidate.source_release = incoming_release
             candidate.raw_data = dict(raw)
             candidate.last_import_run_id = run.id
-            # Keep prior approved/published outcome stable; new source versions
-            # create new observations but never rewrite verified provider fields.
+            # Keep prior approved/published outcome stable; a resumed delivery
+            # must not append duplicate observations for the same GERS id/run.
             if candidate.outcome != "auto_approved_published":
                 candidate.status = "awaiting_enrichment"
                 candidate.outcome = "awaiting_enrichment"
                 candidate.last_checked_at = None
-            observation = SourceObservation(
-                source_type="overture_places", source_name="Overture Places",
-                source_url="https://docs.overturemaps.org/guides/places/",
-                confidence=_float_or_none(raw.get("confidence")),
-                observed_data={"gers_id": gers_id, "source_release": candidate.source_release,
-                    "sources": _as_sources(raw.get("sources_json")), "record": dict(raw),
-                    "confidence_semantics": "place_existence_confidence_not_field_or_service_confidence"},
-                review_status="pending",
-                notes="Overture discovery observation. Contributor source/licence lineage retained; not proof of service type or field accuracy.",
+            same_run_observation_exists = (
+                previous_run_id == run.id and previous_release == candidate.source_release
+                and candidate.source_observation_id is not None
             )
-            db.add(observation)
-            db.flush()
-            candidate.source_observation_id = observation.id
+            if not same_run_observation_exists:
+                observation = SourceObservation(
+                    source_type="overture_places", source_name="Overture Places",
+                    source_url="https://docs.overturemaps.org/guides/places/",
+                    confidence=_float_or_none(raw.get("confidence")),
+                    observed_data={"gers_id": gers_id, "source_release": candidate.source_release,
+                        "sources": _as_sources(raw.get("sources_json")), "record": dict(raw),
+                        "confidence_semantics": "place_existence_confidence_not_field_or_service_confidence"},
+                    review_status="pending",
+                    notes="Overture discovery observation. Contributor source/licence lineage retained; not proof of service type or field accuracy.",
+                )
+                db.add(observation)
+                db.flush()
+                candidate.source_observation_id = observation.id
             db.add(AuditEvent(entity_type="overture_candidate", entity_id=candidate.id,
-                action="source_observation_imported", detail={"gers_id": gers_id,
-                "source_release": candidate.source_release, "source_observation_id": observation.id,
-                "import_run_id": run.id}))
+                action="source_observation_reused" if same_run_observation_exists else "source_observation_imported",
+                detail={"gers_id": gers_id, "source_release": candidate.source_release,
+                "source_observation_id": candidate.source_observation_id, "import_run_id": run.id}))
             db.commit()
         run.records_imported = (run.records_imported or 0) + imported
         run.records_updated = (run.records_updated or 0) + updated
@@ -405,10 +416,14 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
         query = db.query(OvertureCandidate).filter(
             OvertureCandidate.outcome == "awaiting_enrichment",
             OvertureCandidate.status == "awaiting_enrichment",
-        ).order_by(OvertureCandidate.id.asc()).limit(max(1, min(int(limit), 50)))
+        )
+        # SQLAlchemy does not allow filter() after limit()/offset(). Apply the
+        # import-run scope first, then order and cap the batch. This is the
+        # normal scheduled-feed path (run_id is supplied by the importer).
         if run_id:
             query = query.filter(OvertureCandidate.last_import_run_id == run_id,
                 OvertureCandidate.last_checked_at.is_(None))
+        query = query.order_by(OvertureCandidate.id.asc()).limit(max(1, min(int(limit), 50)))
         candidates = query.with_for_update(skip_locked=True).all()
         claimed_ids = [candidate.id for candidate in candidates]
         for candidate in candidates:

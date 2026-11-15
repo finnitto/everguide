@@ -7,6 +7,8 @@ the global release and never uses Overture confidence as approval evidence.
 from __future__ import annotations
 
 import json
+import logging
+import time
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any
@@ -16,6 +18,8 @@ from app.config import settings
 from app.database import SessionLocal
 from app.models import AuditEvent, OvertureImportRun
 from app.overture_tasks import import_overture_records, _fetch_ons_england_geometry, _inside_boundary
+
+logger = logging.getLogger(__name__)
 
 STAC_CATALOG_URL = "https://stac.overturemaps.org/catalog.json"
 PLACES_S3_TEMPLATE = "s3://overturemaps-us-west-2/release/{release}/theme=places/type=place/*.parquet"
@@ -118,42 +122,106 @@ def _normalise_record(row: tuple) -> dict | None:
 
 
 def _query_latest_places(release: str):
+    """Stream candidate rows from cloud GeoParquet and log each returned batch.
+
+    DuckDB's initial execute can take time while it plans and scans remote
+    Parquet files, so emit a log before submitting the query as well as after
+    every fetched batch. This distinguishes a slow cloud scan from a dead task.
+    """
     try:
         import duckdb
     except ImportError as exc:
         raise RuntimeError("DuckDB is required for automatic Overture Parquet ingestion.") from exc
     connection = duckdb.connect(database=":memory:")
+    started = time.monotonic()
     try:
+        logger.info("Overture %s: preparing DuckDB httpfs/spatial extensions", release)
         connection.execute("INSTALL httpfs")
         connection.execute("LOAD httpfs")
         connection.execute("INSTALL spatial")
         connection.execute("LOAD spatial")
         connection.execute("SET s3_region='us-west-2'")
+        connection.execute("SET enable_progress_bar=false")
         min_lon, min_lat, max_lon, max_lat = ENGLAND_BBOX
+        logger.info("Overture %s: submitting England bbox Parquet query; batch_size=%s", release, settings.overture_feed_batch_size)
         cursor = connection.execute(DISCOVERY_SQL, [PLACES_S3_TEMPLATE.format(release=release), max_lon, min_lon, max_lat, min_lat])
+        batch_number = 0
+        rows_seen = 0
         while True:
             rows = cursor.fetchmany(max(100, min(int(settings.overture_feed_batch_size), 2000)))
             if not rows:
                 break
+            batch_number += 1
+            rows_seen += len(rows)
             batch = []
             for row in rows:
                 record = _normalise_record(row)
                 if record:
                     batch.append(record)
+            logger.info("Overture %s: fetched batch %s (%s rows; %s candidate rows; %.1fs elapsed)",
+                        release, batch_number, len(rows), rows_seen, time.monotonic() - started)
             if batch:
                 yield batch
+        logger.info("Overture %s: Parquet query finished; %s rows scanned in %.1fs", release, rows_seen, time.monotonic() - started)
     finally:
         connection.close()
+
+
+def _scheduled_run_for_task(db, release: str, task_id: str | None):
+    """Find the import run belonging to this Celery delivery or resume its orphan.
+
+    Late-ack Celery tasks are redelivered with the same task id after worker
+    loss. Reusing the run prevents each redelivery from creating another
+    permanently-running database row.
+    """
+    release_runs = db.query(OvertureImportRun).filter(
+        OvertureImportRun.source_release == release,
+    ).order_by(OvertureImportRun.id.desc()).all()
+    scheduled_runs = [row for row in release_runs
+        if ((row.outcomes or {}).get("_meta", {}) or {}).get("ingestion_method") == "scheduled_parquet"]
+    if task_id:
+        existing = next((row for row in scheduled_runs if row.celery_task_id == task_id), None)
+        if existing:
+            if existing.status in {"imported", "processing", "completed"}:
+                return existing, False
+            existing.status = "running"
+            existing.error_message = None
+            existing.completed_at = None
+            existing.started_at = _now()
+            return existing, True
+    # Older releases of Everguide did not persist the scheduled task id. Reuse
+    # the newest unfinished run for this release instead of duplicating it.
+    unfinished = next((row for row in scheduled_runs if row.status in {"queued", "running", "failed"}), None)
+    if unfinished:
+        if task_id and not unfinished.celery_task_id:
+            unfinished.celery_task_id = task_id
+        unfinished.status = "running"
+        unfinished.error_message = None
+        unfinished.completed_at = None
+        unfinished.started_at = _now()
+        return unfinished, True
+    run = OvertureImportRun(status="running", source_release=release,
+        celery_task_id=task_id,
+        outcomes={"_meta": {"ingestion_method": "scheduled_parquet", "geography_scope": "england", "catalogue_url": STAC_CATALOG_URL}},
+        started_at=_now(), created_at=_now())
+    db.add(run)
+    db.flush()
+    return run, False
 
 
 @celery_app.task(name="everguide.overture.poll_latest_release", bind=True, max_retries=3, default_retry_delay=300)
 def poll_latest_overture_release(self):
     """Check STAC daily; ingest only when a previously unseen release appears."""
     if not settings.overture_feed_enabled:
+        logger.info("Overture scheduled feed is disabled; skipping release check")
         return {"status": "disabled"}
     db = SessionLocal()
+    run_id = None
+    task_id = getattr(getattr(self, "request", None), "id", None)
     try:
+        logger.info("Overture feed task %s: checking STAC catalogue", task_id or "(unassigned)")
         release = _get_latest_release()
+        logger.info("Overture feed task %s: latest release is %s", task_id or "(unassigned)", release)
         recent_runs = db.query(OvertureImportRun).order_by(OvertureImportRun.id.desc()).limit(30).all()
         for previous in recent_runs:
             meta = (previous.outcomes or {}).get("_meta", {})
@@ -161,59 +229,72 @@ def poll_latest_overture_release(self):
                 db.add(AuditEvent(entity_type="overture_feed", entity_id=0, action="latest_release_unchanged",
                     detail={"latest_release": release, "checked_at": _now().isoformat()}))
                 db.commit()
+                logger.info("Overture release %s already ingested (run %s, status %s)", release, previous.id, previous.status)
                 return {"status": "no_new_release", "latest_release": release}
-        run = OvertureImportRun(status="running", source_release=release,
-            outcomes={"_meta": {"ingestion_method": "scheduled_parquet", "geography_scope": "england", "catalogue_url": STAC_CATALOG_URL}},
-            started_at=_now(), created_at=_now())
-        db.add(run)
-        db.flush()
+        run, resumed = _scheduled_run_for_task(db, release, task_id)
         run_id = run.id
-        db.add(AuditEvent(entity_type="overture_feed", entity_id=0, action="release_ingestion_started",
-            detail={"release": release, "run_id": run_id, "scope": "england"}))
+        db.add(AuditEvent(entity_type="overture_feed", entity_id=0,
+            action="release_ingestion_resumed" if resumed else "release_ingestion_started",
+            detail={"release": release, "run_id": run_id, "task_id": task_id, "scope": "england"}))
         db.commit()
-        # Fail closed if official England geometry cannot be retrieved. The
-        # broad bbox query is only a cloud-scan optimisation, never the final
-        # geography decision.
+        logger.info("Overture release %s: %s import run %s", release, "resuming" if resumed else "created", run_id)
+        logger.info("Overture release %s: retrieving official England boundary geometry", release)
         england_geometry = _fetch_ons_england_geometry()
+        logger.info("Overture release %s: England boundary loaded; starting cloud Parquet scan", release)
         total = 0
+        batches = 0
         for batch in _query_latest_places(release):
+            batches += 1
             england_batch = [record for record in batch if _inside_boundary(
                 england_geometry, record.get("longitude"), record.get("latitude")) is True]
             for record in england_batch:
                 record["source_release"] = release
                 record["version"] = release
-            if not england_batch:
-                continue
-            import_overture_records.run(run_id, england_batch, release, finalize=False)
-            total += len(england_batch)
-        # Finalise and queue candidate enrichment exactly once after all batches.
+            if england_batch:
+                import_overture_records.run(run_id, england_batch, release, finalize=False)
+                total += len(england_batch)
+            # Persist progress even when a fetched batch contains no England
+            # points, so operators can distinguish scanning from inactivity.
+            run = db.get(OvertureImportRun, run_id)
+            meta = dict((run.outcomes or {}).get("_meta", {}))
+            meta.update({"ingestion_method": "scheduled_parquet", "geography_scope": "england",
+                         "latest_release": release, "batches_completed": batches,
+                         "england_records_seen": total, "last_batch_at": _now().isoformat()})
+            run.outcomes = {**(run.outcomes or {}), "_meta": meta}
+            db.commit()
+            logger.info("Overture release %s run %s: batch %s complete; %s England records", release, run_id, batches, total)
         run = db.get(OvertureImportRun, run_id)
         run.records_received = total
         run.status = "imported"
         run.completed_at = _now()
-        run.outcomes = {**(run.outcomes or {}), "_meta": {**((run.outcomes or {}).get("_meta", {})), "ingestion_method": "scheduled_parquet", "geography_scope": "england", "latest_release": release}}
+        run.error_message = None
+        run.outcomes = {**(run.outcomes or {}), "_meta": {**((run.outcomes or {}).get("_meta", {})), "ingestion_method": "scheduled_parquet", "geography_scope": "england", "latest_release": release, "batches_completed": batches, "england_records_seen": total}}
         db.add(AuditEvent(entity_type="overture_import_run", entity_id=run_id, action="scheduled_parquet_ingestion_completed",
-            detail={"release": release, "records_discovered": total, "scope": "england"}))
+            detail={"release": release, "records_discovered": total, "batches_completed": batches, "scope": "england"}))
         db.add(AuditEvent(entity_type="overture_feed", entity_id=0, action="release_ingestion_completed",
-            detail={"latest_release": release, "records_discovered": total, "run_id": run_id, "scope": "england"}))
+            detail={"latest_release": release, "records_discovered": total, "batches_completed": batches, "run_id": run_id, "scope": "england"}))
         db.commit()
+        logger.info("Overture release %s run %s completed: %s records in %s batches", release, run_id, total, batches)
         if settings.overture_auto_process:
             from app.overture_tasks import process_overture_candidates
             process_overture_candidates.delay(run_id, min(max(total, 1), 20))
-        return {"status": "imported", "run_id": run_id, "latest_release": release, "records_discovered": total}
+        return {"status": "imported", "run_id": run_id, "latest_release": release, "records_discovered": total, "batches_completed": batches}
     except Exception as exc:
         db.rollback()
+        logger.exception("Overture feed task %s failed for run %s: %s", task_id, run_id, exc)
         db.add(AuditEvent(entity_type="overture_feed", entity_id=0, action="release_ingestion_failed",
-            detail={"error": str(exc)[:1000], "checked_at": _now().isoformat()}))
-        if "run_id" in locals():
+            detail={"error": str(exc)[:1000], "task_id": task_id, "checked_at": _now().isoformat()}))
+        if run_id is not None:
             run = db.get(OvertureImportRun, run_id)
             if run:
                 run.status = "failed"
                 run.error_message = str(exc)[:2000]
                 run.completed_at = _now()
                 db.add(AuditEvent(entity_type="overture_import_run", entity_id=run_id,
-                    action="scheduled_parquet_ingestion_failed", detail={"error": str(exc)[:1000]}))
+                    action="scheduled_parquet_ingestion_failed", detail={"error": str(exc)[:1000], "task_id": task_id}))
                 db.commit()
+        else:
+            db.commit()
         raise self.retry(exc=exc)
     finally:
         db.close()

@@ -1,4 +1,4 @@
-# Everguide v2.7.1
+# Everguide v2.7.3
 
 Automation-first discovery, verification and publication foundation for the Everguide funeral director directory.
 
@@ -155,7 +155,7 @@ No new Alembic migration is added in v2.6.1.
 Follow the same safe overlay process described above for v2.5.1: back up PostgreSQL, extract the full ZIP into the existing project root, preserve `.env` and Docker volumes, then run `docker compose up -d --build`. This release adds no database migration. Do not run `docker compose down -v`.
 
 
-## Overture scheduled discovery and automatic publication (v2.7.1)
+## Overture scheduled discovery and automatic publication (v2.7.3)
 
 Everguide checks the official Overture STAC catalogue daily and discovers new Places releases. When a new release appears, the worker queries Overture's cloud-hosted Places GeoParquet directly using a broad England bounding box, then filters candidate points against the official ONS England county/unitary-authority boundaries. It does not download the full global Places dataset and does not require an administrator to upload a CSV.
 

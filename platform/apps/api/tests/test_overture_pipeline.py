@@ -144,3 +144,41 @@ def test_england_scope_does_not_apply_thurrock_postcode_filter():
         auto_approval_enabled=False, minimum_confidence=0.94)
     assert "postcode_outside_thurrock_area" not in result["reasons"]
     assert "official_england_boundary_not_confirmed" not in result["reasons"]
+
+
+def test_processing_run_scope_is_filtered_before_batch_limit(monkeypatch):
+    engine, factory = _session_factory()
+    monkeypatch.setattr(overture_tasks, "SessionLocal", factory)
+    monkeypatch.setattr(overture_tasks, "_fetch_ons_geometry", lambda: {
+        "type": "Polygon", "coordinates": [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]]
+    })
+    monkeypatch.setattr(overture_tasks, "assess_overture_candidate", lambda *args, **kwargs: {
+        "outcome": "excluded", "reasons": "not_funeral_director:cemetery",
+        "ruleset_version": "test", "confidence": 0,
+    })
+    from app.models import OvertureImportRun
+    db = factory()
+    run = OvertureImportRun(status="imported", source_release="2026-10-21.0")
+    db.add(run); db.flush()
+    candidate = OvertureCandidate(
+        gers_id="gers-run-filter-regression",
+        candidate_name="Test Cemetery", postcode="RM18 7QX",
+        raw_data={"geography_scope": "thurrock", "name": "Test Cemetery"},
+        outcome="awaiting_enrichment", status="awaiting_enrichment",
+        last_import_run_id=run.id,
+    )
+    db.add(candidate); db.commit()
+    run_id, candidate_id = run.id, candidate.id
+    db.close()
+
+    result = overture_tasks.process_overture_candidates.run(run_id, 20)
+    assert result["records_processed"] == 1
+    assert result["outcomes"] == {"excluded": 1}
+
+    db = factory()
+    candidate = db.get(OvertureCandidate, candidate_id)
+    run = db.get(OvertureImportRun, run_id)
+    assert candidate.status == "excluded"
+    assert run.status == "completed"
+    assert run.records_processed == 1
+    db.close(); engine.dispose()

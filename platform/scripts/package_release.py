@@ -15,7 +15,7 @@ EXCLUDED_DIRS = {
 }
 EXCLUDED_FILES = {".env", ".env.local", ".env.development", ".env.production",
                   ".DS_Store", "Thumbs.db"}
-EXCLUDED_SUFFIXES = {".pyc", ".pyo", ".log", ".sqlite", ".db"}
+EXCLUDED_SUFFIXES = {".pyc", ".pyo", ".log", ".sqlite", ".db", ".bak", ".tmp"}
 
 def excluded(path: Path) -> bool:
     rel = path.relative_to(ROOT)

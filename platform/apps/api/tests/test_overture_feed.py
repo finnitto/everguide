@@ -117,3 +117,47 @@ def test_new_release_ingests_only_points_inside_ons_england(monkeypatch):
     assert run.status == "imported"
     assert db.query(AuditEvent).filter_by(action="release_ingestion_completed").count() == 1
     db.close(); engine.dispose()
+
+
+def test_scheduled_run_resumes_existing_celery_delivery(monkeypatch):
+    engine, factory = _session_factory()
+    db = factory()
+    original = OvertureImportRun(status="running", source_release="2026-11-11.0",
+        outcomes={"_meta": {"ingestion_method": "scheduled_parquet", "geography_scope": "england"}},
+        created_at=datetime.now(timezone.utc))
+    db.add(original); db.commit(); db.refresh(original)
+    run_id = original.id
+    run, resumed = overture_feed._scheduled_run_for_task(db, "2026-11-11.0", "celery-task-123")
+    assert resumed is True
+    assert run.id == run_id
+    assert run.celery_task_id == "celery-task-123"
+    db.commit()
+    run_again, resumed_again = overture_feed._scheduled_run_for_task(db, "2026-11-11.0", "celery-task-123")
+    assert resumed_again is True
+    assert run_again.id == run_id
+    db.close(); engine.dispose()
+
+
+def test_failed_scheduled_run_is_reopened_for_same_task_id():
+    engine, factory = _session_factory()
+    db = factory()
+    original = OvertureImportRun(status="failed", source_release="2026-11-11.0",
+        celery_task_id="celery-task-456", error_message="transient", completed_at=datetime.now(timezone.utc),
+        outcomes={"_meta": {"ingestion_method": "scheduled_parquet", "geography_scope": "england"}},
+        created_at=datetime.now(timezone.utc))
+    db.add(original); db.commit(); db.refresh(original)
+    run_id = original.id
+    run, resumed = overture_feed._scheduled_run_for_task(db, "2026-11-11.0", "celery-task-456")
+    assert resumed is True
+    assert run.id == run_id
+    assert run.status == "running"
+    assert run.error_message is None
+    assert run.completed_at is None
+    db.close(); engine.dispose()
+
+
+def test_discovery_sql_uses_native_geometry_and_avoids_taxonomy_json_cast():
+    assert "ST_X(geometry)" in overture_feed.DISCOVERY_SQL
+    assert "ST_Y(geometry)" in overture_feed.DISCOVERY_SQL
+    assert "ST_GeomFromWKB" not in overture_feed.DISCOVERY_SQL
+    assert "to_json(taxonomy)" not in overture_feed.DISCOVERY_SQL

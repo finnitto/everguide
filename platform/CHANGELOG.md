@@ -1,3 +1,21 @@
+# Changelog
+
+## 2.7.3 — Overture candidate batch query fix
+
+- Applies the scheduled import-run filter before SQLAlchemy `order_by()` and `limit()`, fixing candidate processing failures before the first batch.
+- Adds a regression test for processing with a specific Overture import run ID.
+- No schema migration or data deletion. Automatic publication remains governed by `AUTO_APPROVE_PROVIDERS`.
+
+## 2.7.2 — Overture ingestion recovery and diagnostics
+
+- Persists the scheduled Celery task ID on its import run and resumes the same run after late-ack redelivery or transient failure, rather than creating a new permanently-running run on each retry.
+- Reuses the newest unfinished scheduled run for the release when recovering runs created by v2.7.1, which did not persist scheduled task IDs.
+- Adds task lifecycle, DuckDB query-start, batch and completion logs; stores batch progress metadata and England record counts on the import run.
+- Makes source-observation creation idempotent when a GERS record is encountered again during a resumed import run.
+- Retains the native DuckDB GEOMETRY extraction (`ST_X(geometry)`, `ST_Y(geometry)`) and removes the unsafe JSON conversion of the taxonomy struct.
+- No database migration. Existing PostgreSQL and Redis volumes are preserved; keep `AUTO_APPROVE_PROVIDERS=false` while validating the feed.
+- Validation: Python syntax/compile and ZIP integrity checks; focused pytest could not be executed in this offline packaging environment because Celery and psycopg test dependencies are not installed. Live Overture S3/Parquet and ONS calls were not run.
+
 ## v2.5.1 — Conservative candidate-quality validation
 
 - Adds reusable, deterministic classification for funeral-director candidates and adjacent services, with explicit adjacent-service signals taking precedence over broad source taxonomy labels.

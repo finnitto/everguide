@@ -1,6 +1,6 @@
 # Overture discovery and automatic publication
 
-## Scheduled England-wide feed (v2.7.1)
+## Scheduled England-wide feed (v2.7.3)
 
 Everguide's normal Overture workflow is fully scheduled; an administrator does not upload or import a CSV. Celery Beat checks the authoritative Overture STAC catalogue daily at the configured Europe/London time. It compares the latest release with previous scheduled feed runs and only scans Places when a new release is available.
 

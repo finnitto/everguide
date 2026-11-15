@@ -1,6 +1,6 @@
 {
   "product": "Everguide",
-  "version": "2.7.1",
+  "version": "2.7.3",
   "archive_layout": "project files at archive root for direct overlay extraction",
   "database_migrations_added": [],
   "migration_revision_fix": "0020_overture_feed (18 characters), within PostgreSQL default alembic_version.version_num VARCHAR(32)",
@@ -29,19 +29,17 @@
     "admin_csv_upload": "removed from normal admin workflow; legacy API retained for compatibility",
     "candidate_identity": "GERS ID",
     "geography_scope": "England; broad bbox followed by official ONS county/unitary authority point-in-polygon validation",
-    "new_release_only": "yes; daily STAC checks do not rescan an unchanged release"
+    "new_release_only": "yes; daily STAC checks do not rescan an unchanged release",
+    "task_recovery": "Persists Celery task ID, resumes unfinished scheduled import run on redelivery, batch progress metadata and structured logs",
+    "candidate_processing_query_fix": "Apply run_id filter before order_by/limit; regression test added."
   },
   "tests": {
-    "api_suite": "97 passed using SQLite and lightweight Celery/Redis test doubles; actual production PostgreSQL/Celery/Redis runtime not available",
     "python_compileall": "passed",
-    "duckdb_s3_parquet_live_query": "not run; DuckDB unavailable in offline build environment",
-    "ons_live_boundary_service": "not run in build environment",
-    "docker_compose_yaml_parse": "passed with PyYAML",
-    "docker_compose_config": "not run",
-    "docker_build": "not run; Docker unavailable",
-    "frontend_build": "not run; web dependencies absent and package network unavailable",
-    "migration_revision_length": "passed",
-    "alembic_history": "passed; single head 0020_overture_feed",
-    "focused_pytest": "not run: psycopg driver is unavailable in packaging environment; test collection fails before test execution"
+    "focused_pytest": "not run; collection blocked by missing psycopg driver (and Celery is not installed) in offline packaging environment",
+    "duckdb_s3_parquet_live_query": "not run",
+    "ons_live_boundary_service": "not run",
+    "docker_build": "not run; Docker unavailable in packaging environment",
+    "frontend_build": "not run",
+    "zip_integrity": "passed; archive testzip clean and required files present"
   }
 }
