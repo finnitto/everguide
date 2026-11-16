@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
@@ -66,8 +67,8 @@ export default function SearchPage() {
   return (
     <main>
       <header className="topbar">
-        <a className="brand" href="/">everguide<span>.</span></a>
-        <nav><a href="/">Home</a><a href="/admin">Administration</a></nav>
+        <Link className="brand" href="/">everguide<span>.</span></Link>
+        <nav><Link href="/">Home</Link><Link href="/admin">Administration</Link></nav>
       </header>
       <section className="results-wrap">
         <div className="eyebrow">THE EVERGUIDE DIRECTORY</div>
@@ -108,7 +109,7 @@ export default function SearchPage() {
           </article>
         ))}
       </section>
-      <footer><a className="brand" href="/">everguide<span>.</span></a><small>Clear information. Considered choices.</small></footer>
+      <footer><Link className="brand" href="/">everguide<span>.</span></Link><small>Clear information. Considered choices.</small></footer>
     </main>
   );
 }

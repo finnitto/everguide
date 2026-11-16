@@ -1,5 +1,5 @@
-"""Conservative technical checks for independently discovered website candidates.
-Only page metadata and a digest are retained; response bodies are discarded.
+"""Conservative checks for independently discovered website candidates.
+Selected structured identity fields, metadata and a digest are retained; bodies are discarded.
 """
 import hashlib
 import json
@@ -185,4 +185,7 @@ def verify_candidate(url: str):
     return {"status": "reachable", "final_url": url, "http_status": code,
             "content_type": content_type, "page_title": title, "robots_allowed": True,
             "content_sha256": hashlib.sha256(body).hexdigest(), "extracted_data": extracted,
-            "detail": "Technical reachability confirmed. Business identity signals were inspected transiently; the page body was discarded."}
+            "detail": ("Technical reachability and structured business identity signals were checked. "
+                       "Only extracted identity fields and a content digest are retained; the page body is discarded." if extracted else
+                       "Technical reachability confirmed, but no qualifying structured funeral-provider identity was extracted. "
+                       "The page body is discarded and reachability alone is not identity verification.")}

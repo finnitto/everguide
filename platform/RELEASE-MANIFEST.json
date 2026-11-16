@@ -1,6 +1,6 @@
 {
   "product": "Everguide",
-  "version": "2.7.7",
+  "version": "2.7.8",
   "archive_layout": "project files at archive root for direct overlay extraction",
   "database_migrations_added": [],
   "migration_revision_fix": "0020_overture_feed (18 characters), within PostgreSQL default alembic_version.version_num VARCHAR(32)",
@@ -34,14 +34,15 @@
     "task_recovery": "Persists Celery task ID, resumes unfinished scheduled import run on redelivery, batch progress metadata and structured logs",
     "candidate_processing_query_fix": "Apply run_id filter before order_by/limit; regression test added.",
     "boundary_cache": "Persistent named Docker volume; source, retrieval timestamp, schema version and SHA-256 validated; 30-day TTL",
-    "website_leads": "Third-party URLs are retained as discovery provenance and never treated as first-party provider websites",
+    "website_leads": "Original Overture URL retained separately; search alternatives are filtered, individually recorded with source/query/status and body-free structured identity evidence; mismatches are never promoted.",
     "enrichment_retries": "Initial assessment plus at most three scheduled retries after 2, 7 and 21 days; excludes exceptions and exclusions",
     "stale_run_recovery": "Daily recovery after 24 hours: release stale candidate claims, resume pending work, close empty orphaned runs with audit events; never deletes history"
   },
   "tests": {
-    "targeted_approval_tests": "24 passed",
+    "new_regression_tests_added": 3,
     "python_compileall": "passed",
-    "full_api_pytest": "blocked during collection: packaging environment lacks psycopg, celery and redis dependencies",
+    "targeted_pytest": "not run in build container: celery, redis and psycopg are unavailable; package installation blocked by network restrictions",
+    "full_api_pytest": "not run in build container for same missing runtime dependencies",
     "production_database_accessed_during_build": false,
     "frontend_build": "not run",
     "docker_build": "not run"
@@ -71,5 +72,11 @@
     "overture_geography": "existing_official_England_boundary_gate_retained",
     "confidence_default": 0.94,
     "note": "The 0.94 threshold is a configured gate, not a measured 94 percent accuracy claim."
+  },
+  "website_evidence": {
+    "source_provenance": "Each attempted URL records discovery source and search query where applicable.",
+    "identity_evidence": "Persist only selected structured identity fields, page title, response status and SHA-256 digest; page bodies are discarded.",
+    "third_party_filtering": "Expanded exclusions for social networks, public registers, news, notices, directories, job pages and document URLs.",
+    "approval_policy": "No approval thresholds or publication gates relaxed; automatic approval remains disabled by default."
   }
 }

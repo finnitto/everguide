@@ -1,5 +1,6 @@
 import json
-from sqlalchemy import create_engine
+import pytest
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from app.database import Base
@@ -82,6 +83,96 @@ def test_pipeline_publishes_only_when_independent_evidence_and_boundary_pass(mon
     assert branch.status == "published" and branch.postcode == "RM18 7QX"
     assert db.query(SourceObservation).filter_by(source_type="provider_owned_website_structured_data", review_status="accepted").count() == 1
     assert db.query(AuditEvent).filter_by(entity_type="provider", action="auto_approved_published").count() == 1
+    db.close(); engine.dispose()
+
+
+def test_publication_write_gate_blocks_even_if_assessor_returns_eligible_when_disabled(monkeypatch, tmp_path):
+    engine, factory = _session_factory()
+    monkeypatch.setattr(overture_tasks, "SessionLocal", factory)
+    monkeypatch.setattr(overture_tasks, "ONS_BOUNDARY_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(overture_tasks.settings, "auto_approve_providers", False)
+    monkeypatch.setattr(overture_tasks, "_fetch_ons_geometry", lambda: {
+        "type": "Polygon", "coordinates": [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]]
+    })
+    monkeypatch.setattr(overture_tasks, "verify_candidate", lambda url: {
+        "status": "reachable", "final_url": url, "robots_allowed": True,
+        "page_title": "Test Funeral Directors", "content_sha256": "b" * 64,
+        "extracted_data": {"name": "Test Funeral Directors", "street": "1 High Street",
+            "town": "Tilbury", "postcode": "RM18 7QX", "telephone": "01375 856903",
+            "email": None, "website": url, "source_type": "schema_org_funeralhome",
+            "country": "gb", "confidence": 0.97, "funeral_signals": ["funeral directors"],
+            "has_complete_branch_address": True},
+    })
+    # Simulate an assessor regression: the final write-boundary guard must still hold.
+    monkeypatch.setattr(overture_tasks, "assess_overture_candidate", lambda *args, **kwargs: {
+        "outcome": "auto_approved_eligible", "reasons": "", "ruleset_version": "test",
+        "confidence": 0.97, "source_licences": "CDLA-Permissive-2.0",
+    })
+    monkeypatch.setattr(overture_tasks.process_overture_candidates, "delay", lambda *a, **k: None)
+    db = factory()
+    candidate = OvertureCandidate(gers_id="gers-disabled-write-gate", candidate_name="Test Funeral Directors",
+        postcode="RM18 7QX", raw_data=_candidate_row(), outcome="awaiting_enrichment", status="awaiting_enrichment")
+    db.add(candidate); db.commit(); candidate_id = candidate.id; db.close()
+
+    result = overture_tasks.process_overture_candidates.run(None, 20)
+    assert result["outcomes"] == {"awaiting_enrichment": 1}
+    db = factory()
+    candidate = db.get(OvertureCandidate, candidate_id)
+    assert candidate.outcome == "awaiting_enrichment"
+    assert candidate.assessment["outcome"] == "awaiting_enrichment"
+    assert "automatic_approval_disabled" in candidate.assessment["reasons"]
+    assert candidate.provider_id is None and candidate.branch_id is None
+    assert db.query(Provider).count() == 0
+    assert db.query(Branch).count() == 0
+    assert db.query(SourceObservation).filter_by(source_type="provider_owned_website_structured_data").count() == 0
+    assert db.query(AuditEvent).filter(AuditEvent.action.in_(["auto_approved_published", "auto_approved_branch_added"])).count() == 0
+    db.close(); engine.dispose()
+
+
+def test_publication_records_roll_back_together_if_first_party_evidence_flush_fails(monkeypatch, tmp_path):
+    engine, factory = _session_factory()
+    monkeypatch.setattr(overture_tasks, "SessionLocal", factory)
+    monkeypatch.setattr(overture_tasks, "ONS_BOUNDARY_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(overture_tasks.settings, "auto_approve_providers", True)
+    monkeypatch.setattr(overture_tasks, "_fetch_ons_geometry", lambda: {
+        "type": "Polygon", "coordinates": [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]]
+    })
+    monkeypatch.setattr(overture_tasks, "verify_candidate", lambda url: {
+        "status": "reachable", "final_url": url, "robots_allowed": True,
+        "page_title": "Test Funeral Directors", "content_sha256": "c" * 64,
+        "extracted_data": {"name": "Test Funeral Directors", "street": "1 High Street",
+            "town": "Tilbury", "postcode": "RM18 7QX", "telephone": "01375 856903",
+            "email": None, "website": url, "source_type": "schema_org_funeralhome",
+            "country": "gb", "confidence": 0.97, "funeral_signals": ["funeral directors"],
+            "has_complete_branch_address": True},
+    })
+    monkeypatch.setattr(overture_tasks.process_overture_candidates, "delay", lambda *a, **k: None)
+    db = factory()
+    candidate = OvertureCandidate(gers_id="gers-atomic-publication", candidate_name="Test Funeral Directors",
+        postcode="RM18 7QX", raw_data=_candidate_row(), outcome="awaiting_enrichment", status="awaiting_enrichment")
+    db.add(candidate); db.commit(); candidate_id = candidate.id; db.close()
+
+    def fail_on_first_party_evidence(session, flush_context, instances):
+        if any(isinstance(item, SourceObservation) and item.source_type == "provider_owned_website_structured_data"
+               for item in session.new):
+            raise RuntimeError("injected first-party evidence flush failure")
+
+    event.listen(factory.class_, "before_flush", fail_on_first_party_evidence)
+    try:
+        with pytest.raises(RuntimeError, match="injected first-party evidence flush failure"):
+            overture_tasks.process_overture_candidates.run(None, 20)
+    finally:
+        event.remove(factory.class_, "before_flush", fail_on_first_party_evidence)
+
+    db = factory()
+    candidate = db.get(OvertureCandidate, candidate_id)
+    assert candidate.status == "awaiting_enrichment"
+    assert candidate.outcome == "awaiting_enrichment"
+    assert candidate.provider_id is None and candidate.branch_id is None
+    assert db.query(Provider).count() == 0
+    assert db.query(Branch).count() == 0
+    assert db.query(SourceObservation).filter_by(source_type="provider_owned_website_structured_data").count() == 0
+    assert db.query(AuditEvent).filter(AuditEvent.action.in_(("auto_approved_published", "auto_approved_branch_added"))).count() == 0
     db.close(); engine.dispose()
 
 

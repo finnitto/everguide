@@ -21,7 +21,7 @@ from app.candidate_quality import (
     website_domain,
 )
 
-RULESET_VERSION = "overture-auto-approval-v1.1"
+RULESET_VERSION = "overture-auto-approval-v1.3"
 # Source licences are recorded, not inferred from the Overture umbrella licence.
 KNOWN_LICENCES = {
     "CDLA-Permissive-2.0", "Apache-2.0", "CC0-1.0", "CC0",
@@ -99,7 +99,7 @@ def assess_overture_candidate(
         elif point_in_thurrock is not True:
             reasons.append("official_thurrock_boundary_not_confirmed")
     if duplicate_conflict or str(row.get("possible_duplicate", "")).lower() in {"true", "1", "yes"}:
-        reasons.append("possible_duplicate_or_branch_identity_conflict")
+        reasons.append("possible_same_name_postcode_match")
     if existing_provider_conflict:
         reasons.append("existing_provider_or_branch_conflict")
 
@@ -160,6 +160,11 @@ def assess_overture_candidate(
         minimum_confidence=minimum_confidence,
         enabled=auto_approval_enabled,
     )
+    # The shared policy's disabled flag must be carried into this adapter's
+    # decision reasons; otherwise a fully evidenced candidate could appear
+    # eligible even while automatic approval is disabled.
+    if "automatic_approval_disabled" in common["reasons"]:
+        reasons.append("automatic_approval_disabled")
     if "first_party_website_access_not_verified" in common["reasons"]:
         reasons.append("first_party_website_access_not_verified")
     if "robots_permission_not_confirmed" in common["reasons"]:
@@ -183,7 +188,7 @@ def assess_overture_candidate(
     if not reasons:
         outcome = "auto_approved_eligible"
     elif any(reason in reasons for reason in (
-        "postcode_outside_thurrock_area", "possible_duplicate_or_branch_identity_conflict",
+        "postcode_outside_thurrock_area", "possible_same_name_postcode_match",
         "existing_provider_or_branch_conflict", "first_party_website_domain_mismatch",
         "first_party_postcode_does_not_match_overture", "conflicting_identity_or_branch_evidence",
         "point_outside_official_thurrock_boundary", "point_outside_official_england_boundary",

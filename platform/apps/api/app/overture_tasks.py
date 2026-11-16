@@ -66,24 +66,65 @@ def _as_sources(value):
     return value if isinstance(value, list) else []
 
 
+def _enforce_publication_safety_gate(assessment: dict, *, auto_approval_enabled: bool) -> str:
+    """Defence-in-depth guard immediately before any provider/branch writes."""
+    outcome = assessment.get("outcome")
+    if outcome == "auto_approved_eligible" and not auto_approval_enabled:
+        reasons = [item for item in str(assessment.get("reasons") or "").split(";") if item]
+        if "automatic_approval_disabled" not in reasons:
+            reasons.append("automatic_approval_disabled")
+        assessment["reasons"] = ";".join(reasons)
+        assessment["outcome"] = "awaiting_enrichment"
+        return "awaiting_enrichment"
+    return outcome
+
+
+def _point_on_segment(lon, lat, a, b, *, epsilon=1e-10):
+    """Return True when a point lies on a segment, within coordinate tolerance."""
+    ax, ay = float(a[0]), float(a[1])
+    bx, by = float(b[0]), float(b[1])
+    cross = (lon - ax) * (by - ay) - (lat - ay) * (bx - ax)
+    scale = max(1.0, abs(bx - ax), abs(by - ay))
+    if abs(cross) > epsilon * scale:
+        return False
+    return (min(ax, bx) - epsilon <= lon <= max(ax, bx) + epsilon
+            and min(ay, by) - epsilon <= lat <= max(ay, by) + epsilon)
+
+
 def _point_in_ring(lon, lat, ring):
+    """Ray casting with explicit boundary inclusion (OGC covers semantics)."""
     inside = False
     if not ring or len(ring) < 4:
         return False
     j = len(ring) - 1
     for i in range(len(ring)):
-        xi, yi = ring[i][0], ring[i][1]
-        xj, yj = ring[j][0], ring[j][1]
-        if ((yi > lat) != (yj > lat)) and (lon < (xj - xi) * (lat - yi) / ((yj - yi) or 1e-30) + xi):
+        current, previous = ring[i], ring[j]
+        xi, yi = float(current[0]), float(current[1])
+        xj, yj = float(previous[0]), float(previous[1])
+        if _point_on_segment(lon, lat, current, previous):
+            return True
+        if ((yi > lat) != (yj > lat)) and (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi):
             inside = not inside
         j = i
     return inside
 
 
+def _point_on_ring(lon, lat, ring):
+    if not ring or len(ring) < 4:
+        return False
+    return any(_point_on_segment(lon, lat, ring[index], ring[index - 1]) for index in range(len(ring)))
+
+
 def _point_in_polygon(lon, lat, polygon):
     if not polygon or not _point_in_ring(lon, lat, polygon[0]):
         return False
-    return not any(_point_in_ring(lon, lat, ring) for ring in polygon[1:])
+    for hole in polygon[1:]:
+        # A hole's interior is excluded, but its boundary belongs to the polygon.
+        if _point_on_ring(lon, lat, hole):
+            return True
+        if _point_in_ring(lon, lat, hole):
+            return False
+    return True
 
 
 # ONS boundary cache is stored on a dedicated Docker named volume and read once
@@ -99,6 +140,21 @@ def _validate_boundary_geometry(geometry: dict, *, minimum_polygons: int = 1) ->
     polygons = [coords] if geometry["type"] == "Polygon" else coords
     if not isinstance(polygons, list) or len(polygons) < minimum_polygons:
         raise RuntimeError("ONS boundary cache geometry is incomplete.")
+    authority_codes = geometry.get("authority_codes")
+    authority_names = geometry.get("authority_names")
+    if authority_codes is not None and (not isinstance(authority_codes, list) or len(authority_codes) != len(polygons)
+            or any(not isinstance(code, str) or not code.startswith("E") for code in authority_codes)):
+        raise RuntimeError("ONS authority-code provenance does not match the boundary polygons.")
+    if authority_names is not None and (not isinstance(authority_names, list) or len(authority_names) != len(polygons)
+            or any(not isinstance(name, str) for name in authority_names)):
+        raise RuntimeError("ONS authority-name provenance does not match the boundary polygons.")
+    if authority_codes is not None:
+        try:
+            feature_count = int(geometry.get("ons_feature_count"))
+        except (TypeError, ValueError):
+            raise RuntimeError("ONS authority feature count is missing or invalid.")
+        if feature_count != len(set(authority_codes)) or feature_count < minimum_polygons:
+            raise RuntimeError("ONS authority feature count does not match the cached provenance.")
     for polygon in polygons:
         if not isinstance(polygon, list) or not polygon:
             raise RuntimeError("ONS boundary contains an invalid polygon.")
@@ -115,14 +171,14 @@ def _validate_boundary_geometry(geometry: dict, *, minimum_polygons: int = 1) ->
 
 def _boundary_cache_path(scope: str) -> Path:
     safe_scope = "england" if scope == "england" else "thurrock"
-    return ONS_BOUNDARY_CACHE_DIR / f"ons-{safe_scope}-boundary-v1.json"
+    return ONS_BOUNDARY_CACHE_DIR / f"ons-{safe_scope}-boundary-v2.json"
 
 
 def _read_boundary_cache(scope: str):
     path = _boundary_cache_path(scope)
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-        if payload.get("schema_version") != 1 or payload.get("scope") != scope or payload.get("source") != ONS_QUERY_URL:
+        if payload.get("schema_version") != 2 or payload.get("scope") != scope or payload.get("source") != ONS_QUERY_URL:
             return None
         geometry = payload["geometry"]
         fetched_at = datetime.fromisoformat(payload["retrieved_at"].replace("Z", "+00:00"))
@@ -144,7 +200,7 @@ def _write_boundary_cache(scope: str, geometry: dict) -> None:
     path = _boundary_cache_path(scope)
     encoded_geometry = json.dumps(geometry, sort_keys=True, separators=(",", ":"))
     payload = {
-        "schema_version": 1, "scope": scope, "source": ONS_QUERY_URL,
+        "schema_version": 2, "scope": scope, "source": ONS_QUERY_URL,
         "retrieved_at": _now().isoformat(), "sha256": hashlib.sha256(encoded_geometry.encode()).hexdigest(),
         "geometry": geometry,
     }
@@ -227,24 +283,63 @@ def _fetch_ons_geometry():
 
 
 def _fetch_ons_england_geometry():
-    """Fetch and validate England county/unitary-authority polygons from ONS."""
-    params = urllib.parse.urlencode({
+    """Fetch every England authority polygon and retain its ONS identity.
+
+    A count-only request establishes the expected feature total. Stable,
+    ordered offset pagination then retrieves every feature; any short page,
+    duplicate code, missing feature, or transfer-limit inconsistency fails closed.
+    """
+    base = {
         "where": "CTYUA25CD LIKE 'E%'", "outFields": "CTYUA25CD,CTYUA25NM",
-        "returnGeometry": "true", "outSR": "4326", "f": "geojson", "resultRecordCount": 1000,
-    })
-    payload = _fetch_ons_json(ONS_QUERY_URL + "?" + params, timeout=45)
-    features = payload.get("features") or []
-    if len(features) < 100:
-        raise RuntimeError("ONS did not return the expected England-wide county/unitary-authority boundary set.")
-    polygons = []
+        "returnGeometry": "true", "outSR": "4326", "f": "geojson",
+        "orderByFields": "CTYUA25CD",
+    }
+    count_params = urllib.parse.urlencode({**base, "f": "json", "returnCountOnly": "true", "returnGeometry": "false"})
+    count_payload = _fetch_ons_json(ONS_QUERY_URL + "?" + count_params, timeout=45)
+    try:
+        expected_count = int(count_payload.get("count"))
+    except (TypeError, ValueError):
+        raise RuntimeError("ONS England boundary count response was missing or invalid.")
+    if expected_count < 100:
+        raise RuntimeError("ONS England boundary count was below the expected authority minimum.")
+
+    page_size = 500
+    offset = 0
+    features = []
+    seen_codes = set()
+    while offset < expected_count:
+        params = urllib.parse.urlencode({**base, "resultRecordCount": page_size, "resultOffset": offset})
+        payload = _fetch_ons_json(ONS_QUERY_URL + "?" + params, timeout=45)
+        page = payload.get("features")
+        if not isinstance(page, list) or not page:
+            raise RuntimeError("ONS England boundary pagination ended before the expected feature count.")
+        if payload.get("exceededTransferLimit") is True and len(page) < page_size:
+            raise RuntimeError("ONS England boundary page was truncated by the transfer limit.")
+        for feature in page:
+            properties = feature.get("properties") or {}
+            code = str(properties.get("CTYUA25CD") or "")
+            if not code.startswith("E") or code in seen_codes:
+                raise RuntimeError("ONS England boundary response contains an invalid or repeated authority code.")
+            seen_codes.add(code)
+            features.append(feature)
+        offset += len(page)
+        if len(page) > page_size or offset > expected_count:
+            raise RuntimeError("ONS England boundary pagination returned an inconsistent feature count.")
+    if len(features) != expected_count or len(seen_codes) != expected_count:
+        raise RuntimeError("ONS England boundary response did not match the authoritative feature count.")
+
+    polygons, authority_codes, authority_names = [], [], []
     for feature in features:
         properties = feature.get("properties") or {}
         code = str(properties.get("CTYUA25CD") or "")
+        name = str(properties.get("CTYUA25NM") or "").strip()
         geometry = feature.get("geometry") or {}
-        if not code.startswith("E") or geometry.get("type") not in {"Polygon", "MultiPolygon"}:
-            raise RuntimeError("ONS England boundary response contains an unexpected feature.")
+        if geometry.get("type") not in {"Polygon", "MultiPolygon"}:
+            raise RuntimeError("ONS England boundary response contains an unsupported feature geometry.")
         coordinates = geometry.get("coordinates") or []
         feature_polygons = [coordinates] if geometry.get("type") == "Polygon" else coordinates
+        if not feature_polygons:
+            raise RuntimeError("ONS England boundary contains an empty authority geometry.")
         for polygon in feature_polygons:
             if not isinstance(polygon, list) or not polygon:
                 raise RuntimeError("ONS England boundary contains an invalid polygon.")
@@ -257,12 +352,30 @@ def _fetch_ons_england_geometry():
                     lon, lat = float(coordinate[0]), float(coordinate[1])
                     if not (math.isfinite(lon) and math.isfinite(lat) and -180 <= lon <= 180 and -90 <= lat <= 90):
                         raise RuntimeError("ONS England boundary contains an out-of-range coordinate.")
-        polygons.extend(feature_polygons)
-    if len(polygons) < 100:
-        raise RuntimeError("ONS England boundary geometry is incomplete.")
-    result = {"type": "MultiPolygon", "coordinates": polygons}
+            polygons.append(polygon)
+            authority_codes.append(code)
+            authority_names.append(name)
+    result = {"type": "MultiPolygon", "coordinates": polygons,
+              "authority_codes": authority_codes, "authority_names": authority_names,
+              "ons_feature_count": expected_count}
     _validate_boundary_geometry(result, minimum_polygons=100)
     return result
+
+
+def _authority_codes_for_point(geometry, lon, lat):
+    """Return all ONS authorities whose polygons cover the supplied point."""
+    if not isinstance(geometry, dict) or geometry.get("type") not in {"Polygon", "MultiPolygon"}:
+        return []
+    coords = geometry.get("coordinates")
+    polygons = [coords] if geometry["type"] == "Polygon" else coords
+    codes = geometry.get("authority_codes") or []
+    matches = []
+    for index, polygon in enumerate(polygons):
+        if _point_in_polygon(lon, lat, polygon):
+            code = codes[index] if index < len(codes) else None
+            if code and code not in matches:
+                matches.append(code)
+    return matches
 
 def _inside_boundary(geometry, lon, lat):
     if lon is None or lat is None:
@@ -327,6 +440,8 @@ def _overture_duplicate_conflict(db, candidate):
         OvertureCandidate.id != candidate.id,
         OvertureCandidate.postcode == candidate.postcode,
     ).all()
+    # This deliberately identifies only a possible same-name/same-postcode
+    # observation. It is not proof of a duplicate business or branch.
     return any(normalise_identity_name(peer.candidate_name) == name_key for peer in peers)
 
 
@@ -359,6 +474,11 @@ def _candidate_evidence_matches(raw, extracted):
 
 
 def _is_non_first_party_url(url: str | None) -> bool:
+    """Reject obvious intermediaries and non-provider pages as identity sources.
+
+    These URLs may still be useful discovery leads, but must never be treated as
+    provider-owned websites for automatic approval.
+    """
     domain = website_domain(url)
     if not domain:
         return True
@@ -367,66 +487,109 @@ def _is_non_first_party_url(url: str | None) -> bool:
         "scoot.co.uk", "freeindex.co.uk", "hotfrog.co.uk", "yellowtom.co.uk",
         "mylocalservices.co.uk", "approvedbusiness.co.uk", "allinlondon.co.uk",
         "thefarewellguide.co.uk", "companieshouse.gov.uk",
-        "find-and-update.company-information.service.gov.uk",
+        "find-and-update.company-information.service.gov.uk", "facebook.com",
+        "instagram.com", "linkedin.com", "m.facebook.com", "wikipedia.org",
+        "wikidata.org", "bristol247.com", "rossgazette.com", "funeral-notices.co.uk",
+        "death-notices.co.uk", "muchloved.org", "findglocal.com", "endole.co.uk",
+        "beyond.life", "funeralrelated.co.uk", "arrangingafuneral.co.uk",
+        "uk-funerals.co.uk", "nextdoor.co.uk",
     }
     if any(domain == item or domain.endswith("." + item) for item in blocked):
         return True
-    host_parts = domain.split(".")
-    if any(token in host_parts for token in ("directory", "listings", "classifieds")):
+    # Inspect the full hostname as website_domain() intentionally reduces it
+    # to a registrable domain for identity comparison.
+    parsed = urllib.parse.urlsplit(url if "://" in url else "https://" + url)
+    hostname = (parsed.hostname or "").lower()
+    host_parts = hostname.split(".")
+    if host_parts and host_parts[0] in {"jobs", "careers", "recruitment", "news", "blog"}:
         return True
-    path = urllib.parse.urlsplit(url if "://" in url else "https://" + url).path.lower()
-    return any(token in path for token in ("/search/", "/directory/", "/listing/", "/businesses/"))
+    if any(token in host_parts for token in ("directory", "listings", "classifieds", "jobs", "careers")):
+        return True
+    path = parsed.path.lower()
+    if any(token in path for token in ("/search/", "/directory/", "/listing/", "/businesses/", "/jobs/", "/careers/", "/officers/", "/wiki/", "/news/", "/features/", "/articles/")):
+        return True
+    if parsed.path.lower().endswith((".pdf", ".doc", ".docx")):
+        return True
+    return False
+
+
+def _verification_attempt(url, discovery_source, verification, search_query=None):
+    """Build a compact, body-free audit record for one attempted website."""
+    extracted = (verification or {}).get("extracted_data") or {}
+    return {
+        "url": url,
+        "discovery_source": discovery_source,
+        "search_query": search_query,
+        "status": (verification or {}).get("status"),
+        "final_url": (verification or {}).get("final_url"),
+        "page_title": (verification or {}).get("page_title"),
+        "content_sha256": (verification or {}).get("content_sha256"),
+        "robots_allowed": (verification or {}).get("robots_allowed"),
+        "extracted_identity": ({
+            key: extracted.get(key) for key in (
+                "name", "street", "town", "postcode", "telephone", "email", "website",
+                "source_type", "country", "confidence", "funeral_signals", "has_complete_branch_address",
+            )
+        } if extracted else None),
+        "detail": (verification or {}).get("detail"),
+    }
 
 
 def _verify_overture_website(raw, initial_url):
-    """Treat Overture URLs as discovery leads; only matching provider-owned sites verify identity."""
+    """Try Overture first, then search; preserve provenance without promoting mismatches."""
     candidates = []
     initial_is_directory = _is_non_first_party_url(initial_url) if initial_url else False
     if initial_url and not initial_is_directory:
-        candidates.append((initial_url, "overture_website"))
+        candidates.append((initial_url, "overture_website", None))
     query = f'"{raw.get("name", "")}" funeral directors {raw.get("postcode", "")} official website UK'
     search_error = None
     if settings.brave_search_api_key:
         try:
             results = search_web(query, provider=settings.search_provider,
                 brave_api_key=settings.brave_search_api_key, count=8)
-            seen = {url for url, _ in candidates}
+            seen = {url for url, _, _ in candidates}
             for item in results:
                 url = _https_website(item.get("url"))
                 if not url or url in seen or _is_non_first_party_url(url):
                     continue
-                candidates.append((url, "brave_search"))
+                candidates.append((url, "brave_search", query))
                 seen.add(url)
         except SearchProviderError as exc:
             search_error = str(exc)[:500]
+    attempts = []
     initial_mismatch = None
     last_verification = None
-    for url, discovery_source in candidates[:6]:
+    for url, discovery_source, search_query in candidates[:6]:
         try:
             verification = verify_candidate(url)
         except Exception as exc:
-            last_verification = {"status": "check_blocked_or_failed", "detail": str(exc)[:800],
-                "robots_allowed": None, "final_url": url, "discovery_source": discovery_source}
-            continue
+            verification = {"status": "check_blocked_or_failed", "detail": str(exc)[:800],
+                "robots_allowed": None, "final_url": url}
         last_verification = verification
+        attempts.append(_verification_attempt(url, discovery_source, verification, search_query))
         extracted = verification.get("extracted_data") if verification else None
         if extracted and _candidate_evidence_matches(raw, extracted):
             verification["discovery_source"] = discovery_source
-            verification["search_query"] = query if discovery_source == "brave_search" else None
+            verification["search_query"] = search_query
+            verification["search_error"] = search_error
+            verification["attempts"] = attempts
             return url, verification
-        # A mismatch on the original non-directory URL may indicate a real
-        # identity/branch conflict. Search-result mismatches are simply discarded.
+        # Preserve a mismatched original Overture URL for human review. A
+        # mismatched search result is only an attempted lead, never a replacement.
         if extracted and discovery_source == "overture_website" and initial_mismatch is None:
             initial_mismatch = (url, verification)
     if initial_mismatch:
         url, verification = initial_mismatch
         verification["discovery_source"] = "identity_or_branch_mismatch"
+        verification["search_query"] = None
         verification["search_error"] = search_error
+        verification["attempts"] = attempts
         return url, verification
     return None, {"status": "website_missing", "final_url": initial_url,
         "robots_allowed": None, "discovery_source": "third_party_discovery_lead" if initial_is_directory else None,
-        "search_error": search_error,
-        "detail": "No matching provider-owned HTTPS website could be verified. Original discovery URL is retained as source evidence, not treated as the provider website."}
+        "search_error": search_error, "search_query": query if candidates else None,
+        "attempts": attempts,
+        "detail": "No matching provider-owned HTTPS website could be verified. Original discovery URL is retained as source evidence; attempted alternatives are recorded separately."}
 
 
 @celery_app.task(name="everguide.overture.import_records", bind=True)
@@ -595,6 +758,8 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                 evidence = {"boundary_error": boundary_error} if boundary_error else {}
             else:
                 point = _inside_boundary(boundary, raw.get("longitude"), raw.get("latitude")) if boundary else None
+                authority_codes = (_authority_codes_for_point(boundary, float(raw.get("longitude")), float(raw.get("latitude")))
+                    if boundary and geography_scope == "england" and point is True else [])
                 discovery_url = row.get("website")
                 verified_url, verification = _verify_overture_website(raw, discovery_url)
                 extracted = verification.get("extracted_data") if verification else None
@@ -614,6 +779,11 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                     "website_discovery_source": verification.get("discovery_source") if verification else None,
                     "website_search_query": verification.get("search_query") if verification else None,
                     "website_search_error": verification.get("search_error") if verification else None,
+                    "website_discovery_attempts": verification.get("attempts", []) if verification else [],
+                    "extracted_identity_evidence": ({k: extracted.get(k) for k in (
+                        "name", "street", "town", "postcode", "telephone", "email", "website",
+                        "source_type", "country", "confidence", "funeral_signals", "has_complete_branch_address")}
+                        if extracted else None),
                     "complete_branch_address": bool(verified_first_party and extracted and extracted.get("has_complete_branch_address")),
                     "postcode": extracted.get("postcode") if verified_first_party and extracted else None,
                     "telephone": extracted.get("telephone") if verified_first_party and extracted else None,
@@ -623,7 +793,9 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                     "content_sha256": verification.get("content_sha256") if verification else None,
                     "verification_status": verification.get("status") if verification else "website_missing",
                     "verification_detail": verification.get("detail") if verification else "No official HTTPS website supplied by Overture.",
-                    "ons_boundary_code": "CTYUA25CD:E*" if geography_scope == "england" and boundary else ONS_BOUNDARY_CODE if boundary else None,
+                    "ons_boundary_code": (authority_codes[0] if len(authority_codes) == 1 else None)
+                        if geography_scope == "england" else ONS_BOUNDARY_CODE if boundary else None,
+                    "ons_boundary_codes": authority_codes if geography_scope == "england" else ([ONS_BOUNDARY_CODE] if boundary else []),
                     "geography_scope": geography_scope,
                     "point_in_scope": point,
                 }
@@ -647,6 +819,11 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                     if outcome == "auto_approved_eligible":
                         outcome = "awaiting_enrichment"
                         assessment["outcome"] = outcome
+                # Defence in depth: re-check the live setting at the exact write
+                # boundary, even if an assessor or future adapter regresses.
+                outcome = _enforce_publication_safety_gate(
+                    assessment, auto_approval_enabled=settings.auto_approve_providers,
+                )
                 if outcome == "auto_approved_eligible":
                     # Re-check conflicts immediately before the write. Provider,
                     # branch, source observations and audit events commit atomically.
@@ -715,7 +892,8 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                                 "minimum_confidence": settings.auto_approval_min_confidence,
                                 "ruleset_version": assessment.get("ruleset_version"),
                                 "source_licences": assessment.get("source_licences"),
-                                "ons_boundary_code": "CTYUA25CD:E*" if geography_scope == "england" else ONS_BOUNDARY_CODE,
+                                "ons_boundary_code": evidence.get("ons_boundary_code"),
+                                "ons_boundary_codes": evidence.get("ons_boundary_codes", []),
                                 "geography_scope": geography_scope,
                                 "existing_parent_provider_reused": not created_provider,
                             }))

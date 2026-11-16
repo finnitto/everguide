@@ -38,7 +38,19 @@ def test_complete_independent_evidence_and_source_rights_can_pass():
     assert result["outcome"] == "auto_approved_eligible"
     assert result["reasons"] == ""
     assert result["shared_policy_version"] == "shared-provider-approval-v1.0"
+    assert result["ruleset_version"] == "overture-auto-approval-v1.3"
 
+
+
+def test_disabled_auto_approval_never_returns_auto_approved_eligible():
+    result = assess_overture_candidate(
+        row(), first_party_evidence=evidence(), point_in_thurrock=True,
+        auto_approval_enabled=False,
+    )
+    assert result["outcome"] != "auto_approved_eligible"
+    assert result["outcome"] == "awaiting_enrichment"
+    assert "automatic_approval_disabled" in result["reasons"]
+    assert result["ruleset_version"] == "overture-auto-approval-v1.3"
 
 def test_wrong_service_is_excluded_even_if_overture_taxonomy_says_funeral():
     result = assess_overture_candidate(row(name="A Elfes Memorial Masonry", website="https://memorial.example"), point_in_thurrock=True)
@@ -57,9 +69,12 @@ def test_unknown_contributor_licence_blocks_auto_approval():
     assert "source_level_licence_missing_or_unrecognised" in result["reasons"]
 
 
-def test_duplicate_and_branch_conflicts_are_exceptions():
+def test_possible_same_name_postcode_match_is_held_without_claiming_identity_conflict():
     result = assess_overture_candidate(row(possible_duplicate="True"), first_party_evidence=evidence(), point_in_thurrock=True)
     assert result["outcome"] == "exception_review"
+    assert "possible_same_name_postcode_match" in result["reasons"]
+    assert "conflicting_identity_or_branch_evidence" not in result["reasons"]
+    assert result["ruleset_version"] == "overture-auto-approval-v1.3"
 
 
 def test_boundary_not_confirmed_blocks_auto_approval():

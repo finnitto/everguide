@@ -1,11 +1,13 @@
+import Link from "next/link";
+
 export default function Home() {
   return (
     <main>
       <header className="topbar">
-        <a className="brand" href="/">everguide<span>.</span></a>
+        <Link className="brand" href="/">everguide<span>.</span></Link>
         <nav aria-label="Main navigation">
           <a href="#how-it-works">How it works</a>
-          <a href="/admin">Administration</a>
+          <Link href="/admin">Administration</Link>
         </nav>
       </header>
       <section className="hero">
@@ -24,7 +26,7 @@ export default function Home() {
         <article><div className="number">02</div><h2>Understand your choices</h2><p>Review provider information and available pricing in a clear, consistent format.</p></article>
         <article><div className="number">03</div><h2>Make an informed decision</h2><p>Use reliable, evidence-backed information to decide what is right for you.</p></article>
       </section>
-      <footer><a className="brand" href="/">everguide<span>.</span></a><p>Clear information. Considered choices.</p><small>Everguide · Development preview</small></footer>
+      <footer><Link className="brand" href="/">everguide<span>.</span></Link><p>Clear information. Considered choices.</p><small>Everguide · Development preview</small></footer>
     </main>
   );
 }

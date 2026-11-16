@@ -73,20 +73,67 @@ def test_poll_skips_release_already_ingested(monkeypatch):
     db.close(); engine.dispose()
 
 
-def test_ons_england_geometry_combines_valid_english_authority_polygons(monkeypatch):
-    ring = [[-1.0, 51.0], [0.0, 51.0], [0.0, 52.0], [-1.0, 52.0], [-1.0, 51.0]]
-    features = [{"properties": {"CTYUA25CD": f"E{i:05d}"},
-        "geometry": {"type": "Polygon", "coordinates": [ring]}} for i in range(100)]
+def test_ons_england_geometry_fetches_all_pages_and_retains_authority_codes(monkeypatch):
+    features = []
+    for i in range(501):
+        x = -5.0 + (i % 25) * 0.2
+        y = 50.0 + (i // 25) * 0.1
+        ring = [[x, y], [x + 0.1, y], [x + 0.1, y + 0.05], [x, y + 0.05], [x, y]]
+        features.append({"properties": {"CTYUA25CD": f"E{i:05d}", "CTYUA25NM": f"Authority {i}"},
+            "geometry": {"type": "Polygon", "coordinates": [ring]}})
+
     class Response:
+        def __init__(self, payload): self.payload = payload
         def __enter__(self): return self
         def __exit__(self, *args): return False
-        def read(self): return json.dumps({"features": features}).encode()
-    monkeypatch.setattr(overture_feed.urllib.request, "urlopen", lambda *a, **k: Response())
-    from app.overture_tasks import _fetch_ons_england_geometry, _inside_boundary
+        def read(self): return json.dumps(self.payload).encode()
+
+    requested_offsets = []
+    def fake_urlopen(request, **kwargs):
+        url = request.full_url.lower()
+        if "returncountonly=true" in url:
+            return Response({"count": len(features)})
+        offset = 500 if "resultoffset=500" in url else 0
+        requested_offsets.append(offset)
+        return Response({"features": features[offset:offset + 500], "exceededTransferLimit": False})
+
+    monkeypatch.setattr(overture_feed.urllib.request, "urlopen", fake_urlopen)
+    from app.overture_tasks import _fetch_ons_england_geometry, _inside_boundary, _authority_codes_for_point
     geometry = _fetch_ons_england_geometry()
+    assert requested_offsets == [0, 500]
     assert geometry["type"] == "MultiPolygon"
-    assert len(geometry["coordinates"]) == 100
-    assert _inside_boundary(geometry, -0.5, 51.5) is True
+    assert len(geometry["coordinates"]) == 501
+    assert geometry["ons_feature_count"] == 501
+    assert _inside_boundary(geometry, -4.95, 50.025) is True
+    assert _authority_codes_for_point(geometry, -4.95, 50.025) == ["E00000"]
+
+
+def test_ons_england_geometry_fails_closed_when_pages_do_not_match_count(monkeypatch):
+    ring = [[-1, 51], [0, 51], [0, 52], [-1, 52], [-1, 51]]
+    features = [{"properties": {"CTYUA25CD": f"E{i:05d}", "CTYUA25NM": "Authority"},
+        "geometry": {"type": "Polygon", "coordinates": [ring]}} for i in range(100)]
+
+    class Response:
+        def __init__(self, payload): self.payload = payload
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def read(self): return json.dumps(self.payload).encode()
+
+    def fake_urlopen(request, **kwargs):
+        url = request.full_url.lower()
+        if "returncountonly=true" in url:
+            return Response({"count": 101})
+        if "resultoffset=100" in url:
+            return Response({"features": [], "exceededTransferLimit": False})
+        return Response({"features": features, "exceededTransferLimit": False})
+
+    monkeypatch.setattr(overture_feed.urllib.request, "urlopen", fake_urlopen)
+    from app.overture_tasks import _fetch_ons_england_geometry
+    try:
+        _fetch_ons_england_geometry()
+        assert False, "Expected incomplete ONS response to fail closed"
+    except RuntimeError as exc:
+        assert "pagination" in str(exc).lower() or "feature count" in str(exc).lower()
 
 
 def test_new_release_ingests_only_points_inside_ons_england(monkeypatch):

@@ -80,8 +80,8 @@ def test_boundary_cache_persists_across_task_calls_and_records_provenance(monkey
 
     assert first == second == _geometry()
     assert len(fetches) == 1
-    payload = json.loads((tmp_path / "ons-thurrock-boundary-v1.json").read_text())
-    assert payload["schema_version"] == 1
+    payload = json.loads((tmp_path / "ons-thurrock-boundary-v2.json").read_text())
+    assert payload["schema_version"] == 2
     assert payload["scope"] == "thurrock"
     assert payload["source"] == tasks.ONS_QUERY_URL
     assert payload["retrieved_at"]
@@ -94,7 +94,7 @@ def test_corrupt_boundary_cache_is_rejected_and_refetched(monkeypatch, tmp_path)
     calls = []
     monkeypatch.setattr(tasks, "_fetch_ons_geometry", lambda: (calls.append(1) or _geometry()))
     tasks._get_ons_boundary("thurrock")
-    cache_file = tmp_path / "ons-thurrock-boundary-v1.json"
+    cache_file = tmp_path / "ons-thurrock-boundary-v2.json"
     payload = json.loads(cache_file.read_text())
     payload["sha256"] = "invalid"
     cache_file.write_text(json.dumps(payload))
@@ -133,7 +133,7 @@ def test_expired_boundary_cache_is_not_used(monkeypatch, tmp_path):
     monkeypatch.setattr(tasks, "ONS_BOUNDARY_CACHE_TTL_HOURS", 1)
     monkeypatch.setattr(tasks, "_fetch_ons_geometry", lambda: _geometry())
     tasks._write_boundary_cache("thurrock", _geometry())
-    cache_file = tmp_path / "ons-thurrock-boundary-v1.json"
+    cache_file = tmp_path / "ons-thurrock-boundary-v2.json"
     payload = json.loads(cache_file.read_text())
     payload["retrieved_at"] = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
     cache_file.write_text(json.dumps(payload))
@@ -238,3 +238,47 @@ def test_stale_import_run_with_unprocessed_candidates_is_resumed(monkeypatch):
 def test_automatic_publication_is_disabled_by_application_default():
     from app.config import Settings
     assert Settings(_env_file=None).auto_approve_providers is False
+
+
+def test_social_news_jobs_and_public_register_urls_are_not_first_party():
+    for url in (
+        "https://www.facebook.com/examplefunerals/",
+        "https://en.wikipedia.org/wiki/Co-op_Funeralcare",
+        "https://jobs.coop.co.uk/funeralcare",
+        "https://www.bristol247.com/news/example-funeral-service/",
+        "https://funeral-notices.co.uk/",
+        "https://www.example.co.uk/brochure.pdf",
+    ):
+        assert tasks._is_non_first_party_url(url), url
+
+
+def test_search_mismatches_are_retained_as_attempts_not_promoted(monkeypatch):
+    monkeypatch.setattr(tasks.settings, "brave_search_api_key", "test-key")
+    monkeypatch.setattr(tasks, "search_web", lambda *a, **k: [
+        {"url": "https://www.unrelatedfunerals.co.uk/", "title": "Unrelated"},
+    ])
+    monkeypatch.setattr(tasks, "verify_candidate", lambda url: {
+        "status": "reachable", "final_url": url, "robots_allowed": True,
+        "page_title": "Unrelated Funeral Directors", "content_sha256": "abc123",
+        "extracted_data": _extracted(name="Unrelated Funeral Directors", postcode="AB1 2CD", telephone="01234 567890"),
+    })
+    raw = {"name": "Example Funeral Directors", "postcode": "RM17 5LS", "phone": "01375 555000"}
+    url, result = tasks._verify_overture_website(raw, "https://www.yell.com/biz/example")
+    assert url is None
+    assert result["status"] == "website_missing"
+    assert result["attempts"][0]["discovery_source"] == "brave_search"
+    assert result["attempts"][0]["extracted_identity"]["name"] == "Unrelated Funeral Directors"
+    assert result["attempts"][0]["content_sha256"] == "abc123"
+
+
+def test_overture_mismatch_preserves_original_url_and_extracted_identity(monkeypatch):
+    monkeypatch.setattr(tasks.settings, "brave_search_api_key", "")
+    monkeypatch.setattr(tasks, "verify_candidate", lambda url: {
+        "status": "reachable", "final_url": url, "robots_allowed": True,
+        "extracted_data": _extracted(name="Different Funeral Directors", postcode="AB1 2CD", telephone="01234 567890"),
+    })
+    raw = {"name": "Example Funeral Directors", "postcode": "RM17 5LS", "phone": "01375 555000"}
+    url, result = tasks._verify_overture_website(raw, "https://www.examplefunerals.co.uk/")
+    assert url == "https://www.examplefunerals.co.uk/"
+    assert result["discovery_source"] == "identity_or_branch_mismatch"
+    assert result["attempts"][0]["extracted_identity"]["name"] == "Different Funeral Directors"
