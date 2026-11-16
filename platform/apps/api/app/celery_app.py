@@ -17,4 +17,14 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(hour=settings.overture_feed_daily_hour, minute=settings.overture_feed_daily_minute),
         "options": {"expires": 60 * 60 * 20},
     },
+    "overture-enrichment-retry-daily": {
+        "task": "everguide.overture.retry_awaiting_enrichment",
+        "schedule": crontab(hour=5, minute=15),
+        "options": {"expires": 60 * 60 * 12},
+    },
+    "overture-stale-run-recovery-daily": {
+        "task": "everguide.overture.reconcile_stale_import_runs",
+        "schedule": crontab(hour=5, minute=25),
+        "options": {"expires": 60 * 60 * 12},
+    },
 } if settings.overture_feed_enabled else {}

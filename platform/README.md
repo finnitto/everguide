@@ -1,4 +1,4 @@
-# Everguide v2.7.3
+# Everguide v2.7.4
 
 Automation-first discovery, verification and publication foundation for the Everguide funeral director directory.
 
@@ -131,16 +131,16 @@ The first implemented ruleset (`provider-auto-approval-v1.1`) requires explicit 
 
 Eligible candidates create a published provider and branch, an accepted source observation and audit events. The source page body is discarded; selected structured facts and a content digest are retained. Incomplete, conflicting, low-confidence, ambiguous or duplicate candidates enter the administrator exception queue with explicit reasons. Candidates without sufficient identity evidence are marked not eligible.
 
-### Automatic approval configuration
+### Automatic approval configuration (v2.7.4 safety default)
 
-The default operating model is enabled:
+Automatic publication is disabled by default while discovery and evidence collection continue:
 
 ```dotenv
-AUTO_APPROVE_PROVIDERS=true
+AUTO_APPROVE_PROVIDERS=false
 AUTO_APPROVAL_MIN_CONFIDENCE=0.94
 ```
 
-Add or update these variables in your existing `.env` if it currently sets `AUTO_APPROVE_PROVIDERS=false`. Set it to `false` only to pause automatic publication while continuing discovery and evidence collection. The threshold is configurable; lowering it reduces the precision guardrail and should only follow measured validation. API, worker and scheduler services share these settings.
+Only explicitly set `AUTO_APPROVE_PROVIDERS=true` after validating the evidence and exception outcomes. Keep the setting false during the initial England-wide discovery assessment. The threshold is configurable; lowering it reduces the precision guardrail and should only follow measured validation. API, worker and scheduler services share these settings.
 
 See `docs/AUTOMATIC-PROVIDER-APPROVAL.md` for the full rules, exception reasons and source-permission safeguards. Directory approval does not imply NAFD/SAIF membership, FCA regulatory status or price approval.
 
@@ -155,11 +155,11 @@ No new Alembic migration is added in v2.6.1.
 Follow the same safe overlay process described above for v2.5.1: back up PostgreSQL, extract the full ZIP into the existing project root, preserve `.env` and Docker volumes, then run `docker compose up -d --build`. This release adds no database migration. Do not run `docker compose down -v`.
 
 
-## Overture scheduled discovery and automatic publication (v2.7.3)
+## Overture scheduled discovery and automatic publication (v2.7.4)
 
 Everguide checks the official Overture STAC catalogue daily and discovers new Places releases. When a new release appears, the worker queries Overture's cloud-hosted Places GeoParquet directly using a broad England bounding box, then filters candidate points against the official ONS England county/unitary-authority boundaries. It does not download the full global Places dataset and does not require an administrator to upload a CSV.
 
-Potential funeral-director records are identified using Overture taxonomy and name signals, then upserted by GERS ID with contributor-level source IDs, licence metadata, release/version and retrieval timestamps. The existing first-party evidence pipeline independently checks official websites, robots.txt permission, funeral-director service evidence, identity, complete branch address, postcode, telephone, source licence and provider/branch collisions. Overture existence confidence remains provenance only. Qualifying providers and branches are automatically published; incomplete records remain in enrichment and unresolved conflicts go to the exception queue. Directory and price publication remain separate.
+Potential funeral-director records are identified using Overture taxonomy and name signals, then upserted by GERS ID with contributor-level source IDs, licence metadata, release/version and retrieval timestamps. The existing first-party evidence pipeline independently checks official websites, robots.txt permission, funeral-director service evidence, identity, complete branch address, postcode, telephone, source licence and provider/branch collisions. Overture existence confidence remains provenance only. When automatic publication is explicitly enabled, qualifying providers and branches can be published; incomplete records remain in enrichment and unresolved conflicts go to the exception queue. Directory and price publication remain separate. Third-party listing URLs are retained as discovery leads and never accepted as provider-owned websites.
 
 The admin Overture panel is for monitoring feed status, release history, candidate outcomes and exceptions. **No routine CSV import is required.** A one-off **Check for new Overture release** action is available for diagnostics; the scheduled daily check remains the normal operating path.
 
@@ -171,9 +171,12 @@ OVERTURE_FEED_DAILY_HOUR=4
 OVERTURE_FEED_DAILY_MINUTE=30
 OVERTURE_FEED_BATCH_SIZE=500
 OVERTURE_AUTO_PROCESS=true
-AUTO_APPROVE_PROVIDERS=true
+AUTO_APPROVE_PROVIDERS=false
 AUTO_APPROVAL_MIN_CONFIDENCE=0.94
+ONS_BOUNDARY_CACHE_TTL_HOURS=720
 ```
+
+Automatic publication is disabled by default. Keep it disabled while validating candidate outcomes; the existing `.env` value is preserved during overlay updates. Validated ONS geometry is stored in the dedicated `ons_boundary_cache` Docker volume and reused across batches and worker restarts. Do not remove existing volumes or use `docker compose down -v`.
 
 DuckDB and its HTTPFS/spatial extensions are used by the worker to query public Parquet data in place. The first feed check after deployment may take longer while extensions are installed and the England area is queried. A new Overture release is ingested once; unchanged daily catalogue checks do not rescan the dataset.
 

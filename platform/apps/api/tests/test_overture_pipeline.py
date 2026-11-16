@@ -45,9 +45,11 @@ def test_import_persists_overture_provenance_and_is_idempotent(monkeypatch):
     db.close(); engine.dispose()
 
 
-def test_pipeline_publishes_only_when_independent_evidence_and_boundary_pass(monkeypatch):
+def test_pipeline_publishes_only_when_independent_evidence_and_boundary_pass(monkeypatch, tmp_path):
     engine, factory = _session_factory()
     monkeypatch.setattr(overture_tasks, "SessionLocal", factory)
+    monkeypatch.setattr(overture_tasks, "ONS_BOUNDARY_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(overture_tasks.settings, "auto_approve_providers", True)
     monkeypatch.setattr(overture_tasks, "_fetch_ons_geometry", lambda: {
         "type": "Polygon", "coordinates": [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]]
     })
@@ -83,9 +85,10 @@ def test_pipeline_publishes_only_when_independent_evidence_and_boundary_pass(mon
     db.close(); engine.dispose()
 
 
-def test_pipeline_fails_closed_when_official_boundary_unavailable(monkeypatch):
+def test_pipeline_fails_closed_when_official_boundary_unavailable(monkeypatch, tmp_path):
     engine, factory = _session_factory()
     monkeypatch.setattr(overture_tasks, "SessionLocal", factory)
+    monkeypatch.setattr(overture_tasks, "ONS_BOUNDARY_CACHE_DIR", tmp_path)
     monkeypatch.setattr(overture_tasks, "_fetch_ons_geometry", lambda: (_ for _ in ()).throw(RuntimeError("offline")))
     monkeypatch.setattr(overture_tasks, "verify_candidate", lambda url: {
         "status": "reachable", "final_url": url, "robots_allowed": True,

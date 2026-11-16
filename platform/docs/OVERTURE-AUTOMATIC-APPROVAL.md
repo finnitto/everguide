@@ -1,6 +1,6 @@
 # Overture discovery and automatic publication
 
-## Scheduled England-wide feed (v2.7.3)
+## Scheduled England-wide feed (v2.7.4)
 
 Everguide's normal Overture workflow is fully scheduled; an administrator does not upload or import a CSV. Celery Beat checks the authoritative Overture STAC catalogue daily at the configured Europe/London time. It compares the latest release with previous scheduled feed runs and only scans Places when a new release is available.
 
@@ -30,10 +30,13 @@ OVERTURE_FEED_DAILY_HOUR=4
 OVERTURE_FEED_DAILY_MINUTE=30
 OVERTURE_FEED_BATCH_SIZE=500
 OVERTURE_AUTO_PROCESS=true
-AUTO_APPROVE_PROVIDERS=true
+AUTO_APPROVE_PROVIDERS=false
 AUTO_APPROVAL_MIN_CONFIDENCE=0.94
+ONS_BOUNDARY_CACHE_TTL_HOURS=720
 BRAVE_SEARCH_API_KEY=
 ```
+
+Automatic publication is disabled by default; keep `AUTO_APPROVE_PROVIDERS=false` during discovery validation. Only enable it explicitly after the evidence and exception outcomes have been validated. ONS geometry is cached for 30 days in the `ons_boundary_cache` Docker volume; the cache stores source and retrieval metadata and rejects expired or invalid entries.
 
 The scheduled feed requires outbound HTTPS access to `stac.overturemaps.org`, Overture's public S3 Parquet bucket, the ONS ArcGIS boundary service and, when configured, the search provider. DuckDB downloads its `httpfs` and `spatial` extensions on first query.
 
@@ -55,3 +58,12 @@ The feed ingests a new Overture release once and upserts candidates by GERS ID. 
 ## Upgrade and deployment
 
 No new Alembic migration is required beyond `0020_overture_feed`; this release adds application tasks, configuration and the pinned DuckDB dependency. Back up PostgreSQL, preserve `.env` and Docker volumes, extract the full ZIP over the project root and run `docker compose up -d --build`. Do not run `docker compose down -v`.
+
+
+### v2.7.4 website and boundary safeguards
+
+Overture-supplied URLs are discovery leads only. Third-party directory/listing/news/company-record URLs are not accepted as provider-owned websites. The first-party site is discovered independently and must corroborate the candidate identity, postcode and telephone. Original lead provenance remains stored separately. Official ONS geometry is cached on the `ons_boundary_cache` Docker volume with a retrieval timestamp and SHA-256 integrity check. Expired or invalid cache data is rejected; network failures are retried with verified TLS and publication remains blocked unless boundary verification succeeds. Automatic publication defaults to disabled.
+
+Only `awaiting_enrichment` records receive automatic retries, with an initial assessment and no more than three further attempts at 2, 7 and 21 days. Excluded records and unresolved identity/branch exceptions are not automatically retried. Retry decisions and limits are audited.
+
+Import runs older than 24 hours are checked daily. Stale candidate claims are released, outstanding unprocessed work is resumed, and runs with no linked candidates are closed as failed with an audit event. Runs with all candidates assessed are marked completed. No run history or candidate evidence is deleted.

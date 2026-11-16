@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.7.4 — First-party website classification and persistent ONS boundaries
+
+- Separates attributed discovery URLs from verified provider-owned websites; excludes third-party directories, listing pages, news and company-record pages from first-party verification.
+- Only matching first-party website evidence can populate the verified website field; search-result mismatches no longer become identity conflicts.
+- Adds a persistent, integrity-checked ONS boundary cache shared across candidate batches and worker restarts.
+- Adds bounded retries for incomplete downloads, timeouts and TLS transport errors without disabling certificate verification.
+- Keeps publication fail-closed when official boundary verification is unavailable and changes application/Compose publication defaults to disabled.
+- Adds a daily bounded enrichment retry sweep (initial assessment plus at most three retries after 2, 7 and 21 days); exclusions and exception-review records are not automatically retried.
+- Adds audit-safe daily reconciliation for import runs stuck for over 24 hours: stale claims are recovered, pending work is resumed, and empty orphaned runs are closed without deleting history.
+- No database migration; adds a dedicated `ons_boundary_cache` named volume.
+
+
 ## 2.7.3 — Overture candidate batch query fix
 
 - Applies the scheduled import-run filter before SQLAlchemy `order_by()` and `limit()`, fixing candidate processing failures before the first batch.
@@ -45,6 +57,18 @@
 - Dependency installation still uses the existing pinned `package.json`; a lockfile has not yet been introduced.
 
 # Changelog
+
+## 2.7.4 — First-party website classification and persistent ONS boundaries
+
+- Separates attributed discovery URLs from verified provider-owned websites; excludes third-party directories, listing pages, news and company-record pages from first-party verification.
+- Only matching first-party website evidence can populate the verified website field; search-result mismatches no longer become identity conflicts.
+- Adds a persistent, integrity-checked ONS boundary cache shared across candidate batches and worker restarts.
+- Adds bounded retries for incomplete downloads, timeouts and TLS transport errors without disabling certificate verification.
+- Keeps publication fail-closed when official boundary verification is unavailable and changes application/Compose publication defaults to disabled.
+- Adds a daily bounded enrichment retry sweep (initial assessment plus at most three retries after 2, 7 and 21 days); exclusions and exception-review records are not automatically retried.
+- Adds audit-safe daily reconciliation for import runs stuck for over 24 hours: stale claims are recovered, pending work is resumed, and empty orphaned runs are closed without deleting history.
+- No database migration; adds a dedicated `ons_boundary_cache` named volume.
+
 
 ## 2.7.1 - PostgreSQL Alembic revision-length fix
 
@@ -109,6 +133,18 @@
 - No database migration; preserves the v2.2.0 schema and imported Companies House data.
 
 # Changelog
+
+## 2.7.4 — First-party website classification and persistent ONS boundaries
+
+- Separates attributed discovery URLs from verified provider-owned websites; excludes third-party directories, listing pages, news and company-record pages from first-party verification.
+- Only matching first-party website evidence can populate the verified website field; search-result mismatches no longer become identity conflicts.
+- Adds a persistent, integrity-checked ONS boundary cache shared across candidate batches and worker restarts.
+- Adds bounded retries for incomplete downloads, timeouts and TLS transport errors without disabling certificate verification.
+- Keeps publication fail-closed when official boundary verification is unavailable and changes application/Compose publication defaults to disabled.
+- Adds a daily bounded enrichment retry sweep (initial assessment plus at most three retries after 2, 7 and 21 days); exclusions and exception-review records are not automatically retried.
+- Adds audit-safe daily reconciliation for import runs stuck for over 24 hours: stale claims are recovered, pending work is resumed, and empty orphaned runs are closed without deleting history.
+- No database migration; adds a dedicated `ons_boundary_cache` named volume.
+
 
 ## 2.6.3 - Overture production verification and publication pipeline
 

@@ -8,9 +8,17 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
+import ssl
+import tempfile
+import time
+import hashlib
+import urllib.error
 import urllib.parse
 import urllib.request
+from http.client import IncompleteRead
+from pathlib import Path
 from collections import Counter
 from difflib import SequenceMatcher
 from datetime import datetime, timezone, timedelta
@@ -23,7 +31,7 @@ from app.models import (
     SourceObservation,
 )
 from app.overture_approval import assess_overture_candidate
-from app.candidate_quality import DIRECTORY_DOMAINS, normalise_identity_name, normalise_phone, normalise_postcode
+from app.candidate_quality import DIRECTORY_DOMAINS, normalise_identity_name, normalise_phone, normalise_postcode, website_domain
 from app.website_checks import verify_candidate
 from app.search_providers import search_web, SearchProviderError
 
@@ -33,6 +41,8 @@ ONS_QUERY_URL = (
     "FeatureServer/0/query"
 )
 ONS_BOUNDARY_CODE = "E06000034"
+MAX_ENRICHMENT_ATTEMPTS = 4  # first assessment plus at most three scheduled retries
+ENRICHMENT_RETRY_DELAYS_DAYS = (2, 7, 21)
 
 
 def _now():
@@ -76,16 +86,120 @@ def _point_in_polygon(lon, lat, polygon):
     return not any(_point_in_ring(lon, lat, ring) for ring in polygon[1:])
 
 
+# ONS boundary cache is stored on a dedicated Docker named volume and read once
+# per 20-record task batch. Expired/corrupt data is never trusted.
+ONS_BOUNDARY_CACHE_TTL_HOURS = int(os.getenv("ONS_BOUNDARY_CACHE_TTL_HOURS", "720"))
+ONS_BOUNDARY_CACHE_DIR = Path(os.getenv("ONS_BOUNDARY_CACHE_DIR", "/var/lib/everguide/cache"))
+
+
+def _validate_boundary_geometry(geometry: dict, *, minimum_polygons: int = 1) -> None:
+    if not isinstance(geometry, dict) or geometry.get("type") not in {"Polygon", "MultiPolygon"}:
+        raise RuntimeError("ONS boundary cache has an unsupported geometry type.")
+    coords = geometry.get("coordinates")
+    polygons = [coords] if geometry["type"] == "Polygon" else coords
+    if not isinstance(polygons, list) or len(polygons) < minimum_polygons:
+        raise RuntimeError("ONS boundary cache geometry is incomplete.")
+    for polygon in polygons:
+        if not isinstance(polygon, list) or not polygon:
+            raise RuntimeError("ONS boundary contains an invalid polygon.")
+        for ring in polygon:
+            if not isinstance(ring, list) or len(ring) < 4 or ring[0] != ring[-1]:
+                raise RuntimeError("ONS boundary contains an invalid or unclosed ring.")
+            for coordinate in ring:
+                if not isinstance(coordinate, (list, tuple)) or len(coordinate) < 2:
+                    raise RuntimeError("ONS boundary contains an invalid coordinate.")
+                lon, lat = float(coordinate[0]), float(coordinate[1])
+                if not (math.isfinite(lon) and math.isfinite(lat) and -180 <= lon <= 180 and -90 <= lat <= 90):
+                    raise RuntimeError("ONS boundary contains an out-of-range coordinate.")
+
+
+def _boundary_cache_path(scope: str) -> Path:
+    safe_scope = "england" if scope == "england" else "thurrock"
+    return ONS_BOUNDARY_CACHE_DIR / f"ons-{safe_scope}-boundary-v1.json"
+
+
+def _read_boundary_cache(scope: str):
+    path = _boundary_cache_path(scope)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("schema_version") != 1 or payload.get("scope") != scope or payload.get("source") != ONS_QUERY_URL:
+            return None
+        geometry = payload["geometry"]
+        fetched_at = datetime.fromisoformat(payload["retrieved_at"].replace("Z", "+00:00"))
+        if fetched_at.tzinfo is None:
+            fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+        age = (_now() - fetched_at).total_seconds()
+        digest = hashlib.sha256(json.dumps(geometry, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        if payload.get("sha256") != digest or age < 0 or age > ONS_BOUNDARY_CACHE_TTL_HOURS * 3600:
+            return None
+        _validate_boundary_geometry(geometry, minimum_polygons=100 if scope == "england" else 1)
+        return geometry
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return None
+
+
+def _write_boundary_cache(scope: str, geometry: dict) -> None:
+    _validate_boundary_geometry(geometry, minimum_polygons=100 if scope == "england" else 1)
+    ONS_BOUNDARY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    path = _boundary_cache_path(scope)
+    encoded_geometry = json.dumps(geometry, sort_keys=True, separators=(",", ":"))
+    payload = {
+        "schema_version": 1, "scope": scope, "source": ONS_QUERY_URL,
+        "retrieved_at": _now().isoformat(), "sha256": hashlib.sha256(encoded_geometry.encode()).hexdigest(),
+        "geometry": geometry,
+    }
+    fd, temp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, separators=(",", ":"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    finally:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+
+
+def _get_ons_boundary(scope: str):
+    scope = "england" if scope == "england" else "thurrock"
+    cached = _read_boundary_cache(scope)
+    if cached is not None:
+        return cached
+    fetcher = _fetch_ons_england_geometry if scope == "england" else _fetch_ons_geometry
+    geometry = fetcher()
+    _validate_boundary_geometry(geometry, minimum_polygons=100 if scope == "england" else 1)
+    _write_boundary_cache(scope, geometry)
+    return geometry
+
+
+def _fetch_ons_json(url: str, *, timeout: int, attempts: int = 3) -> dict:
+    """Fetch ONS JSON with verified TLS and bounded retries for transient failures."""
+    last_error = None
+    for attempt in range(attempts):
+        request = urllib.request.Request(url, headers={"User-Agent": "EverguideBoundaryCheck/2.0", "Accept": "application/geo+json,application/json"})
+        try:
+            # urllib's default SSL context verifies the certificate chain and hostname.
+            with urllib.request.urlopen(request, timeout=timeout, context=ssl.create_default_context()) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            if not isinstance(payload, dict) or payload.get("error"):
+                raise RuntimeError("ONS returned an error or malformed JSON response.")
+            return payload
+        except (IncompleteRead, urllib.error.URLError, TimeoutError, OSError, ValueError, RuntimeError) as exc:
+            last_error = exc
+            if attempt + 1 < attempts:
+                time.sleep(2 ** attempt)
+    raise RuntimeError(f"ONS boundary request failed after {attempts} verified-TLS attempts: {last_error}") from last_error
+
+
 def _fetch_ons_geometry():
     params = urllib.parse.urlencode({
         "where": f"CTYUA25CD='{ONS_BOUNDARY_CODE}'",
         "outFields": "CTYUA25CD,CTYUA25NM",
         "returnGeometry": "true", "outSR": "4326", "f": "geojson",
     })
-    request = urllib.request.Request(ONS_QUERY_URL + "?" + params,
-        headers={"User-Agent": "EverguideBoundaryCheck/1.0"})
-    with urllib.request.urlopen(request, timeout=30) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+    payload = _fetch_ons_json(ONS_QUERY_URL + "?" + params, timeout=30)
     features = payload.get("features") or []
     if len(features) != 1 or (features[0].get("properties") or {}).get("CTYUA25CD") != ONS_BOUNDARY_CODE:
         raise RuntimeError("ONS did not return exactly the expected Thurrock boundary E06000034.")
@@ -118,10 +232,7 @@ def _fetch_ons_england_geometry():
         "where": "CTYUA25CD LIKE 'E%'", "outFields": "CTYUA25CD,CTYUA25NM",
         "returnGeometry": "true", "outSR": "4326", "f": "geojson", "resultRecordCount": 1000,
     })
-    request = urllib.request.Request(ONS_QUERY_URL + "?" + params,
-        headers={"User-Agent": "EverguideBoundaryCheck/1.0"})
-    with urllib.request.urlopen(request, timeout=45) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+    payload = _fetch_ons_json(ONS_QUERY_URL + "?" + params, timeout=45)
     features = payload.get("features") or []
     if len(features) < 100:
         raise RuntimeError("ONS did not return the expected England-wide county/unitary-authority boundary set.")
@@ -149,7 +260,9 @@ def _fetch_ons_england_geometry():
         polygons.extend(feature_polygons)
     if len(polygons) < 100:
         raise RuntimeError("ONS England boundary geometry is incomplete.")
-    return {"type": "MultiPolygon", "coordinates": polygons}
+    result = {"type": "MultiPolygon", "coordinates": polygons}
+    _validate_boundary_geometry(result, minimum_polygons=100)
+    return result
 
 def _inside_boundary(geometry, lon, lat):
     if lon is None or lat is None:
@@ -245,10 +358,31 @@ def _candidate_evidence_matches(raw, extracted):
     return name_match and postcode_match and phone_match
 
 
+def _is_non_first_party_url(url: str | None) -> bool:
+    domain = website_domain(url)
+    if not domain:
+        return True
+    blocked = set(DIRECTORY_DOMAINS) | {
+        "yell.com", "cylex-uk.co.uk", "cylex-uk.com", "thomsonlocal.com",
+        "scoot.co.uk", "freeindex.co.uk", "hotfrog.co.uk", "yellowtom.co.uk",
+        "mylocalservices.co.uk", "approvedbusiness.co.uk", "allinlondon.co.uk",
+        "thefarewellguide.co.uk", "companieshouse.gov.uk",
+        "find-and-update.company-information.service.gov.uk",
+    }
+    if any(domain == item or domain.endswith("." + item) for item in blocked):
+        return True
+    host_parts = domain.split(".")
+    if any(token in host_parts for token in ("directory", "listings", "classifieds")):
+        return True
+    path = urllib.parse.urlsplit(url if "://" in url else "https://" + url).path.lower()
+    return any(token in path for token in ("/search/", "/directory/", "/listing/", "/businesses/"))
+
+
 def _verify_overture_website(raw, initial_url):
-    """Try the Overture website, then permitted web-search leads if needed."""
+    """Treat Overture URLs as discovery leads; only matching provider-owned sites verify identity."""
     candidates = []
-    if initial_url:
+    initial_is_directory = _is_non_first_party_url(initial_url) if initial_url else False
+    if initial_url and not initial_is_directory:
         candidates.append((initial_url, "overture_website"))
     query = f'"{raw.get("name", "")}" funeral directors {raw.get("postcode", "")} official website UK'
     search_error = None
@@ -259,22 +393,20 @@ def _verify_overture_website(raw, initial_url):
             seen = {url for url, _ in candidates}
             for item in results:
                 url = _https_website(item.get("url"))
-                if not url or url in seen:
-                    continue
-                domain = (urllib.parse.urlsplit(url).hostname or "").lower().removeprefix("www.")
-                if any(domain == blocked or domain.endswith("." + blocked) for blocked in DIRECTORY_DOMAINS):
+                if not url or url in seen or _is_non_first_party_url(url):
                     continue
                 candidates.append((url, "brave_search"))
                 seen.add(url)
         except SearchProviderError as exc:
             search_error = str(exc)[:500]
-    best_mismatch = None
+    initial_mismatch = None
     last_verification = None
-    for url, discovery_source in candidates[:4]:
+    for url, discovery_source in candidates[:6]:
         try:
             verification = verify_candidate(url)
         except Exception as exc:
-            last_verification = {"status": "check_blocked_or_failed", "detail": str(exc)[:800], "robots_allowed": None, "final_url": url}
+            last_verification = {"status": "check_blocked_or_failed", "detail": str(exc)[:800],
+                "robots_allowed": None, "final_url": url, "discovery_source": discovery_source}
             continue
         last_verification = verification
         extracted = verification.get("extracted_data") if verification else None
@@ -282,18 +414,19 @@ def _verify_overture_website(raw, initial_url):
             verification["discovery_source"] = discovery_source
             verification["search_query"] = query if discovery_source == "brave_search" else None
             return url, verification
-        if extracted and best_mismatch is None:
-            best_mismatch = (url, verification)
-    if best_mismatch:
-        url, verification = best_mismatch
+        # A mismatch on the original non-directory URL may indicate a real
+        # identity/branch conflict. Search-result mismatches are simply discarded.
+        if extracted and discovery_source == "overture_website" and initial_mismatch is None:
+            initial_mismatch = (url, verification)
+    if initial_mismatch:
+        url, verification = initial_mismatch
         verification["discovery_source"] = "identity_or_branch_mismatch"
         verification["search_error"] = search_error
         return url, verification
-    if last_verification:
-        last_verification["search_error"] = search_error
-        return initial_url, last_verification
-    return initial_url, {"status": "website_missing", "final_url": initial_url,
-        "robots_allowed": None, "detail": search_error or "No first-party website candidate could be verified."}
+    return None, {"status": "website_missing", "final_url": initial_url,
+        "robots_allowed": None, "discovery_source": "third_party_discovery_lead" if initial_is_directory else None,
+        "search_error": search_error,
+        "detail": "No matching provider-owned HTTPS website could be verified. Original discovery URL is retained as source evidence, not treated as the provider website."}
 
 
 @celery_app.task(name="everguide.overture.import_records", bind=True)
@@ -416,13 +549,13 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
         query = db.query(OvertureCandidate).filter(
             OvertureCandidate.outcome == "awaiting_enrichment",
             OvertureCandidate.status == "awaiting_enrichment",
+            OvertureCandidate.last_checked_at.is_(None),
         )
         # SQLAlchemy does not allow filter() after limit()/offset(). Apply the
         # import-run scope first, then order and cap the batch. This is the
         # normal scheduled-feed path (run_id is supplied by the importer).
         if run_id:
-            query = query.filter(OvertureCandidate.last_import_run_id == run_id,
-                OvertureCandidate.last_checked_at.is_(None))
+            query = query.filter(OvertureCandidate.last_import_run_id == run_id)
         query = query.order_by(OvertureCandidate.id.asc()).limit(max(1, min(int(limit), 50)))
         candidates = query.with_for_update(skip_locked=True).all()
         claimed_ids = [candidate.id for candidate in candidates]
@@ -436,11 +569,12 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
         boundary = None
 
         for candidate in candidates:
+            previous_evidence = dict(candidate.first_party_evidence or {})
             raw = dict(candidate.raw_data or {})
             geography_scope = str(raw.get("geography_scope") or "thurrock").lower()
             if geography_scope not in boundary_cache and geography_scope not in boundary_errors:
                 try:
-                    boundary_cache[geography_scope] = _fetch_ons_england_geometry() if geography_scope == "england" else _fetch_ons_geometry()
+                    boundary_cache[geography_scope] = _get_ons_boundary(geography_scope)
                 except Exception as exc:
                     boundary_errors[geography_scope] = str(exc)[:500]
             boundary = boundary_cache.get(geography_scope)
@@ -461,26 +595,30 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                 evidence = {"boundary_error": boundary_error} if boundary_error else {}
             else:
                 point = _inside_boundary(boundary, raw.get("longitude"), raw.get("latitude")) if boundary else None
-                website = row.get("website")
-                verified_url, verification = _verify_overture_website(raw, website)
+                discovery_url = row.get("website")
+                verified_url, verification = _verify_overture_website(raw, discovery_url)
                 extracted = verification.get("extracted_data") if verification else None
-                if verified_url:
-                    row["website"] = verified_url
+                verified_first_party = bool(verified_url and extracted and verification.get("discovery_source") != "identity_or_branch_mismatch")
+                # Do not let a third-party directory/news/company-record URL become
+                # the candidate's official website or trigger a false domain conflict.
+                row["website"] = verified_url if verified_first_party or (verification and verification.get("discovery_source") == "identity_or_branch_mismatch") else None
                 evidence = {
-                    "source_type": "first_party_website" if verification and extracted else None,
-                    "business_name": extracted.get("name") if extracted else None,
-                    "reachable": bool(verification and verification.get("status") == "reachable"),
-                    "robots_allowed": verification.get("robots_allowed") if verification else None,
-                    "explicit_funeral_director_service": bool(extracted and extracted.get("funeral_signals")),
-                    "website_url": verification.get("final_url") if verification else verified_url or website,
+                    "source_type": "first_party_website" if verified_first_party else None,
+                    "discovery_url": discovery_url,
+                    "discovery_url_class": "third_party_lead" if _is_non_first_party_url(discovery_url) else "unverified_website_lead",
+                    "business_name": extracted.get("name") if verified_first_party or (verification and verification.get("discovery_source") == "identity_or_branch_mismatch") else None,
+                    "reachable": bool(verified_first_party and verification.get("status") == "reachable"),
+                    "robots_allowed": verification.get("robots_allowed") if verified_first_party else None,
+                    "explicit_funeral_director_service": bool(verified_first_party and extracted and extracted.get("funeral_signals")),
+                    "website_url": verification.get("final_url") if verified_url else None,
                     "website_discovery_source": verification.get("discovery_source") if verification else None,
                     "website_search_query": verification.get("search_query") if verification else None,
                     "website_search_error": verification.get("search_error") if verification else None,
-                    "complete_branch_address": bool(extracted and extracted.get("has_complete_branch_address")),
-                    "postcode": extracted.get("postcode") if extracted else None,
-                    "telephone": extracted.get("telephone") if extracted else None,
-                    "confidence": extracted.get("confidence", 0) if extracted else 0,
-                    "conflicting_identity_or_branch_evidence": False,
+                    "complete_branch_address": bool(verified_first_party and extracted and extracted.get("has_complete_branch_address")),
+                    "postcode": extracted.get("postcode") if verified_first_party and extracted else None,
+                    "telephone": extracted.get("telephone") if verified_first_party and extracted else None,
+                    "confidence": extracted.get("confidence", 0) if verified_first_party and extracted else 0,
+                    "conflicting_identity_or_branch_evidence": bool(verification and verification.get("discovery_source") == "identity_or_branch_mismatch"),
                     "page_title": verification.get("page_title") if verification else None,
                     "content_sha256": verification.get("content_sha256") if verification else None,
                     "verification_status": verification.get("status") if verification else "website_missing",
@@ -489,7 +627,7 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                     "geography_scope": geography_scope,
                     "point_in_scope": point,
                 }
-                if extracted:
+                if verified_first_party and extracted:
                     evidence["telephone_match"] = normalise_phone(extracted.get("telephone")) == normalise_phone(raw.get("phone"))
                     evidence["postcode_match"] = normalise_postcode(extracted.get("postcode")) == normalise_postcode(raw.get("postcode"))
                 duplicate = (str(raw.get("possible_duplicate", "")).lower() in {"true", "1", "yes"}
@@ -583,6 +721,18 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                             }))
                         db.add(AuditEvent(entity_type="overture_candidate", entity_id=candidate.id,
                             action="auto_approved_published", detail={"provider_id": provider.id, "branch_id": branch.id}))
+            if outcome == "awaiting_enrichment":
+                attempt_count = int(previous_evidence.get("enrichment_attempt_count") or 0) + 1
+                evidence["enrichment_attempt_count"] = attempt_count
+                if attempt_count < MAX_ENRICHMENT_ATTEMPTS:
+                    delay_days = ENRICHMENT_RETRY_DELAYS_DAYS[min(attempt_count - 1, len(ENRICHMENT_RETRY_DELAYS_DAYS) - 1)]
+                    evidence["next_retry_at"] = (_now() + timedelta(days=delay_days)).isoformat()
+                else:
+                    evidence["next_retry_at"] = None
+                    evidence["retry_limit_reached"] = True
+            else:
+                evidence["enrichment_attempt_count"] = int(previous_evidence.get("enrichment_attempt_count") or 0)
+                evidence["next_retry_at"] = None
             candidate.assessment = assessment
             candidate.first_party_evidence = evidence
             candidate.outcome = outcome
@@ -626,6 +776,14 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
             db.commit()
             if unclaimed and not in_progress:
                 process_overture_candidates.delay(run.id, 20)
+        elif checked:
+            unprocessed = db.query(OvertureCandidate).filter(
+                OvertureCandidate.outcome == "awaiting_enrichment",
+                OvertureCandidate.status == "awaiting_enrichment",
+                OvertureCandidate.last_checked_at.is_(None),
+            ).count()
+            if unprocessed:
+                process_overture_candidates.delay(None, 20)
         return {"status": "completed", "run_id": run_id, "records_processed": checked,
             "outcomes": dict(counts), "boundary_verified": bool(boundary_cache) and not bool(boundary_errors)}
     except Exception as exc:
@@ -645,6 +803,143 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                 db.add(AuditEvent(entity_type="overture_import_run", entity_id=run.id,
                     action="processing_failed", detail={"error": run.error_message}))
                 db.commit()
+        raise
+    finally:
+        db.close()
+
+
+@celery_app.task(name="everguide.overture.retry_awaiting_enrichment", bind=True)
+def retry_awaiting_enrichment(self):
+    """Requeue due enrichment-only candidates with a bounded 2/7/21-day cadence."""
+    db = SessionLocal()
+    now = _now()
+    requeued = 0
+    exhausted = 0
+    try:
+        candidates = db.query(OvertureCandidate).filter(
+            OvertureCandidate.outcome == "awaiting_enrichment",
+            OvertureCandidate.status == "awaiting_enrichment",
+            OvertureCandidate.last_checked_at.is_not(None),
+        ).order_by(OvertureCandidate.last_checked_at.asc()).all()
+        for candidate in candidates:
+            evidence = dict(candidate.first_party_evidence or {})
+            attempts = int(evidence.get("enrichment_attempt_count") or 1)
+            if attempts >= MAX_ENRICHMENT_ATTEMPTS:
+                if not evidence.get("retry_limit_reached"):
+                    evidence["retry_limit_reached"] = True
+                    evidence["next_retry_at"] = None
+                    candidate.first_party_evidence = evidence
+                    db.add(AuditEvent(entity_type="overture_candidate", entity_id=candidate.id,
+                        action="enrichment_retry_limit_reached", detail={"attempt_count": attempts}))
+                    exhausted += 1
+                continue
+            retry_at = evidence.get("next_retry_at")
+            if retry_at:
+                try:
+                    due = datetime.fromisoformat(str(retry_at).replace("Z", "+00:00"))
+                    if due.tzinfo is None:
+                        due = due.replace(tzinfo=timezone.utc)
+                except ValueError:
+                    # Invalid retry metadata is not treated as permission to retry.
+                    continue
+            else:
+                # Legacy candidates processed before retry metadata: wait at least
+                # two days after their last assessment before the first retry.
+                last_checked = candidate.last_checked_at
+                if last_checked.tzinfo is None:
+                    last_checked = last_checked.replace(tzinfo=timezone.utc)
+                due = last_checked + timedelta(days=2)
+            if due > now:
+                continue
+            candidate.last_checked_at = None
+            candidate.updated_at = now
+            evidence["retry_queued_at"] = now.isoformat()
+            candidate.first_party_evidence = evidence
+            db.add(AuditEvent(entity_type="overture_candidate", entity_id=candidate.id,
+                action="enrichment_retry_queued", detail={"attempt_count": attempts, "retry_due_at": due.isoformat()}))
+            requeued += 1
+        db.commit()
+        if requeued:
+            process_overture_candidates.delay(None, 20)
+        return {"status": "completed", "requeued": requeued, "retry_limits_reached": exhausted}
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@celery_app.task(name="everguide.overture.reconcile_stale_import_runs", bind=True)
+def reconcile_stale_overture_import_runs(self):
+    """Recover unfinished batches or close genuinely orphaned runs with an audit trail."""
+    db = SessionLocal()
+    now = _now()
+    stale_run_before = now - timedelta(hours=24)
+    stale_claim_before = now - timedelta(minutes=45)
+    resumed_runs = []
+    completed_runs = []
+    failed_runs = []
+    try:
+        runs = db.query(OvertureImportRun).filter(
+            OvertureImportRun.status.in_(["running", "processing"]),
+        ).order_by(OvertureImportRun.id.asc()).all()
+        for run in runs:
+            started = run.started_at or run.created_at
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            if started > stale_run_before:
+                continue
+            candidate_query = db.query(OvertureCandidate).filter(OvertureCandidate.last_import_run_id == run.id)
+            candidate_count = candidate_query.count()
+            stale_claims = candidate_query.filter(
+                OvertureCandidate.status == "processing",
+                OvertureCandidate.updated_at < stale_claim_before,
+            ).update({
+                "status": "awaiting_enrichment", "last_checked_at": None, "updated_at": now,
+            }, synchronize_session=False)
+            active_claims = candidate_query.filter(OvertureCandidate.status == "processing").count()
+            unprocessed = candidate_query.filter(
+                OvertureCandidate.outcome == "awaiting_enrichment",
+                OvertureCandidate.status == "awaiting_enrichment",
+                OvertureCandidate.last_checked_at.is_(None),
+            ).count()
+            if active_claims:
+                continue
+            linked_candidates = candidate_query.all()
+            processed_candidates = [item for item in linked_candidates if item.last_checked_at is not None]
+            outcome_counts = Counter(item.outcome for item in processed_candidates if item.outcome)
+            run.records_processed = len(processed_candidates)
+            metadata = (run.outcomes or {}).get("_meta", {}) if isinstance(run.outcomes, dict) else {}
+            run.outcomes = {**dict(outcome_counts), "_meta": metadata}
+            if unprocessed:
+                run.status = "processing"
+                run.error_message = None
+                resumed_runs.append(run.id)
+                action = "stale_import_run_resumed"
+            elif candidate_count == 0:
+                run.status = "failed"
+                run.error_message = "Stale import run had no linked candidate records; closed by automated recovery."
+                run.completed_at = now
+                failed_runs.append(run.id)
+                action = "stale_import_run_closed_without_candidates"
+            else:
+                run.status = "completed"
+                run.completed_at = now
+                run.error_message = None
+                completed_runs.append(run.id)
+                action = "stale_import_run_completed_after_reconciliation"
+            db.add(AuditEvent(entity_type="overture_import_run", entity_id=run.id, action=action, detail={
+                "candidate_count": candidate_count, "stale_claims_recovered": stale_claims,
+                "unprocessed_candidates": unprocessed, "reconciled_at": now.isoformat(),
+                "reason": "run exceeded 24-hour recovery threshold and had no active candidate claims",
+            }))
+        db.commit()
+        for run_id in resumed_runs:
+            process_overture_candidates.delay(run_id, 20)
+        return {"status": "completed", "resumed_runs": resumed_runs,
+            "completed_runs": completed_runs, "failed_orphaned_runs": failed_runs}
+    except Exception:
+        db.rollback()
         raise
     finally:
         db.close()
