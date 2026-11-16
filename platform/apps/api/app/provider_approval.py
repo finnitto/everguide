@@ -10,7 +10,9 @@ from __future__ import annotations
 import re
 from urllib.parse import urlsplit
 
-RULESET_VERSION = "provider-auto-approval-v1.1"
+from app.approval_policy import evaluate_common_evidence
+
+RULESET_VERSION = "provider-auto-approval-v1.2"
 UK_POSTCODE_RE = re.compile(r"^(?:GIR\s?0AA|[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2})$", re.I)
 
 
@@ -76,6 +78,7 @@ def assess_auto_approval(
     existing_branches: list[dict] | None = None,
     enabled: bool = True,
     minimum_confidence: float = 0.94,
+    point_in_england: bool | None = None,
 ) -> dict:
     """Return a deterministic pass/hold decision and machine-readable reasons."""
     existing_providers = existing_providers or []
@@ -85,14 +88,24 @@ def assess_auto_approval(
 
     if not enabled:
         reasons.append("automatic_approval_disabled")
-    if verification.get("status") != "reachable":
-        reasons.append("website_not_reachable")
-    if verification.get("robots_allowed") is not True:
-        reasons.append("robots_permission_not_confirmed")
-    if not (200 <= int(verification.get("http_status") or 0) < 300):
-        reasons.append("http_success_not_confirmed")
-    if "text/html" not in str(verification.get("content_type") or "").lower():
-        reasons.append("html_content_not_confirmed")
+    if point_in_england is False:
+        reasons.append("point_outside_official_england_boundary")
+    elif point_in_england is not True:
+        reasons.append("official_england_boundary_not_confirmed")
+    http_ok = False
+    try:
+        http_ok = 200 <= int(verification.get("http_status") or 0) < 300
+    except (TypeError, ValueError):
+        pass
+    html_ok = "text/html" in str(verification.get("content_type") or "").lower()
+    access_verified = verification.get("status") == "reachable" and http_ok and html_ok
+    if not access_verified:
+        if verification.get("status") != "reachable":
+            reasons.append("website_not_reachable")
+        if not http_ok:
+            reasons.append("http_success_not_confirmed")
+        if not html_ok:
+            reasons.append("html_content_not_confirmed")
 
     if data.get("source_type") != "schema_org_funeralhome":
         reasons.append("explicit_funeralhome_structured_type_required")
@@ -101,18 +114,31 @@ def assess_auto_approval(
     if not data.get("street") or not data.get("town"):
         reasons.append("complete_branch_address_required")
     postcode = re.sub(r"\s+", " ", str(data.get("postcode") or "")).strip().upper()
-    if not postcode or not UK_POSTCODE_RE.fullmatch(postcode):
-        reasons.append("valid_uk_postcode_required")
-    if not data.get("telephone") or len(_normalise_phone(data.get("telephone"))) < 9:
-        reasons.append("telephone_required")
+    common = evaluate_common_evidence(
+        access_verified=access_verified,
+        robots_allowed=verification.get("robots_allowed") is True,
+        complete_branch_address=bool(data.get("has_complete_branch_address")),
+        postcode=postcode,
+        telephone=data.get("telephone"),
+        confidence=data.get("confidence"),
+        minimum_confidence=minimum_confidence,
+        enabled=enabled,
+    )
+    # Retain this adapter's established reason vocabulary where it is more specific.
+    if verification.get("robots_allowed") is not True:
+        reasons.append("robots_permission_not_confirmed")
     if not data.get("has_complete_branch_address"):
         reasons.append("complete_branch_address_not_confirmed")
+    if "valid_uk_postcode_required" in common["reasons"]:
+        reasons.append("valid_uk_postcode_required")
+    if "telephone_required" in common["reasons"]:
+        reasons.append("telephone_required")
+    if "confidence_below_threshold" in common["reasons"]:
+        reasons.append("confidence_below_threshold")
     try:
         confidence = float(data.get("confidence") or 0)
     except (TypeError, ValueError):
         confidence = 0
-    if confidence < minimum_confidence:
-        reasons.append("confidence_below_threshold")
     if not _same_site(candidate_url, data.get("website") or candidate_url):
         reasons.append("candidate_and_structured_website_domain_mismatch")
     if candidate_company_name:
@@ -147,4 +173,6 @@ def assess_auto_approval(
         "ruleset_version": RULESET_VERSION,
         "confidence": confidence,
         "minimum_confidence": minimum_confidence,
+        "shared_policy_version": common["policy_version"],
+        "point_in_england": point_in_england,
     }

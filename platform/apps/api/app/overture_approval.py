@@ -11,6 +11,7 @@ import re
 from difflib import SequenceMatcher
 from urllib.parse import urlsplit
 
+from app.approval_policy import evaluate_common_evidence
 from app.candidate_quality import (
     THURROCK_OUTWARD_CODES,
     classify_service,
@@ -20,7 +21,7 @@ from app.candidate_quality import (
     website_domain,
 )
 
-RULESET_VERSION = "overture-auto-approval-v1.0"
+RULESET_VERSION = "overture-auto-approval-v1.1"
 # Source licences are recorded, not inferred from the Overture umbrella licence.
 KNOWN_LICENCES = {
     "CDLA-Permissive-2.0", "Apache-2.0", "CC0-1.0", "CC0",
@@ -119,8 +120,6 @@ def assess_overture_candidate(
     # Independent evidence required for automatic publication.
     if evidence.get("source_type") != "first_party_website":
         reasons.append("independent_first_party_evidence_missing")
-    if evidence.get("reachable") is not True or evidence.get("robots_allowed") is not True:
-        reasons.append("first_party_website_access_not_verified")
     if evidence.get("explicit_funeral_director_service") is not True:
         reasons.append("first_party_funeral_director_service_not_confirmed")
     candidate_domain = website_domain(row.get("website"))
@@ -144,26 +143,41 @@ def assess_overture_candidate(
         sequence_match = bool(candidate_name and evidence_name and SequenceMatcher(None, candidate_name, evidence_name).ratio() >= 0.72)
         if not candidate_name or not evidence_name or not (token_match or sequence_match):
             reasons.append("first_party_identity_name_mismatch")
-    if evidence.get("complete_branch_address") is not True:
-        reasons.append("first_party_complete_branch_address_not_confirmed")
     if evidence.get("postcode") and normalise_postcode(evidence.get("postcode")) != normalise_postcode(postcode):
         reasons.append("first_party_postcode_does_not_match_overture")
     overture_phone = normalise_phone(row.get("phone"))
     evidence_phone = normalise_phone(evidence.get("telephone"))
     if evidence.get("telephone") and (not overture_phone or not evidence_phone or overture_phone != evidence_phone):
         reasons.append("independent_telephone_match_not_confirmed")
-    elif not evidence.get("telephone"):
+
+    common = evaluate_common_evidence(
+        access_verified=(evidence.get("reachable") is True and evidence.get("source_type") == "first_party_website"),
+        robots_allowed=evidence.get("robots_allowed") is True,
+        complete_branch_address=evidence.get("complete_branch_address") is True,
+        postcode=evidence.get("postcode") or postcode,
+        telephone=evidence.get("telephone"),
+        confidence=evidence.get("confidence"),
+        minimum_confidence=minimum_confidence,
+        enabled=auto_approval_enabled,
+    )
+    if "first_party_website_access_not_verified" in common["reasons"]:
+        reasons.append("first_party_website_access_not_verified")
+    if "robots_permission_not_confirmed" in common["reasons"]:
+        reasons.append("first_party_website_access_not_verified")
+    if "complete_branch_address_not_confirmed" in common["reasons"]:
+        reasons.append("first_party_complete_branch_address_not_confirmed")
+    if "valid_uk_postcode_required" in common["reasons"]:
+        reasons.append("invalid_or_missing_uk_postcode")
+    if "telephone_required" in common["reasons"] or not evidence.get("telephone"):
         reasons.append("independent_telephone_match_not_confirmed")
     try:
         confidence = float(evidence.get("confidence") or 0)
     except (TypeError, ValueError):
         confidence = 0.0
-    if confidence < minimum_confidence:
+    if "confidence_below_threshold" in common["reasons"]:
         reasons.append("first_party_evidence_confidence_below_threshold")
     if evidence.get("conflicting_identity_or_branch_evidence") is True:
         reasons.append("conflicting_identity_or_branch_evidence")
-    if not auto_approval_enabled:
-        reasons.append("automatic_approval_disabled")
 
     reasons = list(dict.fromkeys(reasons))
     if not reasons:
@@ -179,7 +193,9 @@ def assess_overture_candidate(
         outcome = "exception_review"
     else:
         outcome = "awaiting_enrichment"
-    return _result(row, outcome, reasons, service_class, licences, confidence)
+    result = _result(row, outcome, reasons, service_class, licences, confidence)
+    result["shared_policy_version"] = common["policy_version"]
+    return result
 
 
 def _result(row, outcome, reasons, service_class, licences, confidence):
@@ -195,4 +211,5 @@ def _result(row, outcome, reasons, service_class, licences, confidence):
         "reasons": ";".join(reasons),
         "source_licences": ";".join(licences),
         "ruleset_version": RULESET_VERSION,
+        "shared_policy_version": "shared-provider-approval-v1.0",
     }

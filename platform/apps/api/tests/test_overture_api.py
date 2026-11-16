@@ -67,3 +67,34 @@ def test_overture_feed_check_endpoint_queues_latest_release_check(monkeypatch):
         app.dependency_overrides.pop(get_db, None)
         Base.metadata.drop_all(engine)
         engine.dispose()
+
+
+def test_manual_feed_check_remains_available_when_scheduling_is_disabled(monkeypatch):
+    from app.routers import overture as overture_router
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine)
+    def override_get_db():
+        db = factory()
+        try:
+            yield db
+        finally:
+            db.close()
+    app.dependency_overrides[get_db] = override_get_db
+    monkeypatch.setattr(overture_router.settings, "overture_feed_enabled", True)
+    monkeypatch.setattr(overture_router.settings, "overture_scheduled_tasks_enabled", False)
+    monkeypatch.setattr(overture_router.poll_latest_overture_release, "delay",
+        lambda *a, **k: type("Task", (), {"id": "manual-feed-check"})())
+    try:
+        with TestClient(app) as client:
+            response = client.post("/api/v1/overture/feed/check")
+            assert response.status_code == 202, response.text
+            assert response.json()["task_id"] == "manual-feed-check"
+            status = client.get("/api/v1/overture/status").json()
+            assert status["feed_enabled"] is True
+            assert status["scheduled_tasks_enabled"] is False
+            assert status["feed_schedule_enabled"] is False
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        Base.metadata.drop_all(engine)
+        engine.dispose()

@@ -27,3 +27,5 @@ backups/
 *.db
 *.zip
 *.gpkg
+.venv-test
+.venv

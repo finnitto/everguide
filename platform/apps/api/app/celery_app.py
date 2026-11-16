@@ -27,4 +27,4 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(hour=5, minute=25),
         "options": {"expires": 60 * 60 * 12},
     },
-} if settings.overture_feed_enabled else {}
+} if settings.overture_feed_enabled and settings.overture_scheduled_tasks_enabled else {}

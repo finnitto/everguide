@@ -1,5 +1,9 @@
 # Overture discovery and automatic publication
 
+## Development and end-to-end validation mode
+
+Scheduled Overture polling, enrichment retries and stale-run recovery are disabled by default using `OVERTURE_SCHEDULED_TASKS_ENABLED=false`. This switch controls Celery Beat registration only. It does not disable the on-demand API actions for an immediate feed check, importing a controlled dataset, or processing candidates. `OVERTURE_FEED_ENABLED` controls whether the feed integration is available; `OVERTURE_AUTO_PROCESS` controls whether a completed import automatically queues candidate processing. Keep `AUTO_APPROVE_PROVIDERS=false` during ordinary development. For controlled approval tests, enable it only against test data after the approval safeguards are verified.
+
 ## Scheduled England-wide feed (v2.7.4)
 
 Everguide's normal Overture workflow is fully scheduled; an administrator does not upload or import a CSV. Celery Beat checks the authoritative Overture STAC catalogue daily at the configured Europe/London time. It compares the latest release with previous scheduled feed runs and only scans Places when a new release is available.
@@ -26,6 +30,7 @@ The Overture admin panel shows feed enablement and schedule, last feed check, la
 
 ```dotenv
 OVERTURE_FEED_ENABLED=true
+OVERTURE_SCHEDULED_TASKS_ENABLED=false
 OVERTURE_FEED_DAILY_HOUR=4
 OVERTURE_FEED_DAILY_MINUTE=30
 OVERTURE_FEED_BATCH_SIZE=500
@@ -38,7 +43,7 @@ BRAVE_SEARCH_API_KEY=
 
 Automatic publication is disabled by default; keep `AUTO_APPROVE_PROVIDERS=false` during discovery validation. Only enable it explicitly after the evidence and exception outcomes have been validated. ONS geometry is cached for 30 days in the `ons_boundary_cache` Docker volume; the cache stores source and retrieval metadata and rejects expired or invalid entries.
 
-The scheduled feed requires outbound HTTPS access to `stac.overturemaps.org`, Overture's public S3 Parquet bucket, the ONS ArcGIS boundary service and, when configured, the search provider. DuckDB downloads its `httpfs` and `spatial` extensions on first query.
+When scheduled automation is explicitly authorised, the scheduled feed requires outbound HTTPS access to `stac.overturemaps.org`, Overture's public S3 Parquet bucket, the ONS ArcGIS boundary service and, when configured, the search provider. DuckDB downloads its `httpfs` and `spatial` extensions on first query.
 
 ## API
 
@@ -51,7 +56,7 @@ The scheduled feed requires outbound HTTPS access to `stac.overturemaps.org`, Ov
 
 ## Scope and limitations
 
-The scheduled feed scans potential funeral-related Places in England. The bounding box is only a query optimisation; official ONS point-in-polygon validation is the final England-scope check. Records without a point or outside England are not imported. The taxonomy/name filter may not discover a funeral director whose Overture record has neither relevant taxonomy nor relevant name terms; Companies House and first-party website discovery remain complementary sources.
+The Overture feed scans potential funeral-related Places in England when invoked manually or by an authorised schedule. The bounding box is only a query optimisation; official ONS point-in-polygon validation is the final England-scope check. Records without a point or outside England are not imported. The taxonomy/name filter may not discover a funeral director whose Overture record has neither relevant taxonomy nor relevant name terms; Companies House and first-party website discovery remain complementary sources.
 
 The feed ingests a new Overture release once and upserts candidates by GERS ID. It does not infer that a provider has closed solely because a record is absent from a later release, and it does not delete provider/branch records. Existing verified data is retained. Future release-delta/changelog integration can improve update efficiency, but full England candidate scans occur only when Overture publishes a new release.
 

@@ -37,6 +37,7 @@ def test_complete_independent_evidence_and_source_rights_can_pass():
     result = assess_overture_candidate(row(), first_party_evidence=evidence(), point_in_thurrock=True)
     assert result["outcome"] == "auto_approved_eligible"
     assert result["reasons"] == ""
+    assert result["shared_policy_version"] == "shared-provider-approval-v1.0"
 
 
 def test_wrong_service_is_excluded_even_if_overture_taxonomy_says_funeral():

@@ -155,18 +155,19 @@ No new Alembic migration is added in v2.6.1.
 Follow the same safe overlay process described above for v2.5.1: back up PostgreSQL, extract the full ZIP into the existing project root, preserve `.env` and Docker volumes, then run `docker compose up -d --build`. This release adds no database migration. Do not run `docker compose down -v`.
 
 
-## Overture scheduled discovery and automatic publication (v2.7.4)
+## Overture discovery and automatic publication (v2.7.6)
 
-Everguide checks the official Overture STAC catalogue daily and discovers new Places releases. When a new release appears, the worker queries Overture's cloud-hosted Places GeoParquet directly using a broad England bounding box, then filters candidate points against the official ONS England county/unitary-authority boundaries. It does not download the full global Places dataset and does not require an administrator to upload a CSV.
+Everguide supports on-demand Overture STAC checks and scheduled discovery. During development and end-to-end validation, scheduled tasks are disabled by default; an operator can still trigger an immediate feed check through the API. Once explicitly enabled, Everguide checks the official Overture STAC catalogue daily and discovers new Places releases. When a new release appears, the worker queries Overture's cloud-hosted Places GeoParquet directly using a broad England bounding box, then filters candidate points against the official ONS England county/unitary-authority boundaries. It does not download the full global Places dataset and does not require an administrator to upload a CSV.
 
 Potential funeral-director records are identified using Overture taxonomy and name signals, then upserted by GERS ID with contributor-level source IDs, licence metadata, release/version and retrieval timestamps. The existing first-party evidence pipeline independently checks official websites, robots.txt permission, funeral-director service evidence, identity, complete branch address, postcode, telephone, source licence and provider/branch collisions. Overture existence confidence remains provenance only. When automatic publication is explicitly enabled, qualifying providers and branches can be published; incomplete records remain in enrichment and unresolved conflicts go to the exception queue. Directory and price publication remain separate. Third-party listing URLs are retained as discovery leads and never accepted as provider-owned websites.
 
-The admin Overture panel is for monitoring feed status, release history, candidate outcomes and exceptions. **No routine CSV import is required.** A one-off **Check for new Overture release** action is available for diagnostics; the scheduled daily check remains the normal operating path.
+The admin Overture panel is for monitoring feed status, release history, candidate outcomes and exceptions. **No routine CSV import is required.** A one-off **Check for new Overture release** action is available for diagnostics; scheduled checks remain disabled until the end-to-end workflow is accepted and the operator explicitly enables them.
 
-Default configuration:
+Development/validation configuration (manual actions available; scheduled tasks disabled):
 
 ```dotenv
 OVERTURE_FEED_ENABLED=true
+OVERTURE_SCHEDULED_TASKS_ENABLED=false
 OVERTURE_FEED_DAILY_HOUR=4
 OVERTURE_FEED_DAILY_MINUTE=30
 OVERTURE_FEED_BATCH_SIZE=500
@@ -182,3 +183,9 @@ DuckDB and its HTTPFS/spatial extensions are used by the worker to query public 
 
 See [docs/OVERTURE-AUTOMATIC-APPROVAL.md](docs/OVERTURE-AUTOMATIC-APPROVAL.md) for the feed design, API and safeguards. The API retains the old CSV import endpoint for compatibility, but it is no longer exposed as a normal admin workflow.
 
+
+## Unified provider approval policy (v2.7.7)
+
+Website/Companies House and Overture approval adapters now call the same versioned common evidence policy for access/robots permission, complete branch address, valid UK postcode, telephone, approval enablement and the configured confidence threshold. Each adapter retains its source-specific checks and reason codes. The configured 0.94 threshold is not a claim of 94% measured accuracy.
+
+The provider/Companies House path now requires explicit official England-boundary confirmation (`point_in_england=True`). Its current task callers do not yet supply that boundary result, so that route deliberately fails closed rather than publishing without the required geography evidence. The Overture path retains its existing ONS England boundary gate. Automatic approval remains disabled by default and Overture scheduled tasks remain disabled by default. See `RELEASE-NOTES-2.7.7.md` for validation and remaining integration work.

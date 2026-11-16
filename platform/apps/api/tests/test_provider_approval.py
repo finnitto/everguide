@@ -18,10 +18,11 @@ def verification(**overrides):
 
 def test_high_confidence_first_party_funeral_home_is_auto_approved():
     decision = assess_auto_approval(candidate_url="https://www.example.test/contact",
-                                   verification=verification(), candidate_company_name="Example Funeral Services Ltd")
+                                   verification=verification(), candidate_company_name="Example Funeral Services Ltd", point_in_england=True)
     assert decision["eligible"] is True
     assert decision["decision"] == "auto_approve"
-    assert decision["ruleset_version"] == "provider-auto-approval-v1.1"
+    assert decision["ruleset_version"] == "provider-auto-approval-v1.2"
+    assert decision["shared_policy_version"] == "shared-provider-approval-v1.0"
 
 
 def test_localbusiness_is_exception_not_auto_approved():
@@ -101,3 +102,21 @@ def test_legacy_http_provider_website_domain_collision_is_detected():
     )
     assert decision["eligible"] is False
     assert "existing_provider_domain_collision" in decision["reasons"]
+
+
+def test_provider_route_fails_closed_without_official_england_boundary():
+    decision = assess_auto_approval(
+        candidate_url="https://example.test", verification=verification(),
+        candidate_company_name="Example Funeral Services Ltd",
+    )
+    assert decision["eligible"] is False
+    assert "official_england_boundary_not_confirmed" in decision["reasons"]
+
+
+def test_provider_route_rejects_point_outside_england():
+    decision = assess_auto_approval(
+        candidate_url="https://example.test", verification=verification(),
+        candidate_company_name="Example Funeral Services Ltd", point_in_england=False,
+    )
+    assert decision["eligible"] is False
+    assert "point_outside_official_england_boundary" in decision["reasons"]

@@ -31,6 +31,8 @@ def overture_status(db: Session = Depends(get_db)):
     last_check = db.query(AuditEvent).filter(AuditEvent.entity_type == "overture_feed").order_by(AuditEvent.id.desc()).first()
     return {"pipeline_enabled": True, "automatic_processing": settings.overture_auto_process,
         "feed_enabled": settings.overture_feed_enabled,
+        "scheduled_tasks_enabled": settings.overture_scheduled_tasks_enabled,
+        "feed_schedule_enabled": settings.overture_feed_enabled and settings.overture_scheduled_tasks_enabled,
         "feed_schedule": f"Daily at {settings.overture_feed_daily_hour:02d}:{settings.overture_feed_daily_minute:02d} Europe/London",
         "last_feed_check": {"action": last_check.action, "detail": last_check.detail, "created_at": last_check.created_at} if last_check else None,
         "automatic_publication_enabled": settings.auto_approve_providers,
