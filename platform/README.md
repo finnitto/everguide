@@ -1,50 +1,36 @@
-# Everguide v2.7.4
+# Everguide v2.8.0
 
-Automation-first discovery, verification and publication foundation for the Everguide funeral director directory.
+England-only funeral director directory with Overture-first discovery, evidence-led identity verification and controlled publication.
 
-## Important deployment behaviour
+## Current operating policy
 
-On first startup after v2.0.0 is deployed, Alembic migration `0013_ch_reset` clears the early-development directory and its operational discovery data. It clears providers, branches, source observations, Google Places discovery observations, website discovery and verification data, correction proposals, source permission records and related development audit events. It retains the PostgreSQL database and schema, Alembic migration history, Redis infrastructure and application configuration. A new system audit event records the reset.
+- **Initial discovery:** Overture Places is the sole source of initial discovery candidates. Companies House and provider-owned websites are supporting legal-identity, trading-identity and branch evidence only.
+- **No independent discovery:** legacy Google Places, Companies House-led candidate discovery and company-website discovery routes are retired. Their legacy worker tasks return disabled before their former processing paths.
+- **Creation and publication:** direct provider and branch creation routes are retired. Direct provider publication is blocked. The Overture approval worker is the only active provider/branch publication path.
+- **Identity provenance:** a Companies House candidate is eligible for identity assessment only after an authenticated reviewer explicitly verifies its link to an Overture candidate with structured evidence.
+- **Reviewer access:** administrative read and mutation endpoints require a bearer token. The public directory search endpoint remains public. Do not expose other API/admin surfaces without an appropriately secured deployment boundary.
+- **Automatic processing:** `AUTO_APPROVE_PROVIDERS=false`, `OVERTURE_AUTO_PROCESS=false` and `OVERTURE_SCHEDULED_TASKS_ENABLED=false` are the application and Compose defaults. Existing local `.env` values can override these defaults; they have not been inspected or changed by this work.
+- **Audit and preservation:** reviewer attribution is taken from authenticated credentials, and candidate, provider, branch and audit history is retained.
 
-This migration is intentionally destructive to the old development directory and is not reversible. Do not deploy it against production customer data.
+## Reviewer credentials
 
-## Companies House setup
+Configure `IDENTITY_REVIEW_CREDENTIALS` in the backend environment as a JSON object mapping stable reviewer IDs to SHA-256 hashes of high-entropy bearer tokens. The API never accepts reviewer identity from request bodies. Keep raw tokens out of source control, logs and release archives. An empty configuration denies reviewer access.
 
-1. Register an application and obtain an API key from the [Companies House Developer Hub](https://developer.company-information.service.gov.uk/).
-2. Add these settings to the existing `.env` file:
+See `docs/OVERTURE-AUTOMATIC-APPROVAL.md` for the Overture feed, assessment and publication safeguards.
 
-```dotenv
-COMPANIES_HOUSE_API_KEY=your_api_key_here
-COMPANIES_HOUSE_SIC_CODES=96030
-```
+## Database migration
 
-3. Extract the release over the existing project, preserving `.env`.
-4. Run:
+Release 2.8.0 adds Alembic revision `0021_overture_company_links`. It creates the auditable Overture-to-Companies House provenance-link table and is additive; no production database migration has been run as part of Stage 1. Do not deploy or run migrations against production. The historical destructive migration `0013_ch_reset` is documented in earlier release notes and must never be applied to production customer data.
 
-```bash
-docker compose up -d --build
-```
+## Validation status
 
-5. Open `http://localhost:3000/admin` and select **Import active Companies House companies**.
+- API suite: **151 passed**, with one Starlette/AnyIO deprecation warning.
+- Frontend build, Docker build, migration execution and integrated release validation remain outstanding for Stage 5.
+- No production environment has been created or deployed. No Overture import, candidate processing, enrichment, approval or publication has been run.
 
-The importer uses the Companies House Advanced Company Search API, requesting active companies with the configured SIC codes. It paginates through the result set, upserts candidates by company number, and records each import run. API credentials are sent only from the backend using HTTP Basic authentication.
+## Historical release notes
 
-## What the importer does not do
-
-Companies House records are legal-entity candidates, not verified funeral directors. SIC 96030 includes funeral and related activities, including activities other than funeral directing. A registered office is not assumed to be a funeral home. This release stores candidates separately and does not create or publish providers or branches.
-
-The next stage must classify candidates, establish whether the company actually operates funeral-director services in England, discover trading identities and genuine operating branches, and supplement the register with independent discovery for sole traders and ordinary partnerships.
-
-## Local stack
-
-- Next.js / React admin console
-- FastAPI API
-- PostgreSQL + PostGIS
-- Redis + Celery worker
-- Companies House Public Data API
-
-The admin console is a development interface. Authentication and role-based access control are not enabled; do not expose it to the public internet.
-
+The following sections preserve earlier implementation history. Their workflow descriptions are historical and do not override the current Overture-first policy above.
 
 ## v2.1 candidate triage
 The Companies House importer remains the legal-entity discovery layer. After import, an administrator can run **Classify active candidates**. The deterministic name-based rules provide an explainable first-pass triage only; they do not verify the company's operating activity, create providers, create branches, or publish listings. Website and company-profile enrichment is the next stage.
