@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.8.0 — Overture-first identity provenance and reviewer access controls
+
+- Establishes Overture Places as the sole initial discovery source. Independent Google Places, Companies House and company-website discovery routes are retired; legacy discovery worker tasks return disabled before their former processing paths.
+- Retires direct provider and branch creation endpoints and blocks direct provider publication. Provider and branch publication is reserved for the Overture approval worker.
+- Adds the auditable `overture_company_links` relationship between Overture candidates and Companies House candidates in additive migration `0021_overture_company_links`, with restrictive foreign keys, pair uniqueness and review metadata.
+- Requires explicit reviewer-authenticated verification with structured identity evidence before Companies House candidates can enter Overture-scoped identity assessment. Reviewer attribution is derived from bearer credentials, not request payloads.
+- Adds reviewer authentication to administrative read and mutation endpoints, including candidate queues, directory management, identity review, quality review and Overture diagnostics. The public directory search endpoint remains public.
+- Requires reviewer credentials for Overture import, feed-check and processing actions. Sets Overture automatic post-import processing and scheduled retry/recovery defaults to disabled in application and Compose configuration.
+- Keeps automatic provider approval disabled by default. Existing runtime `.env` overrides are not changed by this release; operators must verify their own configuration before enabling any processing.
+- Preserves candidate, provider, branch and audit history; no destructive migration or database reset is introduced.
+- Validation: full API test suite **151 passed** with one Starlette/AnyIO deprecation warning. Frontend build, Docker build, migration execution and production deployment are not included in this Stage 1 validation.
+
 ## 2.7.4 — First-party website classification and persistent ONS boundaries
 
 - Separates attributed discovery URLs from verified provider-owned websites; excludes third-party directories, listing pages, news and company-record pages from first-party verification.
