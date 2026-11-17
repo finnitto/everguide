@@ -106,9 +106,9 @@ The Stage 3 evidence foundation is implemented and the current branch passed Git
 - Data retention, privacy and evidence revalidation policy.
 
 ### Exit criteria
-- [ ] Route-by-route auth matrix and tests for every active admin read/write, including negative and positive credential tests.
+- [ ] Route-by-route auth matrix and tests for every active admin read/write, including negative and positive credential tests (router-level reviewer guards and a route-introspection regression are now added; current CI is pending).
 - [ ] Role and permission matrix agreed; a single reviewer token role is not treated as a complete RBAC design.
-- [ ] Secret lifecycle and rotation runbook tested.
+- [ ] Secret lifecycle and rotation runbook tested ([reviewer credential operations](REVIEWER-CREDENTIAL-OPERATIONS.md) documents provisioning, rotation, revocation and current limitations; actual target-environment execution remains outstanding).
 - [ ] Backup artifact is produced, integrity-checked and restored into an isolated environment; restore evidence recorded.
 - [ ] Failure injection covers database/Redis interruption, worker loss, task redelivery, rate limiting and upstream outage.
 - [ ] Alerts and operational dashboards cover the agreed service-level indicators.
