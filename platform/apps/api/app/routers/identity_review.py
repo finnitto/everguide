@@ -7,8 +7,8 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import (CompaniesHouseCandidate, CompanyWebsiteCandidate,
-    CompanyIdentityReview, CompanyBranchProposal, AuditEvent, IdentityAssessmentRun)
-from app.identity_tasks import run_identity_assessment
+    CompanyIdentityReview, CompanyBranchProposal, AuditEvent, IdentityAssessmentRun, OvertureCandidate, OvertureCompanyLink)
+from app.identity_tasks import run_identity_assessment, verified_overture_company_query
 
 router = APIRouter(prefix="/api/v1/identity-review", tags=["identity and branch review"])
 
@@ -54,6 +54,114 @@ def _branch_dict(row, company):
         "telephone":row.telephone,"website":row.website,"confidence":row.confidence,
         "evidence":row.evidence or {},"review_notes":row.review_notes}
 
+@router.get("/overture-links")
+def overture_links(limit: int = 50, status: str = "all", db: Session = Depends(get_db)):
+    """List explicit Overture-to-Companies House provenance links."""
+    q = db.query(OvertureCompanyLink, OvertureCandidate, CompaniesHouseCandidate).join(
+        OvertureCandidate, OvertureCandidate.id == OvertureCompanyLink.overture_candidate_id
+    ).join(
+        CompaniesHouseCandidate, CompaniesHouseCandidate.id == OvertureCompanyLink.companies_house_candidate_id
+    )
+    if status != "all":
+        q = q.filter(OvertureCompanyLink.status == status)
+    rows = q.order_by(OvertureCompanyLink.id.desc()).limit(min(max(limit, 1), 200)).all()
+    return {"items": [{
+        "id": link.id,
+        "overture_candidate_id": overture.id,
+        "gers_id": overture.gers_id,
+        "overture_name": overture.candidate_name,
+        "companies_house_candidate_id": company.id,
+        "company_number": company.company_number,
+        "company_name": company.company_name,
+        "status": link.status,
+        "link_method": link.link_method,
+        "evidence": link.evidence_json or {},
+        "review_notes": link.review_notes,
+        "reviewed_by": link.reviewed_by,
+        "reviewed_at": link.reviewed_at.isoformat() if link.reviewed_at else None,
+    } for link, overture, company in rows]}
+
+
+@router.post("/overture-links")
+def create_overture_link(payload: dict, db: Session = Depends(get_db)):
+    """Create a pending link only; creation never verifies provenance."""
+    overture_id = payload.get("overture_candidate_id")
+    company_id = payload.get("companies_house_candidate_id")
+    if not isinstance(overture_id, int) or not isinstance(company_id, int):
+        raise HTTPException(400, "Both candidate IDs must be integers")
+    if not db.get(OvertureCandidate, overture_id):
+        raise HTTPException(404, "Overture candidate not found")
+    if not db.get(CompaniesHouseCandidate, company_id):
+        raise HTTPException(404, "Companies House candidate not found")
+    existing = db.query(OvertureCompanyLink).filter(
+        OvertureCompanyLink.companies_house_candidate_id == company_id
+    ).first()
+    if existing:
+        raise HTTPException(409, "A provenance link already exists for this Companies House candidate")
+    link = OvertureCompanyLink(
+        overture_candidate_id=overture_id,
+        companies_house_candidate_id=company_id,
+        status="pending",
+        link_method="manual_review",
+        evidence_json={},
+        review_notes=str(payload.get("review_notes") or "")[:4000] or None,
+    )
+    db.add(link)
+    db.flush()
+    db.add(AuditEvent(
+        entity_type="overture_company_link",
+        entity_id=link.id,
+        action="created_pending",
+        detail={"overture_candidate_id": overture_id, "companies_house_candidate_id": company_id},
+    ))
+    db.commit()
+    return {"id": link.id, "status": link.status, "message": "Pending link created. It cannot enter identity assessment until explicitly verified."}
+
+
+@router.patch("/overture-links/{link_id}")
+def review_overture_link(link_id: int, payload: dict, db: Session = Depends(get_db)):
+    """Verify or reject a provenance link with reviewer attribution and evidence."""
+    link = db.get(OvertureCompanyLink, link_id)
+    if not link:
+        raise HTTPException(404, "Overture provenance link not found")
+    status = payload.get("status")
+    if status not in {"verified", "rejected", "needs_more_evidence", "pending"}:
+        raise HTTPException(400, "Unsupported provenance link status")
+    reviewer = str(payload.get("reviewed_by") or "").strip()[:120]
+    evidence = payload.get("evidence")
+    if status == "verified":
+        if not reviewer:
+            raise HTTPException(400, "reviewed_by is required to verify provenance")
+        if not isinstance(evidence, dict) or not evidence:
+            raise HTTPException(400, "Non-empty structured evidence is required to verify provenance")
+        if not any(str(k).strip() and v not in (None, "", [], {}) for k, v in evidence.items()):
+            raise HTTPException(400, "Evidence must contain at least one substantive value")
+        if not db.get(CompaniesHouseCandidate, link.companies_house_candidate_id):
+            raise HTTPException(409, "Companies House candidate no longer exists")
+        if not db.get(OvertureCandidate, link.overture_candidate_id):
+            raise HTTPException(409, "Overture candidate no longer exists")
+        link.reviewed_by = reviewer
+        link.reviewed_at = datetime.now(timezone.utc)
+        link.evidence_json = evidence
+    else:
+        link.reviewed_by = reviewer or link.reviewed_by
+        link.reviewed_at = datetime.now(timezone.utc) if reviewer else link.reviewed_at
+        if isinstance(evidence, dict):
+            link.evidence_json = evidence
+    link.status = status
+    link.review_notes = str(payload.get("review_notes") or "")[:4000] or link.review_notes
+    link.updated_at = datetime.now(timezone.utc)
+    db.add(AuditEvent(
+        entity_type="overture_company_link",
+        entity_id=link.id,
+        action="status_changed",
+        detail={"status": status, "reviewed_by": link.reviewed_by, "evidence": link.evidence_json or {}},
+    ))
+    db.commit()
+    return {"id": link.id, "status": link.status, "reviewed_by": link.reviewed_by,
+            "reviewed_at": link.reviewed_at.isoformat() if link.reviewed_at else None}
+
+
 @router.get("/summary")
 def summary(db: Session = Depends(get_db)):
     return {
@@ -84,10 +192,10 @@ def prepare_review_queues(db: Session = Depends(get_db)):
     active = db.query(IdentityAssessmentRun).filter(IdentityAssessmentRun.status.in_(["queued","running"])).order_by(IdentityAssessmentRun.id.desc()).first()
     if active:
         return {"status":active.status,"run_id":active.id,"message":"An identity assessment is already queued or running."}
+    eligible_ids = verified_overture_company_query(db).subquery()
     total = (db.query(func.count(func.distinct(CompanyWebsiteCandidate.companies_house_candidate_id)))
-        .join(CompaniesHouseCandidate, CompaniesHouseCandidate.id == CompanyWebsiteCandidate.companies_house_candidate_id)
-        .filter(CompaniesHouseCandidate.company_status == "active",
-                CompanyWebsiteCandidate.verification_status != "auto_approved_published").scalar() or 0)
+        .join(eligible_ids, eligible_ids.c.id == CompanyWebsiteCandidate.companies_house_candidate_id)
+        .filter(CompanyWebsiteCandidate.verification_status != "auto_approved_published").scalar() or 0)
     run = IdentityAssessmentRun(status="queued", total_companies=total)
     db.add(run); db.commit(); db.refresh(run)
     task = run_identity_assessment.delay(run.id)

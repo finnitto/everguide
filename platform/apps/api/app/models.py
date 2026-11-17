@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Float, String, Text, JSON, Index
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Float, String, Text, JSON, Index, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -324,6 +324,30 @@ class OvertureImportRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class OvertureCompanyLink(Base):
+    """Auditable, explicitly reviewed provenance link between Overture and Companies House."""
+    __tablename__ = "overture_company_links"
+    __table_args__ = (
+        UniqueConstraint("companies_house_candidate_id", name="uq_overture_company_links_ch_candidate"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    overture_candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("overture_candidates.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    companies_house_candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("companies_house_candidates.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending", index=True)
+    link_method: Mapped[str] = mapped_column(String(40), nullable=False, default="manual_review")
+    evidence_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    review_notes: Mapped[str | None] = mapped_column(Text)
+    reviewed_by: Mapped[str | None] = mapped_column(String(120))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
 
 
 class OvertureCandidate(Base):
