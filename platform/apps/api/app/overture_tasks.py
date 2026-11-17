@@ -28,7 +28,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.models import (
     AuditEvent, Branch, OvertureCandidate, OvertureImportRun, Provider,
-    SourceObservation,
+    SourceObservation, OvertureCompanyLink, CompaniesHouseCandidate,
 )
 from app.overture_approval import assess_overture_candidate
 from app.candidate_quality import DIRECTORY_DOMAINS, normalise_identity_name, normalise_phone, normalise_postcode, website_domain
@@ -431,6 +431,23 @@ def _existing_provider_match(db, row):
     return False, None
 
 
+def _verified_companies_house_conflicts(db, candidate):
+    """Return conflicts only from an explicitly reviewed Overture↔CH identity link."""
+    links = db.query(OvertureCompanyLink).filter(
+        OvertureCompanyLink.overture_candidate_id == candidate.id,
+        OvertureCompanyLink.status == "verified",
+        OvertureCompanyLink.reviewed_at.is_not(None),
+        OvertureCompanyLink.reviewed_by.is_not(None),
+        OvertureCompanyLink.evidence_json.is_not(None),
+    ).all()
+    conflicts = []
+    for link in links:
+        company = db.get(CompaniesHouseCandidate, link.companies_house_candidate_id)
+        if company and str(company.company_status or "").strip().lower() == "dissolved":
+            conflicts.append("verified_companies_house_entity_dissolved")
+    return sorted(set(conflicts))
+
+
 def _overture_duplicate_conflict(db, candidate):
     name_key = normalise_identity_name(candidate.candidate_name)
     postcode_key = normalise_postcode(candidate.postcode)
@@ -794,6 +811,13 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                     and verification.get("robots_allowed") is True)
                 website_conflict = bool(extracted and _candidate_evidence_matches(raw, extracted) is False
                     and extracted.get("has_complete_branch_address") is True)
+                conflict_codes = _verified_companies_house_conflicts(db, candidate)
+                if extracted and str(extracted.get("branch_status") or extracted.get("business_status") or "").strip().lower() in {
+                    "closed", "permanently_closed", "permanently closed"
+                }:
+                    conflict_codes.append("official_site_branch_closed")
+                if website_conflict:
+                    conflict_codes.append("official_site_identity_or_branch_address_mismatch")
                 if not discovery_url or _is_non_first_party_url(discovery_url):
                     row["website"] = None
                 evidence = {
@@ -810,8 +834,8 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                         "name", "street", "town", "postcode", "telephone", "email", "website",
                         "source_type", "country", "confidence", "funeral_signals", "has_complete_branch_address")}
                         if extracted else None),
-                    "conflicting_identity_or_branch_evidence": website_conflict,
-                    "conflict_codes": ["official_site_identity_or_branch_address_mismatch"] if website_conflict else [],
+                    "conflicting_identity_or_branch_evidence": bool(conflict_codes),
+                    "conflict_codes": sorted(set(conflict_codes)),
                     "ons_boundary_code": (authority_codes[0] if len(authority_codes) == 1 else None)
                         if geography_scope == "england" else ONS_BOUNDARY_CODE if boundary else None,
                     "ons_boundary_codes": authority_codes if geography_scope == "england" else ([ONS_BOUNDARY_CODE] if boundary else []),
