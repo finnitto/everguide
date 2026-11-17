@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     search_provider: str = "brave"
     auto_approve_providers: bool = False
     auto_approval_min_confidence: float = 0.94
-    overture_auto_process: bool = True
+    overture_auto_process: bool = False
     overture_feed_enabled: bool = True
     overture_scheduled_tasks_enabled: bool = False
     overture_feed_daily_hour: int = 4
