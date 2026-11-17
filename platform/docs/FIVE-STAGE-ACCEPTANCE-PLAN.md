@@ -38,13 +38,13 @@ Status labels:
 - [ ] Feed is the only active initial discovery path; legacy/independent paths are disabled or return 410.
 - [ ] GERS/provenance/licence fields are durable and idempotent.
 - [ ] No active API path bypasses the Overture publication worker to create/publish providers or branches.
-- [ ] All active administrative endpoints pass unauthenticated 401 and authenticated access tests; public endpoints are documented.
-- [ ] Migrations 0021 and 0022 pass isolated upgrade and schema validation.
-- [ ] Full API and front-end checks pass.
+- [x] All internal API routes pass the reviewer route-introspection/auth tests; only directory search and health/readiness/API-root remain public.
+- [x] Migrations 0021 and 0022, followed by migration 0023, pass isolated upgrade and schema validation in the current CI stack.
+- [x] Full API and front-end checks pass on the current branch (176 API tests, lint, TypeScript and production build in run #153).
 - [ ] Stage acceptance records source-rights and admin-access review.
 
 ### Current assessment
-Core implementation is present. A code review found one active missed administrative protection: observation creation. It now requires a reviewer and records the authenticated reviewer as audit actor. Two similar read handlers exist in an enrichment router that is not currently mounted in the FastAPI app; they have also been guarded so a future registration cannot expose them. The Stage 1 code and regression suite were included in successful GitHub Actions run #63 (160 API tests, frontend checks/build and disposable Docker integration through migration 0022). Formal source-rights and admin-access review, route-matrix acceptance and operational sign-off remain outstanding; the new Stage 3 migration and endpoints are not included in that run.
+Core Overture-only discovery, GERS/source/release/contributor/licence provenance, verified Companies House links, retired creation/discovery bypass paths and the Overture approval write boundary are implemented. Observation creation, provider edits, provider status changes and observation decisions require reviewer authentication and record the authenticated reviewer as audit actor. The final branch passes run #153 (176 API tests, frontend lint/type/build and disposable Docker migration/integration through 0023). Source-rights review and product/operational acceptance remain outstanding; no live candidate processing or publication was performed.
 
 ## Stage 2 — Overture-first identity and branch approval
 
@@ -68,7 +68,7 @@ Core implementation is present. A code review found one active missed administra
 - [ ] Product owner accepts conflict precision and sample decisions before any operational switch is changed.
 
 ### Current assessment
-Ruleset v2.0 and its synthetic regression coverage are implemented. The postcode-conflict detector is limited to verified first-party evidence about the same street/locality. The Stage 2 code/tests were included in successful GitHub Actions run #63. A read-only candidate outcome analysis and product acceptance remain outstanding. Do not import, process or publish operational records as part of acceptance.
+Ruleset `overture-first-approval-v2.0` and synthetic approval/conflict regression coverage are implemented and included in successful run #153. Conflict handling uses verified Companies House links and reachable, robots-permitted first-party evidence aligned to the same branch street/locality. Non-mutating candidate outcome analysis on a safe read-only snapshot and product acceptance remain outstanding. Do not import, process or publish live operational records as part of acceptance.
 
 ## Stage 3 — Enrichment, pricing and verification automation
 
@@ -93,7 +93,7 @@ This stage must keep distinct evidence domains separate:
 - [ ] Test fixtures cover stale, missing, conflicting, expired and unavailable source evidence across the complete automated revalidation path.
 
 ### Current assessment
-The Stage 3 evidence foundation is implemented and the current branch passed GitHub Actions run #110: 171 API tests, Python compile, frontend lint/type/build, and disposable PostgreSQL migration/integration through `0023_stage3_evidence`. The implementation captures separate pricing, membership and regulatory evidence, supports provider/branch scope and sole-trader/partnership business forms, and provides reviewer-entered, idempotent and bounded revalidation history. Evidence approval does not approve or publish a provider. Automated source-specific retrieval/scheduling, source-policy/legal sign-off, agreed pricing taxonomy and the complete automated freshness/exception path remain open; therefore Stage 3 is not signed off.
+The Stage 3 evidence foundation is implemented and included in successful run #153: separate pricing, membership and regulatory evidence, source provenance, provider/branch scope, sole-trader/partnership representation, reviewer-only decisions and bounded idempotent manual revalidation. Migration `0023_stage3_evidence` passed disposable PostgreSQL upgrade/downgrade/re-upgrade validation. Automated source-specific retrieval/scheduling, source-policy/legal sign-off, agreed pricing taxonomy and the full automated freshness/exception path remain open; therefore Stage 3 is not signed off.
 
 ## Stage 4 — Operational resilience, security and maintenance
 
@@ -116,7 +116,7 @@ The Stage 3 evidence foundation is implemented and the current branch passed Git
 - [ ] No production readiness claim is made from unit tests or disposable CI alone.
 
 ### Current assessment
-Partially implemented. Reviewer bearer authentication, health/readiness checks, retry/recovery paths and several CI safeguards exist. Observation creation now uses authenticated reviewer attribution; provider edits, status changes and observation decisions now also record the authenticated reviewer rather than a legacy default actor. Two handlers in an unmounted legacy router were hardened as defence-in-depth. The route-by-route positive/negative auth matrix, explicit role separation, credential lifecycle, proven backup/restore, observability/alerts and operational runbooks remain open.
+Partially implemented. Every internal `/api/v1/...` route is reviewer-protected except the intentionally public directory search; route-introspection, unauthenticated read/write, valid/invalid/revoked-token and public-route tests passed run #147 and were rerun on the final branch. The admin UI prompts for a reviewer token held in memory and attaches it to all internal API calls. Audit attribution is tested and credential provisioning/rotation/revocation is documented. Role separation/RBAC, target-environment secret rotation, backup/restore, observability/alerts, retention and broader operational runbooks remain open.
 
 ## Stage 5 — Integrated release validation and packaging
 
@@ -131,9 +131,9 @@ Partially implemented. Reviewer bearer authentication, health/readiness checks, 
 ### Exit criteria
 - [x] Current implementation commit passed GitHub Actions run #110: API/frontend checks and isolated Docker integration through migration 0023. This is an implementation checkpoint, not release sign-off.
 - [x] Release manifest and migration list declare migrations 0021, 0022 and 0023; version consistency passed run #110.
-- [ ] Release archive is reproducible from the maintained source and passes ZIP/integrity checks.
-- [ ] Archive exclusion audit confirms no secrets or live data are included.
-- [ ] Migration upgrade is rehearsed on a disposable database; rollback/forward-fix approach is documented.
+- [ ] Deterministic release archive is built from the maintained `platform/` source, passes repeat-build SHA-256 equality and ZIP integrity checks.
+- [ ] Archive exclusion audit confirms secrets, environment files (except templates), package-manager credentials, cloud/SSH keys, databases, candidate datasets, caches, dependencies and build outputs are excluded.
+- [ ] Migration 0023 downgrade to 0022 and forward upgrade back to 0023 are rehearsed on the disposable PostgreSQL stack; target-host rollback/forward-fix decision is documented separately.
 - [ ] Pre-replacement checklist is completed for the actual target host/database: Git status, config, current revision, verified restorable backup, image build, migration plan and post-upgrade health checks.
 - [ ] Local validation is run only when replacing the existing workload, in line with the operator's preference; no `docker compose down -v` on the existing project.
 - [ ] Release sign-off records the exact source commit, archive hash, CI run and migration evidence.
