@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, func
 from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
+from app.identity_review_auth import require_identity_reviewer
 from app.models import Provider, Branch, SourceObservation, AuditEvent
 from app.schemas import ProviderCreate, ProviderUpdate, ProviderOut, BranchInput, BranchOut, ObservationCreate, ObservationDecision
 from app.matching import find_provider_matches, observation_duplicate_key
@@ -48,7 +49,7 @@ def get_provider(provider_id: int, db: Session = Depends(get_db)):
     return provider_dict(p)
 
 @router.patch("/providers/{provider_id}")
-def update_provider(provider_id: int, payload: ProviderUpdate, db: Session = Depends(get_db)):
+def update_provider(provider_id: int, payload: ProviderUpdate, reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     p=db.get(Provider,provider_id)
     if not p: raise HTTPException(404,"Provider not found")
     changes=payload.model_dump(exclude_unset=True)
@@ -65,7 +66,7 @@ def add_branch(provider_id: int, payload: BranchInput, db: Session = Depends(get
     )
 
 @router.patch("/providers/{provider_id}/status")
-def set_provider_status(provider_id: int, status: str, db: Session = Depends(get_db)):
+def set_provider_status(provider_id: int, status: str, reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     if status not in ALLOWED_PROVIDER_STATUSES: raise HTTPException(400,"Invalid provider status")
     if status == "published":
         raise HTTPException(
@@ -98,7 +99,7 @@ def list_observations(review_status: str | None = None, db: Session = Depends(ge
     return {"items":[observation_dict(o) for o in q.order_by(SourceObservation.retrieved_at.desc()).limit(200).all()]}
 
 @router.patch("/observations/{observation_id}")
-def decide_observation(observation_id: int, payload: ObservationDecision, db: Session = Depends(get_db)):
+def decide_observation(observation_id: int, payload: ObservationDecision, reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     if payload.review_status not in {"accepted", "rejected", "pending"}:
         raise HTTPException(400, "Invalid review status")
     o = db.get(SourceObservation, observation_id)
