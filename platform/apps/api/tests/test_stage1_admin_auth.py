@@ -4,6 +4,7 @@ import json
 from fastapi.testclient import TestClient
 
 from app.config import settings
+from app.identity_review_auth import require_identity_reviewer
 from app.main import app
 
 
@@ -122,3 +123,24 @@ def test_health_and_api_root_remain_public():
         api_root = client.get("/api/v1")
     assert health.status_code == 200, health.text
     assert api_root.status_code == 200, api_root.text
+
+
+
+def _has_reviewer_dependency(dependant):
+    if getattr(dependant, "call", None) is require_identity_reviewer:
+        return True
+    return any(_has_reviewer_dependency(child) for child in dependant.dependencies)
+
+
+def test_every_internal_api_route_has_reviewer_dependency_except_public_directory_search():
+    missing = []
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        dependant = getattr(route, "dependant", None)
+        if not dependant or not path.startswith("/api/v1/"):
+            continue
+        if path == "/api/v1/directory/search":
+            continue
+        if not _has_reviewer_dependency(dependant):
+            missing.append(path)
+    assert missing == [], f"Internal API routes without reviewer auth: {missing}"
