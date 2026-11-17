@@ -12,6 +12,18 @@
 - Preserves candidate, provider, branch and audit history; no destructive migration or database reset is introduced.
 - Validation: full API test suite **151 passed** with one Starlette/AnyIO deprecation warning. Frontend build, Docker build, migration execution and production deployment are not included in this Stage 1 validation.
 
+## 2.8.0 — Overture-first identity provenance and controlled publication
+
+- Confirms Overture Places as the sole initial discovery source and the authoritative source for published branch name, street address, locality, postcode and coordinates.
+- Uses GERS ID as candidate identity and retains Overture release, contributor, source observation and licence provenance.
+- Implements `overture-first-approval-v2.0`: eligible candidates do not need Companies House corroboration, a reachable/mentioned official website or a telephone number. Missing corroboration alone does not block an otherwise valid Overture record.
+- Uses reviewer-verified Companies House links only when that linked legal entity is evaluated as a material identity conflict. A registered-office difference or legal/trading-name variance alone is not a conflict.
+- Limits website conflict signals to explicit first-party evidence such as a closed branch, a different operator or a structured branch-postcode mismatch at the asserted location.
+- Keeps Overture service classification independent of contributor website URLs and applies source rights, deterministic service classification, valid structured address/postcode, official ONS England geography and duplicate/collision checks.
+- Keeps the final write-boundary guard: `AUTO_APPROVE_PROVIDERS=false` by default; scheduled polling and post-import processing also remain disabled by default.
+- Adds additive migrations `0021_overture_company_links` and `0022_branch_overture_provenance`. Migration 0022 attaches optional provenance to website-derived branch proposals; it is not a prerequisite for direct Overture publication.
+- GitHub Actions [run #38](https://github.com/finnitto/everguide/actions/runs/44118434200) passed API/frontend checks, production frontend build and isolated Docker integration through migration 0022. No persistent operational database was migrated and no live candidate was processed or published.
+
 ## 2.7.4 — First-party website classification and persistent ONS boundaries
 
 - Separates attributed discovery URLs from verified provider-owned websites; excludes third-party directories, listing pages, news and company-record pages from first-party verification.
