@@ -1,30 +1,51 @@
-# Overture discovery and automatic publication
+# Overture-first discovery and automatic publication
 
-## Development and end-to-end validation mode
+## Operating policy
 
-Scheduled Overture polling, enrichment retries and stale-run recovery are disabled by default using `OVERTURE_SCHEDULED_TASKS_ENABLED=false`. This switch controls Celery Beat registration only. It does not disable the on-demand API actions for an immediate feed check, importing a controlled dataset, or processing candidates. `OVERTURE_FEED_ENABLED` controls whether the feed integration is available; `OVERTURE_AUTO_PROCESS` controls whether a completed import automatically queues candidate processing. Keep `AUTO_APPROVE_PROVIDERS=false` during ordinary development. For controlled approval tests, enable it only against test data after the approval safeguards are verified.
+Overture Places is Everguide's primary and authoritative source for discovering funeral-director locations and for the published branch name, address, postcode and coordinates. Each candidate is keyed by its Overture GERS ID. The original Overture record, release, contributor lineage, source-level licence, source observation and assessment history are retained.
 
-## Scheduled England-wide feed (v2.7.4)
+Companies House and funeral-director websites are corroborating sources, not mandatory gateways. A missing company link, absent website, inaccessible website, robots restriction, missing telephone number or lack of corroborating evidence does not by itself prevent an otherwise valid Overture location from being approved. A legal registered-office address is not treated as a branch address. A trading name may legitimately differ from a legal company name.
 
-Everguide's normal Overture workflow is fully scheduled; an administrator does not upload or import a CSV. Celery Beat checks the authoritative Overture STAC catalogue daily at the configured Europe/London time. It compares the latest release with previous scheduled feed runs and only scans Places when a new release is available.
+The Overture-first ruleset is `overture-first-approval-v2.0`. It does not use Overture's place-existence confidence as a probability of business identity, field accuracy or funeral-director service. It does not apply the shared first-party website threshold used by other discovery adapters.
 
-The worker queries the cloud-hosted Overture Places GeoParquet directly with DuckDB HTTPFS and the spatial extension. It does not download the entire global dataset. A broad England bounding box reduces cloud scanning; every candidate point is then tested against ONS December 2025 English county/unitary-authority polygons. If the ONS geometry cannot be fetched or validated, ingestion fails closed.
+## Deterministic Overture checks
 
-Discovery uses Overture taxonomy and name signals (funeral, undertaker, undertaking, mortuary, cremation and burial terms) to find potential candidates. It is a candidate-discovery filter, not proof that the business is a funeral director. The existing deterministic service classifier excludes adjacent categories such as memorial masons, celebrants and cemeteries. GERS IDs are the upsert key, allowing new releases to refresh the same candidate without creating duplicate candidate entities.
+Before a candidate can be approved, the Overture record must:
+- Have a stable GERS ID and retained source/release provenance.
+- Pass the deterministic funeral-director classification; cemeteries, crematoria, celebrants, memorial masons, directories and unrelated services are excluded.
+- Have a valid UK postcode, structured street address and locality.
+- Have contributor source/licence metadata that is present and recognised.
+- Pass the active geography's official ONS point-in-polygon check. Missing coordinates, incomplete boundary data or unavailable official geometry fail closed.
+- Have no unresolved duplicate or existing-provider/branch collision.
 
-Each observation retains the Overture release, GERS ID, contributor provider/dataset, contributor record IDs, source licence, Overture confidence and retrieval timestamp. Missing or unrecognised contributor licence values are not silently accepted; they block automatic publication and create an exception. The Overture place-existence confidence is provenance only, never field confidence or approval proof.
+An incomplete or invalid Overture address is not published. It remains awaiting enrichment or review; the system does not invent missing street/locality values. Telephone and website are optional fields and are not substituted for the Overture branch address.
 
-## Evidence and publication
+## Corroboration and conflicts
 
-After import, Celery processes candidates in bounded batches. It checks the candidate's HTTPS website using Everguide's SSRF-aware verifier, validates public HTTPS destinations, checks robots.txt permission and discards page bodies after extracting limited identity evidence. If no usable website is supplied by Overture, the configured Brave Search provider may discover a lead.
+A Companies House record is used as a conflict signal only when an authenticated reviewer has explicitly verified the Overture-to-Companies-House identity link. A verified linked entity whose Companies House status is dissolved is sent to exception review. A different registered office address, by itself, is not a branch conflict.
 
-Automatic publication requires all configured gates: confirmed funeral-director service on first-party evidence, permitted website access, aligned business identity and domain, complete UK branch address, matching postcode and telephone, first-party confidence at or above the configured threshold (default 0.94), accepted contributor licence metadata, official England boundary confirmation and no unresolved duplicate/provider/branch conflict. Provider and branch creation, accepted observations and audit events are committed atomically. Existing verified fields are not overwritten or merged. Directory and price publication remain separate.
+A provider website is checked only when Overture supplies a plausible first-party URL. It is optional corroboration and is never the source of the published branch name or address. An inaccessible site, absent site, absent branch listing or robots restriction is not treated as proof that the Overture location is wrong. A structured official-site branch address that explicitly has a different postcode from the Overture location, or an explicit closed branch status, is sent to exception review. A trading-name difference alone is not treated as a conflict.
 
-Candidates that lack evidence remain in automated enrichment; identity, branch, source-rights or location conflicts enter the exception queue; adjacent services are excluded. Manual approval is not the normal route.
+The conflict checks are deliberately conservative. An unlinked Companies House record, a legal name difference, or a website's failure to mention a branch must not be converted into a negative assertion about the Overture location. Conflicting or ambiguous evidence is retained for human resolution; records are not silently merged or overwritten.
 
-## Admin monitoring
+## Outcomes
 
-The Overture admin panel shows feed enablement and schedule, last feed check, latest release, candidate/outcome counts, automatically published providers, ingestion run history and unresolved candidates. It has a diagnostic **Check for new Overture release** action and a **Retry awaiting enrichment** action. It does not offer a routine CSV upload.
+| Outcome | Meaning |
+|---|---|
+| `auto_approved_eligible` | Overture integrity, service, source-rights, duplicate and geography checks pass, with no detected material conflict. |
+| `awaiting_enrichment` | Overture data is incomplete, a boundary cannot be confirmed, or the publication safety switch is off. |
+| `exception_review` | A material identity/location conflict, duplicate collision, out-of-scope location or source-rights issue needs investigation. |
+| `excluded` | Deterministic classification identifies an out-of-scope service. |
+
+When automatic approval is enabled, eligible Overture records are published from Overture fields. Provider/branch writes, source observations and audit events are committed atomically. Existing verified provider and branch data is never overwritten, merged or deleted by this pathway. The Overture source observation is linked to the resulting provider and branch. Optional website observations are stored separately and do not replace Overture provenance.
+
+## Development and validation safety
+
+Keep `AUTO_APPROVE_PROVIDERS=false` throughout implementation and isolated validation. The final write-boundary guard blocks publication even if an assessor mistakenly returns an eligible outcome. Tests may enable the setting only in isolated synthetic fixtures. No Overture import, candidate processing, scheduled feed, enrichment, approval or publication is to be run against operational data during development.
+
+Scheduled Overture polling and retries are controlled separately by `OVERTURE_SCHEDULED_TASKS_ENABLED`. `OVERTURE_FEED_ENABLED` controls feed availability and `OVERTURE_AUTO_PROCESS` controls automatic candidate processing after an import. These controls remain off unless separately authorised. The normal England-wide feed uses the authoritative Overture STAC catalogue and cloud-hosted Places GeoParquet; every retained point is checked against official ONS England boundaries.
+
+Automatic publication must remain disabled until all five implementation stages, synthetic regression coverage, isolated migration/container checks and a separate production-readiness assessment are complete and explicitly approved.
 
 ## Configuration
 
@@ -34,41 +55,29 @@ OVERTURE_SCHEDULED_TASKS_ENABLED=false
 OVERTURE_FEED_DAILY_HOUR=4
 OVERTURE_FEED_DAILY_MINUTE=30
 OVERTURE_FEED_BATCH_SIZE=500
-OVERTURE_AUTO_PROCESS=true
+OVERTURE_AUTO_PROCESS=false
 AUTO_APPROVE_PROVIDERS=false
-AUTO_APPROVAL_MIN_CONFIDENCE=0.94
 ONS_BOUNDARY_CACHE_TTL_HOURS=720
 BRAVE_SEARCH_API_KEY=
 ```
 
-Automatic publication is disabled by default; keep `AUTO_APPROVE_PROVIDERS=false` during discovery validation. Only enable it explicitly after the evidence and exception outcomes have been validated. ONS geometry is cached for 30 days in the `ons_boundary_cache` Docker volume; the cache stores source and retrieval metadata and rejects expired or invalid entries.
+Overture contributor licence values are retained per record and checked against the accepted source-level licence allowlist. The ONS geometry cache retains source, retrieval time and SHA-256 integrity metadata and rejects expired or invalid data.
 
-When scheduled automation is explicitly authorised, the scheduled feed requires outbound HTTPS access to `stac.overturemaps.org`, Overture's public S3 Parquet bucket, the ONS ArcGIS boundary service and, when configured, the search provider. DuckDB downloads its `httpfs` and `spatial` extensions on first query.
+## Admin monitoring and API
 
-## API
+The Overture admin panel shows feed enablement and schedule, last feed check, latest release, candidate/outcome counts, automatically published providers, ingestion run history and unresolved candidates. Diagnostic feed checks and retry actions are not to be used against operational data during implementation.
 
 - `GET /api/v1/overture/status` — feed schedule, last check, candidate counts and latest run.
-- `POST /api/v1/overture/feed/check` — queue an immediate STAC release check for diagnostics.
-- `GET /api/v1/overture/imports` — scheduled feed run history (legacy CSV runs remain identifiable).
+- `POST /api/v1/overture/feed/check` — queue an immediate STAC release check.
+- `GET /api/v1/overture/imports` — feed run history.
 - `GET /api/v1/overture/candidates` — candidate decisions and evidence summaries.
-- `POST /api/v1/overture/process` — retry awaiting enrichment candidates.
-- `POST /api/v1/overture/imports` — legacy CSV compatibility endpoint; not part of the normal admin workflow.
+- `POST /api/v1/overture/process` — retry awaiting-enrichment candidates.
+- `POST /api/v1/overture/imports` — legacy import compatibility endpoint; not part of the normal admin workflow.
 
 ## Scope and limitations
 
-The Overture feed scans potential funeral-related Places in England when invoked manually or by an authorised schedule. The bounding box is only a query optimisation; official ONS point-in-polygon validation is the final England-scope check. Records without a point or outside England are not imported. The taxonomy/name filter may not discover a funeral director whose Overture record has neither relevant taxonomy nor relevant name terms; Companies House and first-party website discovery remain complementary sources.
-
-The feed ingests a new Overture release once and upserts candidates by GERS ID. It does not infer that a provider has closed solely because a record is absent from a later release, and it does not delete provider/branch records. Existing verified data is retained. Future release-delta/changelog integration can improve update efficiency, but full England candidate scans occur only when Overture publishes a new release.
+The feed's taxonomy/name query is a discovery filter and may miss funeral directors whose Overture record contains neither relevant taxonomy nor relevant name terms. The Overture record is authoritative for location data within Everguide's approved source policy, but a missing/invalid address, postcode, coordinates, contributor lineage or licence is not guessed. A location absent from a later Overture release is not, by itself, proof that a provider has closed; existing records are retained for review.
 
 ## Upgrade and deployment
 
-No new Alembic migration is required beyond `0020_overture_feed`; this release adds application tasks, configuration and the pinned DuckDB dependency. Back up PostgreSQL, preserve `.env` and Docker volumes, extract the full ZIP over the project root and run `docker compose up -d --build`. Do not run `docker compose down -v`.
-
-
-### v2.7.4 website and boundary safeguards
-
-Overture-supplied URLs are discovery leads only. Third-party directory/listing/news/company-record URLs are not accepted as provider-owned websites. The first-party site is discovered independently and must corroborate the candidate identity, postcode and telephone. Original lead provenance remains stored separately. Official ONS geometry is cached on the `ons_boundary_cache` Docker volume with a retrieval timestamp and SHA-256 integrity check. Expired or invalid cache data is rejected; network failures are retried with verified TLS and publication remains blocked unless boundary verification succeeds. Automatic publication defaults to disabled.
-
-Only `awaiting_enrichment` records receive automatic retries, with an initial assessment and no more than three further attempts at 2, 7 and 21 days. Excluded records and unresolved identity/branch exceptions are not automatically retried. Retry decisions and limits are audited.
-
-Import runs older than 24 hours are checked daily. Stale candidate claims are released, outstanding unprocessed work is resumed, and runs with no linked candidates are closed as failed with an audit event. Runs with all candidates assessed are marked completed. No run history or candidate evidence is deleted.
+No deployment or operational migration is authorised by this document. Any future release migration must first be dry-run against a fresh isolated database, with backups and rollback evidence. Do not run `docker compose down -v` against a working environment.
