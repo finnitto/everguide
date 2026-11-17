@@ -1,5 +1,9 @@
+import hashlib
+import json
+
 from fastapi.testclient import TestClient
 
+from app.config import settings
 from app.main import app
 
 
@@ -75,3 +79,46 @@ def test_administrative_read_endpoints_require_reviewer_credentials():
         for path in paths:
             response = client.get(path)
             assert response.status_code == 401, f"GET {path}: {response.status_code} {response.text}"
+
+
+def test_disabled_legacy_admin_mutations_also_require_reviewer_authentication():
+    requests = [
+        ("/api/v1/providers", {"trading_name": "Unauthorised provider"}),
+        ("/api/v1/providers/1/branches", {
+            "branch_name": "Unauthorised branch",
+            "address_line_1": "1 High Street",
+            "town_city": "York",
+            "postcode": "YO1 1AA",
+        }),
+        ("/api/v1/companies-house/runs", None),
+        ("/api/v1/companies-house/profiles/enrich", None),
+        ("/api/v1/company-websites/runs", None),
+        ("/api/v1/company-websites/runs/1/resume", None),
+        ("/api/v1/discovery/runs", None),
+        ("/api/v1/website-discovery/runs", None),
+        ("/api/v1/website-discovery/verification-runs", None),
+    ]
+    with TestClient(app) as client:
+        for path, payload in requests:
+            response = client.post(path, json=payload) if payload is not None else client.post(path)
+            assert response.status_code == 401, f"POST {path}: {response.status_code} {response.text}"
+
+
+def test_internal_router_accepts_valid_reviewer_credential(monkeypatch):
+    token = "stage4-route-matrix-reviewer-token"
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    monkeypatch.setattr(settings, "identity_review_credentials", json.dumps({"stage4-reviewer": digest}))
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/discovery/status",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert response.status_code == 200, response.text
+
+
+def test_health_and_api_root_remain_public():
+    with TestClient(app) as client:
+        health = client.get("/health")
+        api_root = client.get("/api/v1")
+    assert health.status_code == 200, health.text
+    assert api_root.status_code == 200, api_root.text
