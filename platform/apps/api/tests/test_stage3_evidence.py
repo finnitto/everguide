@@ -76,6 +76,16 @@ def _close(engine):
     engine.dispose()
 
 
+def test_public_directory_search_remains_public():
+    engine, _factory, _ids = _client()
+    try:
+        app.dependency_overrides.pop(require_identity_reviewer, None)
+        with TestClient(app) as client:
+            response = client.get("/api/v1/directory/search?q=funeral")
+            assert response.status_code == 200, response.text
+    finally:
+        _close(engine)
+
 def test_evidence_routes_require_reviewer_authentication():
     engine, _factory, ids = _client()
     try:
