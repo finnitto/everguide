@@ -16,7 +16,7 @@ from app.models import AuditEvent, WebsiteDiscoveryResult, WebsiteVerification, 
 from app.tasks import discover_provider_websites, verify_website_candidates
 from app.identity_rules import _classify, _normalise_identity_name, _provider_quality_assessment
 
-router = APIRouter(prefix="/api/v1/website-discovery", tags=["automatic website discovery"])
+router = APIRouter(prefix="/api/v1/website-discovery", tags=["automatic website discovery"], dependencies=[Depends(require_identity_reviewer)])
 
 
 def _clean_text(value):
