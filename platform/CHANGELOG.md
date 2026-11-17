@@ -1,28 +1,18 @@
 # Changelog
 
-## 2.8.0 — Overture-first identity provenance and reviewer access controls
-
-- Establishes Overture Places as the sole initial discovery source. Independent Google Places, Companies House and company-website discovery routes are retired; legacy discovery worker tasks return disabled before their former processing paths.
-- Retires direct provider and branch creation endpoints and blocks direct provider publication. Provider and branch publication is reserved for the Overture approval worker.
-- Adds the auditable `overture_company_links` relationship between Overture candidates and Companies House candidates in additive migration `0021_overture_company_links`, with restrictive foreign keys, pair uniqueness and review metadata.
-- Requires explicit reviewer-authenticated verification with structured identity evidence before Companies House candidates can enter Overture-scoped identity assessment. Reviewer attribution is derived from bearer credentials, not request payloads.
-- Adds reviewer authentication to administrative read and mutation endpoints, including candidate queues, directory management, identity review, quality review and Overture diagnostics. The public directory search endpoint remains public.
-- Retires caller-supplied Overture candidate payload imports (HTTP 410), ensuring initial candidate ingestion occurs only through the official Overture Places feed. Reviewer credentials remain required for feed-check and processing actions. Sets Overture automatic post-import processing and scheduled retry/recovery defaults to disabled in application and Compose configuration.
-- Keeps automatic provider approval disabled by default. Existing runtime `.env` overrides are not changed by this release; operators must verify their own configuration before enabling any processing.
-- Preserves candidate, provider, branch and audit history; no destructive migration or database reset is introduced.
-- Validation: full API test suite **151 passed** with one Starlette/AnyIO deprecation warning. Frontend build, Docker build, migration execution and production deployment are not included in this Stage 1 validation.
-
 ## 2.8.0 — Overture-first identity provenance and controlled publication
 
-- Confirms Overture Places as the sole initial discovery source and the authoritative source for published branch name, street address, locality, postcode and coordinates.
-- Uses GERS ID as candidate identity and retains Overture release, contributor, source observation and licence provenance.
-- Implements `overture-first-approval-v2.0`: eligible candidates do not need Companies House corroboration, a reachable/mentioned official website or a telephone number. Missing corroboration alone does not block an otherwise valid Overture record.
-- Uses reviewer-verified Companies House links only when that linked legal entity is evaluated as a material identity conflict. A registered-office difference or legal/trading-name variance alone is not a conflict.
-- Limits website conflict signals to explicit first-party evidence such as a closed branch, a different operator or a structured branch-postcode mismatch at the asserted location.
-- Keeps Overture service classification independent of contributor website URLs and applies source rights, deterministic service classification, valid structured address/postcode, official ONS England geography and duplicate/collision checks.
-- Keeps the final write-boundary guard: `AUTO_APPROVE_PROVIDERS=false` by default; scheduled polling and post-import processing also remain disabled by default.
-- Adds additive migrations `0021_overture_company_links` and `0022_branch_overture_provenance`. Migration 0022 attaches optional provenance to website-derived branch proposals; it is not a prerequisite for direct Overture publication.
-- GitHub Actions [run #38](https://github.com/finnitto/everguide/actions/runs/44118434200) passed API/frontend checks, production frontend build and isolated Docker integration through migration 0022. No persistent operational database was migrated and no live candidate was processed or published.
+- Establishes Overture Places as the sole initial discovery source and authoritative source for published branch name, street address, locality, postcode and coordinates; GERS ID and Overture release/contributor/licence lineage are retained.
+- Retires independent Google Places, Companies House-led and company-website discovery, caller-supplied Overture candidate imports, and direct provider/branch creation. Publication is reserved for the Overture approval worker.
+- Adds reviewer-authenticated Overture-to-Companies House links in additive migration `0021_overture_company_links`. Migration `0022_branch_overture_provenance` adds optional verified-link provenance to website-derived branch proposals; it is not a prerequisite for direct Overture-first publication.
+- Implements `overture-first-approval-v2.0`: missing Companies House corroboration, absent/unreachable website, robots restriction, absent branch mention or missing telephone alone does not block a valid Overture candidate.
+- Uses Companies House as a material conflict source only after an explicit reviewer-verified link. Registered-office differences and legal/trading-name variants alone are not conflicts.
+- Accepts website conflicts only from reachable, robots-permitted first-party evidence. A branch-postcode mismatch is material only when the structured street and locality identify the same Overture branch; a different branch on the provider's website is not a conflict for this branch.
+- Requires source-level licence, deterministic service classification, complete Overture street/locality and valid UK postcode, official ONS England point-in-polygon, duplicate/collision checks and a final publication write-boundary guard.
+- Keeps `AUTO_APPROVE_PROVIDERS=false`, `OVERTURE_AUTO_PROCESS=false` and `OVERTURE_SCHEDULED_TASKS_ENABLED=false` as defaults. CI uses a disposable stack with feed access and all processing/publication switches disabled.
+- Requires reviewer authentication for administrative reads and mutations. Review found and closed gaps in observation creation, source-permission listing and website-check listing; regression coverage was added. Audit actor attribution uses the authenticated reviewer.
+- Preserves provider/branch/source-observation/audit writes atomically and does not overwrite existing provider/branch fields.
+- Earlier baseline validation: GitHub Actions [run #38](https://github.com/finnitto/everguide/actions/runs/44118434200) passed API/frontend checks, production frontend build and isolated Docker integration through migration 0022. The follow-up security/conflict changes are subject to the current branch workflow; no persistent database was migrated and no live candidate was processed or published.
 
 ## 2.7.4 — First-party website classification and persistent ONS boundaries
 
@@ -34,7 +24,6 @@
 - Adds a daily bounded enrichment retry sweep (initial assessment plus at most three retries after 2, 7 and 21 days); exclusions and exception-review records are not automatically retried.
 - Adds audit-safe daily reconciliation for import runs stuck for over 24 hours: stale claims are recovered, pending work is resumed, and empty orphaned runs are closed without deleting history.
 - No database migration; adds a dedicated `ons_boundary_cache` named volume.
-
 
 ## 2.7.3 — Overture candidate batch query fix
 
