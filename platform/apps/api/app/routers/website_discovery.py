@@ -102,7 +102,7 @@ def _recover_stale_verification_runs(db: Session):
     return recovered
 
 
-@router.get("/status")
+@router.get("/status", dependencies=[Depends(require_identity_reviewer)])
 def status(db: Session = Depends(get_db)):
     configured = bool(settings.brave_search_api_key) if settings.search_provider == "brave" else False
     rows = db.query(WebsiteDiscoveryResult).all()
@@ -129,7 +129,7 @@ def start_run():
 def start_verification_run():
     raise HTTPException(status_code=410, detail="Legacy website candidate verification is disabled pending the Overture-led workflow.")
 
-@router.get("/verification-runs")
+@router.get("/verification-runs", dependencies=[Depends(require_identity_reviewer)])
 def verification_runs(limit: int = 10, db: Session = Depends(get_db)):
     _recover_stale_verification_runs(db)
     rows = db.query(WebsiteVerificationRun).order_by(WebsiteVerificationRun.id.desc()).limit(min(max(limit,1),50)).all()
@@ -197,7 +197,7 @@ def reassess_existing_provider_quality(reviewer: str = Depends(require_identity_
             "message": "Quality statuses re-evaluated using retained evidence. Provider publication and branch records were not changed."}
 
 
-@router.get("/identity-review")
+@router.get("/identity-review", dependencies=[Depends(require_identity_reviewer)])
 def provider_identity_review(db: Session = Depends(get_db)):
     """Return evidence-backed identity anomalies without changing provider records."""
     providers = db.query(Provider).order_by(Provider.id.asc()).all()
@@ -265,7 +265,7 @@ def provider_identity_review(db: Session = Depends(get_db)):
             "message": "Complete read-only identity review. Recommendations are advisory; no provider names, publication statuses or branches were changed."}
 
 
-@router.get("/quality-actions")
+@router.get("/quality-actions", dependencies=[Depends(require_identity_reviewer)])
 def list_quality_actions(status: str | None = "pending", db: Session = Depends(get_db)):
     query = db.query(ProviderQualityAction)
     if status and status != "all":
@@ -496,7 +496,7 @@ def enrich_published_branch_counties(reviewer: str = Depends(require_identity_re
             "message": "County enrichment completed. Only explicit administrative county values were added; districts and regions were not substituted."}
 
 
-@router.get("/analytics")
+@router.get("/analytics", dependencies=[Depends(require_identity_reviewer)])
 def provider_analytics(db: Session = Depends(get_db)):
     """Distinct provider, branch, geography and duplicate-quality reporting."""
     providers = db.query(Provider).all()
@@ -592,7 +592,7 @@ def provider_analytics(db: Session = Depends(get_db)):
             "by_source_type": [{"source_type": kind, "count": count} for kind, count in db.query(SourceObservation.source_type, func.count(SourceObservation.id)).group_by(SourceObservation.source_type).order_by(func.count(SourceObservation.id).desc()).all()] }
     }
 
-@router.get("/candidates")
+@router.get("/candidates", dependencies=[Depends(require_identity_reviewer)])
 def candidates(limit:int=100, db:Session=Depends(get_db)):
     rows = db.query(WebsiteDiscoveryResult).order_by(WebsiteDiscoveryResult.created_at.desc()).limit(min(max(limit,1),500)).all()
     all_rows = db.query(WebsiteDiscoveryResult).all()
