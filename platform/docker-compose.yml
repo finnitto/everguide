@@ -141,8 +141,8 @@ services:
       args:
         # Local Docker Desktop default. Override HTTP_PROXY/HTTPS_PROXY in the
         # shell or .env for another build environment; set them empty to disable.
-        HTTP_PROXY: ${HTTP_PROXY:-http://http.docker.internal:3128}
-        HTTPS_PROXY: ${HTTPS_PROXY:-http://http.docker.internal:3128}
+        HTTP_PROXY: ${HTTP_PROXY-http://http.docker.internal:3128}
+        HTTPS_PROXY: ${HTTPS_PROXY-http://http.docker.internal:3128}
     environment:
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
       NODE_ENV: production
