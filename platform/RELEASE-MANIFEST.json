@@ -29,7 +29,7 @@
   "overture_pipeline": {
     "database_ingestion_and_publication_integrated": true,
     "ingestion_adapter": "Scheduled daily STAC release detection; DuckDB queries public Places GeoParquet for England in place",
-    "admin_csv_upload": "Normal admin CSV workflow removed; legacy Overture import API retained for compatibility and requires reviewer authentication.",
+    "admin_csv_upload": "Retired: caller-supplied candidate payload imports return HTTP 410. Initial candidates are ingested only from the official Overture Places STAC/GeoParquet feed; reviewer-authenticated feed-check and processing controls remain.",
     "candidate_identity": "GERS ID",
     "geography_scope": "England; broad bbox followed by official ONS county/unitary authority point-in-polygon validation",
     "new_release_only": "yes; daily STAC checks do not rescan an unchanged release",
@@ -46,7 +46,7 @@
     "new_regression_tests_added": 3,
     "python_compileall": "passed",
     "targeted_pytest": "Covered by full API suite; 151 passed.",
-    "full_api_pytest": "151 passed, 1 Starlette/AnyIO deprecation warning; run locally on Windows by project maintainer after commit 179539a.",
+    "full_api_pytest": "151 passed, 1 Starlette/AnyIO deprecation warning before final manual-import retirement regression; final suite rerun required.",
     "production_database_accessed_during_build": false,
     "frontend_build": "not run",
     "docker_build": "not run"
@@ -84,7 +84,7 @@
     "approval_policy": "No approval thresholds or publication gates relaxed; automatic approval remains disabled by default."
   },
   "identity_provenance": {
-    "source_policy": "Overture Places is the sole initial discovery source; Companies House and provider-owned websites are supporting identity and branch evidence only.",
+    "source_policy": "Overture Places official feed is the sole initial discovery source; caller-supplied candidate imports and independent discovery sources are disabled. Companies House and provider-owned websites are supporting identity and branch evidence only.",
     "link_table": "overture_company_links",
     "link_revision": "0021_overture_company_links",
     "verification": "Reviewer-authenticated, explicit Overture-to-Companies House links with structured evidence; pending links are ineligible for identity assessment.",
