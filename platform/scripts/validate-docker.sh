@@ -8,6 +8,7 @@ ENV_FILE="$ROOT_DIR/.env.validation.$BASHPID"
 
 command -v docker >/dev/null 2>&1 || { echo "Docker is required." >&2; exit 1; }
 docker compose version >/dev/null
+cd "$ROOT_DIR"
 
 # Capture an optional local build proxy, then explicitly control every
 # Compose interpolation variable so host exports and the developer's .env
