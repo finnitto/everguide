@@ -330,7 +330,11 @@ class OvertureCompanyLink(Base):
     """Auditable, explicitly reviewed provenance link between Overture and Companies House."""
     __tablename__ = "overture_company_links"
     __table_args__ = (
-        UniqueConstraint("companies_house_candidate_id", name="uq_overture_company_links_ch_candidate"),
+        UniqueConstraint(
+            "overture_candidate_id",
+            "companies_house_candidate_id",
+            name="uq_overture_company_links_candidate_pair",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

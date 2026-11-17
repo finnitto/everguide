@@ -22,7 +22,11 @@ def upgrade():
         sa.Column("reviewed_at", sa.DateTime(timezone=True)),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.UniqueConstraint("companies_house_candidate_id", name="uq_overture_company_links_ch_candidate"),
+        sa.UniqueConstraint(
+            "overture_candidate_id",
+            "companies_house_candidate_id",
+            name="uq_overture_company_links_candidate_pair",
+        ),
     )
     op.create_index("ix_overture_company_links_overture_candidate_id", "overture_company_links", ["overture_candidate_id"])
     op.create_index("ix_overture_company_links_companies_house_candidate_id", "overture_company_links", ["companies_house_candidate_id"])

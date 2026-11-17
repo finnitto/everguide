@@ -94,10 +94,11 @@ def create_overture_link(payload: dict, db: Session = Depends(get_db)):
     if not db.get(CompaniesHouseCandidate, company_id):
         raise HTTPException(404, "Companies House candidate not found")
     existing = db.query(OvertureCompanyLink).filter(
-        OvertureCompanyLink.companies_house_candidate_id == company_id
+        OvertureCompanyLink.overture_candidate_id == overture_id,
+        OvertureCompanyLink.companies_house_candidate_id == company_id,
     ).first()
     if existing:
-        raise HTTPException(409, "A provenance link already exists for this Companies House candidate")
+        raise HTTPException(409, "This Overture-to-Companies House candidate pair already has a provenance link")
     link = OvertureCompanyLink(
         overture_candidate_id=overture_id,
         companies_house_candidate_id=company_id,
