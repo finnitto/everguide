@@ -152,6 +152,40 @@ def branch_eligible(lead, data):
         geo_reason = "adjacent_sector_or_non_provider_signal"
     return complete and country_ok and structured and official_source and not non_provider, geo_reason
 
+def _normalise_postcode(value):
+    return re.sub(r"\\s+", "", str(value or "").upper())
+
+
+def matched_overture_company_link(db, company_id, postcode):
+    """Return the sole verified Overture link for this exact branch postcode.
+
+    A company-level link is not branch evidence. Ambiguous postcode matches,
+    missing postcodes, and unreviewed links deliberately return no match.
+    """
+    postcode_key = _normalise_postcode(postcode)
+    if not postcode_key:
+        return None
+    from app.models import OvertureCandidate, OvertureCompanyLink
+    rows = (
+        db.query(OvertureCompanyLink, OvertureCandidate)
+        .join(OvertureCandidate, OvertureCandidate.id == OvertureCompanyLink.overture_candidate_id)
+        .filter(
+            OvertureCompanyLink.companies_house_candidate_id == company_id,
+            OvertureCompanyLink.status == "verified",
+            OvertureCompanyLink.reviewed_at.isnot(None),
+            OvertureCompanyLink.reviewed_by.isnot(None),
+            OvertureCompanyLink.evidence_json.isnot(None),
+            OvertureCompanyLink.evidence_json != {},
+        )
+        .all()
+    )
+    matches = [
+        (link, candidate) for link, candidate in rows
+        if _normalise_postcode(candidate.postcode) == postcode_key
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def process_company(db, company_id):
     company = db.get(CompaniesHouseCandidate, company_id)
     if not company or company.company_status != "active": return {"identity":0,"branch":0,"skipped":0}
@@ -198,6 +232,10 @@ def process_company(db, company_id):
         data = lead.extracted_data or {}
         eligible, geo_reason = branch_eligible(lead,data)
         proposal = db.query(CompanyBranchProposal).filter_by(website_candidate_id=lead.id).first()
+        overture_match = matched_overture_company_link(db, company_id, data.get("postcode")) if eligible else None
+        if eligible and overture_match is None:
+            eligible = False
+            geo_reason = "no_unique_verified_overture_branch_postcode_match"
         if not eligible:
             skipped += 1
             # Pending proposals are recalculated; never silently retain a proposal
@@ -209,10 +247,17 @@ def process_company(db, company_id):
                 proposal.review_notes = (proposal.review_notes or "")
                 proposal.updated_at = now
             continue
+        link, overture_candidate = overture_match
         if proposal is None:
-            proposal=CompanyBranchProposal(companies_house_candidate_id=company_id,website_candidate_id=lead.id,status="pending")
+            proposal=CompanyBranchProposal(
+                companies_house_candidate_id=company_id,
+                website_candidate_id=lead.id,
+                overture_company_link_id=link.id,
+                status="pending",
+            )
             db.add(proposal); created_branches += 1
         if proposal.status == "pending":
+            proposal.overture_company_link_id = link.id
             proposal.proposed_branch_name = _clean_business_name(data.get("name"), lead.page_title, lead.result_title)
             proposal.address_line = str(data.get("street"))[:500]
             proposal.town_city = str(data.get("town"))[:120]
@@ -226,7 +271,13 @@ def process_company(db, company_id):
             proposal.confidence = confidence(lead, company)
             proposal.evidence = {"source_url":lead.final_url or lead.result_url,"verification_status":lead.verification_status,
                 "http_status":lead.http_status,"robots_allowed":lead.robots_allowed,"extracted_data":data,
-                "registered_office_used_as_branch":False,"source_domain":domain(lead.final_url or lead.result_url),
+                "registered_office_used_as_branch":False,
+                "overture_company_link_id":link.id,
+                "overture_candidate_id":overture_candidate.id,
+                "overture_gers_id":overture_candidate.gers_id,
+                "overture_candidate_postcode":overture_candidate.postcode,
+                "branch_postcode_match":"exact_normalised_postcode",
+                "source_domain":domain(lead.final_url or lead.result_url),
                 "source_type":data.get("source_type"),"geography_assessment":geo_reason,
                 "branch_eligibility_rule":"complete structured address; England-only postcode/country evidence; source page domain must match declared business website; non-directory domain; adjacent sectors excluded",
                 "assessment_version":"identity_rules_v3",
