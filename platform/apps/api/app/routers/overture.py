@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, distinct
@@ -6,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.config import settings
 from app.models import OvertureCandidate, OvertureImportRun, Provider, AuditEvent
-from app.overture_tasks import import_overture_records, process_overture_candidates
+from app.overture_tasks import process_overture_candidates
 from app.overture_feed import poll_latest_overture_release
 from app.identity_review_auth import require_identity_reviewer
 
@@ -44,18 +43,13 @@ def overture_status(db: Session = Depends(get_db)):
         "latest_import": _run_dict(latest) if latest else None}
 
 
-@router.post("/imports", status_code=202)
-def start_overture_import(payload: OvertureImportPayload, reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
-    invalid = [i for i, row in enumerate(payload.records) if not (row.get("gers_id") or row.get("id")) or not row.get("name")]
-    if invalid:
-        raise HTTPException(400, detail={"message": "Every Overture row must contain gers_id and name.", "invalid_row_indexes": invalid[:25]})
-    run = OvertureImportRun(status="queued", source_release=payload.source_release,
-        records_received=len(payload.records), outcomes={"_meta": {"ingestion_method": "manual_csv", "geography_scope": "unspecified"}}, created_at=datetime.now(timezone.utc))
-    db.add(run); db.commit(); db.refresh(run)
-    task = import_overture_records.delay(run.id, payload.records, payload.source_release)
-    run.celery_task_id = task.id
-    db.commit()
-    return _run_dict(run)
+@router.post("/imports", status_code=410)
+def start_overture_import(reviewer: str = Depends(require_identity_reviewer)):
+    """Retire caller-supplied candidate payloads; only the official Overture feed may ingest candidates."""
+    raise HTTPException(
+        status_code=410,
+        detail="Manual candidate imports are disabled. Initial candidates are ingested only from the official Overture Places feed.",
+    )
 
 
 @router.post("/feed/check", status_code=202)
