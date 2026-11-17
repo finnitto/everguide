@@ -153,7 +153,7 @@ def branch_eligible(lead, data):
     return complete and country_ok and structured and official_source and not non_provider, geo_reason
 
 def _normalise_postcode(value):
-    return re.sub(r"\\s+", "", str(value or "").upper())
+    return re.sub(r"\s+", "", str(value or "").upper())
 
 
 def _normalise_address_text(value):
