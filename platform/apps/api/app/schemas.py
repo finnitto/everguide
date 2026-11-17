@@ -29,7 +29,6 @@ class ProviderUpdate(BaseModel):
     registered_name: str | None = None
     website: str | None = None
     provider_type: str | None = None
-    business_form: str | None = Field(default=None, pattern="^(unknown|limited_company|llp|partnership|sole_trader|other)$")
     notes: str | None = None
 
 class ProviderOut(BaseModel):
