@@ -15,7 +15,7 @@
 - Adds migration `0023_stage3_evidence` with independent pricing, membership and regulatory evidence records, source provenance, provider/branch scope, validity/freshness and reviewer decisions.
 - Represents limited companies, LLPs, partnerships and sole traders as provider business forms without requiring an invented Companies House link. Adds a persisted, idempotent and four-attempt manual revalidation ledger; transient failures do not alter evidence status.
 - The Stage 3 API accepts reviewer-entered evidence only. It does not fetch external sources, infer NAFD/SAIF membership or FCA applicability, alter Overture identity fields or publish providers. See `docs/STAGE3-EVIDENCE-DATA-DICTIONARY.md`.
-- Earlier baseline validation: GitHub Actions [run #63](https://github.com/finnitto/everguide/actions/runs/44128256045) passed API/frontend checks and isolated Docker integration through migration 0022. Migration 0023 and the Stage 3 additions await the current branch workflow; no persistent database was migrated and no live candidate was processed or published.
+- Validation: GitHub Actions [run #110](https://github.com/finnitto/everguide/actions/runs/44137685301) passed 171 API tests, Python compilation, frontend lint/TypeScript/production build and isolated Docker migration/integration through `0023_stage3_evidence`. The disposable stack verified automatic approval, Overture feed/processing and scheduled tasks remained disabled, API readiness, reviewer credential forwarding, admin HTTP 200, idle worker and empty Beat schedule. No persistent database was migrated and no live candidate was processed or published.
 
 ## 2.7.4 — First-party website classification and persistent ONS boundaries
 
