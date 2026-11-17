@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -236,7 +236,26 @@ def test_revalidation_is_idempotent_bounded_and_transient_failures_do_not_change
             assert request1.json()["id"] == request2.json()["id"]
 
             request_id = request1.json()["id"]
-            for attempt_number in range(1, 5):
+            first_attempt_payload = {
+                "idempotency_key": "membership-attempt-001",
+                "outcome": "transient_failure",
+                "failure_class": "upstream_unavailable",
+                "detail": "Register temporarily unavailable",
+            }
+            first_attempt = client.post(
+                f"/api/v1/evidence/revalidation-requests/{request_id}/attempts",
+                json=first_attempt_payload,
+            )
+            assert first_attempt.status_code == 200, first_attempt.text
+            duplicate_attempt = client.post(
+                f"/api/v1/evidence/revalidation-requests/{request_id}/attempts",
+                json=first_attempt_payload,
+            )
+            assert duplicate_attempt.status_code == 200, duplicate_attempt.text
+            assert duplicate_attempt.json()["attempt"]["id"] == first_attempt.json()["attempt"]["id"]
+            state = first_attempt.json()["request"]
+            now["value"] = datetime.fromisoformat(state["next_attempt_at"].replace("Z", "+00:00"))
+            for attempt_number in range(2, 5):
                 attempt = client.post(
                     f"/api/v1/evidence/revalidation-requests/{request_id}/attempts",
                     json={
