@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
-PROJECT="everguide-validation-$"
-ENV_FILE="$ROOT_DIR/.env.validation.$"
+PROJECT="everguide-validation-$BASHPID"
+ENV_FILE="$ROOT_DIR/.env.validation.$BASHPID"
 
 command -v docker >/dev/null 2>&1 || { echo "Docker is required." >&2; exit 1; }
 docker compose version >/dev/null
@@ -21,7 +21,7 @@ else
 fi
 
 DB_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(24))')"
-APP_VERSION="$(tr -d '\\r\\n' < "$ROOT_DIR/VERSION")"
+APP_VERSION="$(python -c 'from pathlib import Path; print(Path("VERSION").read_text(encoding="utf-8").strip())' )"
 API_PORT="$(python -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 WEB_PORT="$(python -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 
@@ -60,6 +60,8 @@ export SEARCH_PROVIDER=brave AUTO_APPROVE_PROVIDERS=false AUTO_APPROVAL_MIN_CONF
 export OVERTURE_AUTO_PROCESS=false OVERTURE_FEED_ENABLED=false OVERTURE_SCHEDULED_TASKS_ENABLED=false
 export OVERTURE_FEED_DAILY_HOUR=4 OVERTURE_FEED_DAILY_MINUTE=30 OVERTURE_FEED_BATCH_SIZE=50
 export IDENTITY_REVIEW_CREDENTIALS='{}' ONS_BOUNDARY_CACHE_TTL_HOURS=720
+export REDIS_URL=redis://redis:6379/0 CELERY_BROKER_URL=redis://redis:6379/1 CELERY_RESULT_BACKEND=redis://redis:6379/2
+export COMPANIES_HOUSE_SIC_CODES=96030
 export HTTP_PROXY="$BUILD_HTTP_PROXY" HTTPS_PROXY="$BUILD_HTTPS_PROXY"
 
 dc() {
@@ -87,7 +89,7 @@ echo "[CHECK] Build and start isolated API, worker, Beat, web, PostgreSQL and Re
 dc up --build --detach --wait --wait-timeout 240
 
 echo "[CHECK] API readiness and release version"
-dc exec -T api python -c 'import json, urllib.request; d=json.load(urllib.request.urlopen("http://127.0.0.1:8000/health/ready", timeout=5)); assert d["status"] == "ready", d; h=json.load(urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5)); assert h["version"] == "2.8.0", h; print(h); print(d)'
+dc exec -T api python -c 'import json, urllib.request; d=json.load(urllib.request.urlopen("http://127.0.0.1:8000/health/ready", timeout=5)); assert d["status"] == "ready", d; h=json.load(urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5)); assert h["version"] == __import__("os").environ["APP_VERSION"], h; print(h); print(d)'
 
 echo "[CHECK] Complete migration chain reached 0021"
 MIGRATION="$(dc exec -T api alembic current)"
