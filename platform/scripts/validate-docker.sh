@@ -23,6 +23,8 @@ fi
 
 DB_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(24))')"
 APP_VERSION="$(python -c 'from pathlib import Path; print(Path("VERSION").read_text(encoding="utf-8").strip())' )"
+DB_PORT="$(python -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
+REDIS_PORT="$(python -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 API_PORT="$(python -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 WEB_PORT="$(python -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 
@@ -33,6 +35,8 @@ APP_VERSION=$APP_VERSION
 POSTGRES_DB=everguide_validation
 POSTGRES_USER=everguide_validation
 POSTGRES_PASSWORD=$DB_PASSWORD
+DB_PORT=$DB_PORT
+REDIS_PORT=$REDIS_PORT
 API_PORT=$API_PORT
 WEB_PORT=$WEB_PORT
 NEXT_PUBLIC_API_BASE_URL=http://localhost:$API_PORT
@@ -55,7 +59,7 @@ chmod 600 "$ENV_FILE" 2>/dev/null || true
 
 export APP_ENV=test APP_NAME=Everguide APP_VERSION
 export POSTGRES_DB=everguide_validation POSTGRES_USER=everguide_validation POSTGRES_PASSWORD="$DB_PASSWORD"
-export API_PORT WEB_PORT NEXT_PUBLIC_API_BASE_URL="http://localhost:$API_PORT"
+export DB_PORT REDIS_PORT API_PORT WEB_PORT NEXT_PUBLIC_API_BASE_URL="http://localhost:$API_PORT"
 export COMPANIES_HOUSE_API_KEY= GOOGLE_PLACES_API_KEY= BRAVE_SEARCH_API_KEY=
 export SEARCH_PROVIDER=brave AUTO_APPROVE_PROVIDERS=false AUTO_APPROVAL_MIN_CONFIDENCE=0.94
 export OVERTURE_AUTO_PROCESS=false OVERTURE_FEED_ENABLED=false OVERTURE_SCHEDULED_TASKS_ENABLED=false
