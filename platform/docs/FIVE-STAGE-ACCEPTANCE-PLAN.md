@@ -44,7 +44,7 @@ Status labels:
 - [ ] Stage acceptance records source-rights and admin-access review.
 
 ### Current assessment
-Core implementation is present. A code review found one active missed administrative protection: observation creation. It now requires a reviewer and records the authenticated reviewer as audit actor. Two similar read handlers exist in an enrichment router that is not currently mounted in the FastAPI app; they have also been guarded so a future registration cannot expose them. The new regression tests and current full CI run must pass before Stage 1 is signed off.
+Core implementation is present. A code review found one active missed administrative protection: observation creation. It now requires a reviewer and records the authenticated reviewer as audit actor. Two similar read handlers exist in an enrichment router that is not currently mounted in the FastAPI app; they have also been guarded so a future registration cannot expose them. The Stage 1 code and regression suite were included in successful GitHub Actions run #63 (160 API tests, frontend checks/build and disposable Docker integration through migration 0022). Formal source-rights and admin-access review, route-matrix acceptance and operational sign-off remain outstanding; the new Stage 3 migration and endpoints are not included in that run.
 
 ## Stage 2 — Overture-first identity and branch approval
 
@@ -68,7 +68,7 @@ Core implementation is present. A code review found one active missed administra
 - [ ] Product owner accepts conflict precision and sample decisions before any operational switch is changed.
 
 ### Current assessment
-Ruleset v2.0 is implemented. The postcode-conflict detector has been narrowed to verified first-party evidence about the same street/locality, and regression tests were added. A read-only candidate outcome analysis and product acceptance remain outstanding. Do not import, process or publish operational records as part of acceptance.
+Ruleset v2.0 and its synthetic regression coverage are implemented. The postcode-conflict detector is limited to verified first-party evidence about the same street/locality. The Stage 2 code/tests were included in successful GitHub Actions run #63. A read-only candidate outcome analysis and product acceptance remain outstanding. Do not import, process or publish operational records as part of acceptance.
 
 ## Stage 3 — Enrichment, pricing and verification automation
 
@@ -130,7 +130,7 @@ Partially implemented. Reviewer bearer authentication, audit attribution, health
 
 ### Exit criteria
 - [ ] All CI jobs pass on a commit containing the final code and docs.
-- [ ] Release metadata and manifest agree; migrations 0021 and 0022 are declared.
+- [ ] Release metadata and manifest agree; migrations 0021, 0022 and 0023 are declared.
 - [ ] Release archive is reproducible from the maintained source and passes ZIP/integrity checks.
 - [ ] Archive exclusion audit confirms no secrets or live data are included.
 - [ ] Migration upgrade is rehearsed on a disposable database; rollback/forward-fix approach is documented.
@@ -139,7 +139,7 @@ Partially implemented. Reviewer bearer authentication, audit attribution, health
 - [ ] Release sign-off records the exact source commit, archive hash, CI run and migration evidence.
 
 ### Current assessment
-Partially validated. Earlier run #38 passed API/frontend checks, production frontend build and isolated Docker integration through migration 0022. Follow-up code changes require a new CI pass. The root `release_v2.8.0/` snapshot is marked superseded. Current archive regeneration and integrity/exclusion audit remain outstanding.
+Partially validated. Run #63 passed 160 API tests, frontend lint/type/production build and isolated Docker integration through migration 0022. Stage 3 migration 0023 and its new APIs/tests were added afterwards and still require CI and disposable migration validation. The root `release_v2.8.0/` snapshot is marked superseded. Current archive regeneration, integrity/exclusion audit, disposable migration rehearsal and target-host checklist remain outstanding.
 
 ## Non-negotiable operating safeguards
 
@@ -154,7 +154,8 @@ Partially validated. Earlier run #38 passed API/frontend checks, production fron
 
 - Current implementation branch: `stage1-overture-identity-provenance`.
 - Handover baseline: `0958c66a2ec6b6b387accde2b802f84ec927faf1`.
-- Earlier successful CI baseline: [run #38](https://github.com/finnitto/everguide/actions/runs/44118434200).
+- Earlier CI baseline: [run #38](https://github.com/finnitto/everguide/actions/runs/44118434200).
+- Latest successful pre-Stage-3 CI: [run #63](https://github.com/finnitto/everguide/actions/runs/44128256045), commit `35c604e7d8c76e2d48e35fcdb55bcb27355c97f2`; this run did not include migration 0023 or the Stage 3 additions.
 - Overture approval policy: [OVERTURE-AUTOMATIC-APPROVAL.md](OVERTURE-AUTOMATIC-APPROVAL.md).
 - Validation procedure: [VALIDATION.md](VALIDATION.md).
 - Current release metadata: [RELEASE-MANIFEST.json](../RELEASE-MANIFEST.json).
