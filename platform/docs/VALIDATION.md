@@ -35,7 +35,7 @@ an isolated Docker Compose project containing API, worker, Beat, web, PostgreSQL
 and Redis.
 
 The isolated project:
-- uses a unique Compose project name and temporary environment file;
+- uses a unique Compose project name, temporary environment file and dynamically selected localhost ports;
 - uses a fresh, project-scoped PostgreSQL volume and Redis volume;
 - disables Overture feed access, scheduled tasks, automatic processing and automatic approval;
 - supplies no Companies House, Google Places or Brave API credentials;
