@@ -57,6 +57,21 @@ jobs:
         working-directory: platform/apps/web
         run: npm run build
 
+      - name: Build and audit release archive
+        working-directory: platform
+        run: python scripts/package_release.py
+
+      - name: Upload verified release package
+        uses: actions/upload-artifact@v4
+        with:
+          name: everguide-release-${{ github.sha }}
+          path: |
+            platform/releases/everguide-v*.zip
+            platform/releases/everguide-v*.zip.sha256
+            platform/releases/everguide-v*.package-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+
   docker-integration:
     name: Isolated Docker integration
     runs-on: ubuntu-latest
