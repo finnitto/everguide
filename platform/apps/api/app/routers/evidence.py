@@ -263,6 +263,12 @@ def _decide_evidence(db: Session, model, evidence_id: int, payload: EvidenceDeci
     row = db.get(model, evidence_id)
     if not row:
         raise HTTPException(404, "Evidence record not found")
+    if payload.review_status == "approved":
+        now = _now()
+        for field_name in ("expires_at", "effective_to", "valid_to"):
+            end_date = getattr(row, field_name, None)
+            if end_date is not None and end_date < now:
+                raise HTTPException(409, "Expired evidence cannot be approved; capture refreshed evidence first")
     row.review_status = payload.review_status
     row.reviewed_by = reviewer
     row.reviewed_at = _now()
