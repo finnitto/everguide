@@ -988,7 +988,9 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
 
 @celery_app.task(name="everguide.overture.retry_awaiting_enrichment", bind=True)
 def retry_awaiting_enrichment(self):
-    """Requeue due enrichment-only candidates with a bounded 2/7/21-day cadence."""
+    """Requeue due enrichment-only candidates only when scheduled processing is enabled."""
+    if not settings.overture_scheduled_tasks_enabled:
+        return {"status": "disabled", "requeued": 0, "retry_limits_reached": 0}
     db = SessionLocal()
     now = _now()
     requeued = 0
@@ -1049,7 +1051,9 @@ def retry_awaiting_enrichment(self):
 
 @celery_app.task(name="everguide.overture.reconcile_stale_import_runs", bind=True)
 def reconcile_stale_overture_import_runs(self):
-    """Recover unfinished batches or close genuinely orphaned runs with an audit trail."""
+    """Recover stale batches only when scheduled processing is enabled."""
+    if not settings.overture_scheduled_tasks_enabled:
+        return {"status": "disabled", "resumed_runs": [], "completed_runs": [], "failed_runs": []}
     db = SessionLocal()
     now = _now()
     stale_run_before = now - timedelta(hours=24)
