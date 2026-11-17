@@ -10,6 +10,7 @@ from app.routers.identity_review import router as identity_review_router
 from app.routers.overture import router as overture_router
 from app.routers.discovery import router as discovery_router
 from app.routers.website_discovery import router as website_discovery_router
+from app.routers.evidence import router as evidence_router
 
 app = FastAPI(title=settings.app_name, version=settings.app_version, description="Everguide directory and provider management API")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -20,6 +21,7 @@ app.include_router(identity_review_router)
 app.include_router(overture_router)
 app.include_router(discovery_router)
 app.include_router(website_discovery_router)
+app.include_router(evidence_router)
 
 @app.get("/health", tags=["health"])
 def health(): return {"status":"ok","service":"everguide-api","version":settings.app_version}
