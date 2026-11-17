@@ -53,6 +53,33 @@ def seed_candidates(factory):
     return ids
 
 
+def test_reviewer_token_resolves_configured_identity(monkeypatch):
+    import hashlib
+    from app.config import settings
+    from fastapi.security import HTTPAuthorizationCredentials
+    from app.identity_review_auth import require_identity_reviewer
+
+    token = "test-only-high-entropy-reviewer-token"
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    monkeypatch.setattr(settings, "identity_review_credentials", '{"reviewer-42":"' + digest + '"}')
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+    assert require_identity_reviewer(credentials) == "reviewer-42"
+
+
+def test_unknown_reviewer_token_is_rejected(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+    from app.config import settings
+    from fastapi.security import HTTPAuthorizationCredentials
+    from app.identity_review_auth import require_identity_reviewer
+
+    monkeypatch.setattr(settings, "identity_review_credentials", '{"reviewer-42":"' + ("0" * 64) + '"}')
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="wrong-token")
+    with pytest.raises(HTTPException) as exc:
+        require_identity_reviewer(credentials)
+    assert exc.value.status_code == 401
+
+
 def test_identity_review_api_rejects_requests_without_reviewer_credentials():
     with TestClient(app) as client:
         response = client.get("/api/v1/identity-review/overture-links")
