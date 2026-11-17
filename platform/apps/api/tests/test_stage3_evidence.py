@@ -204,6 +204,31 @@ def test_membership_and_fca_evidence_are_independent_and_not_inferred():
         _close(engine)
 
 
+def test_expired_evidence_cannot_be_approved():
+    engine, _factory, ids = _client()
+    try:
+        payload = {
+            **SOURCE,
+            "provider_id": ids["provider_id"],
+            "source_retrieved_at": "2026-01-01T00:00:00Z",
+            "expires_at": "2026-01-02T00:00:00Z",
+            "service_category": "cremation",
+            "service_name": "Direct cremation",
+            "fee_type": "package",
+            "amount": "900.00",
+        }
+        with TestClient(app) as client:
+            created = client.post("/api/v1/evidence/pricing", json=payload)
+            assert created.status_code == 201, created.text
+            response = client.post(
+                f"/api/v1/evidence/pricing/{created.json()['id']}/decision",
+                json={"review_status": "approved", "review_notes": "Should be rejected as expired"},
+            )
+            assert response.status_code == 409, response.text
+            assert "Expired evidence" in response.json()["detail"]
+    finally:
+        _close(engine)
+
 def test_approved_source_permission_cannot_authorise_another_domain():
     engine, factory, ids = _client()
     try:
