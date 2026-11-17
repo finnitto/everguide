@@ -64,7 +64,7 @@ def assess_overture_candidate(
 
     postcode = str(row.get("postcode") or "").strip().upper()
     scope = str(geography_scope or "thurrock").lower()
-    outward = re.match(r"^([A-Z]{1,2}\\d{1,2}[A-Z]?)", normalise_postcode(postcode))
+    outward = re.match(r"^([A-Z]{1,2}\d{1,2}[A-Z]?)", normalise_postcode(postcode))
     if not is_valid_uk_postcode(postcode):
         reasons.append("invalid_or_missing_uk_postcode")
     if not row.get("address_line_1") and not row.get("address"):
