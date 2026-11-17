@@ -250,9 +250,8 @@ def test_revalidation_is_idempotent_bounded_and_transient_failures_do_not_change
                 state = attempt.json()["request"]
                 if attempt_number < 4:
                     assert state["status"] == "retry_wait"
-                    now["value"] = state["next_attempt_at"] .replace("Z", "+00:00")
-                    if isinstance(now["value"], str):
-                        now["value"] = datetime.fromisoformat(now["value"])
+                    next_attempt = state["next_attempt_at"].replace("Z", "+00:00")
+                    now["value"] = datetime.fromisoformat(next_attempt)
                 else:
                     assert state["status"] == "failed"
                     assert "retry_limit_reached" in state["last_error"]
