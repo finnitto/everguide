@@ -9,7 +9,7 @@ from app.models import CompaniesHouseRun, CompaniesHouseCandidate
 from app.companies_house import import_companies_house_sic, enrich_company_profiles
 from app.company_classification import run_classification, classification_summary
 
-router = APIRouter(prefix="/api/v1/companies-house", tags=["companies-house"])
+router = APIRouter(prefix="/api/v1/companies-house", tags=["companies-house"], dependencies=[Depends(require_identity_reviewer)])
 
 @router.get("/status", dependencies=[Depends(require_identity_reviewer)])
 def status(db: Session = Depends(get_db)):
