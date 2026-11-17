@@ -866,7 +866,7 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                     "content_sha256": (verification or {}).get("content_sha256"),
                     "extracted_identity_evidence": ({k: extracted.get(k) for k in (
                         "name", "street", "town", "postcode", "telephone", "email", "website",
-                        "source_type", "country", "confidence", "funeral_signals", "has_complete_branch_address")}
+                        "source_type", "country", "confidence", "funeral_signals", "branch_status", "has_complete_branch_address")}
                         if extracted else None),
                     "conflicting_identity_or_branch_evidence": bool(conflict_codes),
                     "conflict_codes": sorted(set(conflict_codes)),
