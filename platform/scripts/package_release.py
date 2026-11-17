@@ -29,7 +29,8 @@ EXCLUDED_DIRS = {
 EXCLUDED_FILES = {
     ".env", ".npmrc", ".pypirc", ".netrc", "auth.json", "credentials",
     "credentials.json", "secrets.json", "id_rsa", "id_ed25519",
-    "known_hosts", ".DS_Store", "Thumbs.db",
+    "known_hosts", "stage1_api_patch.py", "stage1_task_patch.py",
+    ".DS_Store", "Thumbs.db",
 }
 EXCLUDED_SUFFIXES = {
     ".pyc", ".pyo", ".log", ".sqlite", ".sqlite3", ".db", ".bak",
