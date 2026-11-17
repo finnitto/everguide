@@ -294,3 +294,20 @@ def test_overture_write_endpoints_reject_requests_without_reviewer_credentials()
             response = client.post(path, json=payload) if payload is not None else client.post(path)
             assert response.status_code == 401, (path, response.status_code, response.text)
 
+
+
+
+def test_manual_overture_candidate_import_is_retired_even_for_reviewer():
+    from app.identity_review_auth import require_identity_reviewer
+
+    app.dependency_overrides[require_identity_reviewer] = lambda: "stage1-test-reviewer"
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/v1/overture/imports",
+                json={"records": [{"gers_id": "UNVERIFIED-MANUAL-ROW", "name": "Unverified Funeral Directors"}]},
+            )
+        assert response.status_code == 410, response.text
+        assert "official Overture Places feed" in response.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(require_identity_reviewer, None)
