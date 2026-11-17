@@ -491,6 +491,40 @@ def _normalised_assessment_row(raw):
     return row
 
 
+def _same_asserted_branch_postcode_conflict(raw, extracted):
+    """Only flag a postcode contradiction when the structured page identifies the same branch address."""
+    if not isinstance(extracted, dict) or extracted.get("has_complete_branch_address") is not True:
+        return False
+    observed_postcode = normalise_postcode(extracted.get("postcode"))
+    asserted_postcode = normalise_postcode(raw.get("postcode"))
+    if not observed_postcode or not asserted_postcode or observed_postcode == asserted_postcode:
+        return False
+    asserted_street = normalise_identity_name(raw.get("address_line_1") or raw.get("address"))
+    observed_street = normalise_identity_name(extracted.get("street"))
+    asserted_town = normalise_identity_name(raw.get("town_city") or raw.get("town") or raw.get("locality"))
+    observed_town = normalise_identity_name(extracted.get("town"))
+    # A provider's other branch may legitimately have a different postcode.
+    # Require both street and locality to match before treating a postcode
+    # mismatch as evidence about this exact Overture branch.
+    return bool(
+        asserted_street and observed_street and asserted_street == observed_street
+        and asserted_town and observed_town and asserted_town == observed_town
+    )
+
+
+def _first_party_website_conflicts(raw, extracted, *, verified_first_party):
+    """Return only explicit conflicts supported by verified first-party evidence."""
+    if not verified_first_party or not isinstance(extracted, dict):
+        return []
+    conflicts = []
+    branch_status = str(extracted.get("branch_status") or extracted.get("business_status") or "").strip().lower()
+    if branch_status in {"closed", "permanently_closed", "permanently closed"}:
+        conflicts.append("official_site_branch_closed")
+    if _same_asserted_branch_postcode_conflict(raw, extracted):
+        conflicts.append("official_site_branch_postcode_mismatch")
+    return conflicts
+
+
 def _candidate_evidence_matches(raw, extracted):
     if not extracted:
         return False
@@ -809,17 +843,10 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                     verified_url = (verification or {}).get("final_url") or discovery_url
                 verified_first_party = bool(verified_url and extracted and verification.get("status") == "reachable"
                     and verification.get("robots_allowed") is True)
-                website_conflict = bool(
-                    extracted and extracted.get("has_complete_branch_address") is True
-                    and normalise_postcode(extracted.get("postcode")) != normalise_postcode(raw.get("postcode"))
-                )
                 conflict_codes = _verified_companies_house_conflicts(db, candidate)
-                if extracted and str(extracted.get("branch_status") or extracted.get("business_status") or "").strip().lower() in {
-                    "closed", "permanently_closed", "permanently closed"
-                }:
-                    conflict_codes.append("official_site_branch_closed")
-                if website_conflict:
-                    conflict_codes.append("official_site_identity_or_branch_address_mismatch")
+                conflict_codes.extend(_first_party_website_conflicts(
+                    row, extracted, verified_first_party=verified_first_party
+                ))
                 if not discovery_url or _is_non_first_party_url(discovery_url):
                     row["website"] = None
                 evidence = {
