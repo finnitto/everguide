@@ -38,7 +38,7 @@ def _now():
 
 
 class EvidenceCommonIn(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     provider_id: int = Field(gt=0)
     branch_id: int | None = Field(default=None, gt=0)
@@ -51,9 +51,6 @@ class EvidenceCommonIn(BaseModel):
     evidence_sha256: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
     evidence_excerpt: str | None = Field(default=None, max_length=4000)
     evidence_payload: dict = Field(default_factory=dict)
-    effective_from: datetime | None = None
-    effective_to: datetime | None = None
-
     @field_validator("source_rights_basis")
     @classmethod
     def nonblank_rights_basis(cls, value: str) -> str:
@@ -63,6 +60,8 @@ class EvidenceCommonIn(BaseModel):
 
 
 class PricingEvidenceIn(EvidenceCommonIn):
+    effective_from: datetime | None = None
+    effective_to: datetime | None = None
     service_category: str = Field(min_length=2, max_length=60)
     service_name: str = Field(min_length=2, max_length=240)
     fee_type: str = Field(min_length=2, max_length=60)
@@ -437,6 +436,30 @@ def list_revalidation_requests(status: str | None = None, provider_id: int | Non
     return {"count": total, "items": [_request_dict(row) for row in rows]}
 
 
+@router.get("/revalidation-requests/{request_id}")
+def get_revalidation_request(request_id: int, db: Session = Depends(get_db)):
+    request = db.get(EvidenceRevalidationRequest, request_id)
+    if not request:
+        raise HTTPException(404, "Revalidation request not found")
+    attempts = db.query(EvidenceRevalidationAttempt).filter(
+        EvidenceRevalidationAttempt.request_id == request.id
+    ).order_by(EvidenceRevalidationAttempt.attempt_number.asc()).all()
+    return {
+        "request": _request_dict(request),
+        "attempts": [{
+            "id": item.id,
+            "attempt_number": item.attempt_number,
+            "outcome": item.outcome,
+            "failure_class": item.failure_class,
+            "source_url": item.source_url,
+            "evidence_sha256": item.evidence_sha256,
+            "detail": item.detail,
+            "checked_at": item.checked_at,
+            "actor": item.actor,
+        } for item in attempts],
+    }
+
+
 @router.post("/revalidation-requests/{request_id}/attempts")
 def record_revalidation_attempt(request_id: int, payload: RevalidationAttemptIn,
                                 reviewer: str = Depends(require_identity_reviewer),
@@ -487,6 +510,10 @@ def record_revalidation_attempt(request_id: int, payload: RevalidationAttemptIn,
     if payload.outcome == "success":
         request.status = "completed"
         request.completed_at = now
+        evidence_model = EVIDENCE_MODELS[request.domain]
+        evidence_row = db.get(evidence_model, request.evidence_id)
+        if evidence_row:
+            evidence_row.last_checked_at = payload.checked_at or now
     elif payload.outcome == "permanent_failure":
         request.status = "failed"
         request.completed_at = now
