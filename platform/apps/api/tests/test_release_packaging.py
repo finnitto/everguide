@@ -33,7 +33,10 @@ def test_release_archive_contains_required_files_and_excludes_secrets_and_local_
     root = _release_source(tmp_path / "platform")
     (root / ".env").write_text("PRODUCTION_SECRET=do-not-package", encoding="utf-8")
     (root / ".env.production").write_text("SECRET=do-not-package", encoding="utf-8")
+    (root / "production.env").write_text("SECRET=do-not-package", encoding="utf-8")
     (root / ".env.example").write_text("APP_ENV=example", encoding="utf-8")
+    (root / ".npmrc").write_text("//registry.example/:_authToken=do-not-package", encoding="utf-8")
+    (root / ".pypirc").write_text("[pypi] password=do-not-package", encoding="utf-8")
     (root / "data").mkdir()
     (root / "data" / "candidate.parquet").write_bytes(b"local candidate data")
     (root / "pgdata").mkdir()
@@ -44,6 +47,8 @@ def test_release_archive_contains_required_files_and_excludes_secrets_and_local_
     (root / "apps" / "web" / ".next" / "server.js").write_text("build output", encoding="utf-8")
     (root / "secrets").mkdir()
     (root / "secrets" / "private.pem").write_text("private key", encoding="utf-8")
+    (root / ".aws").mkdir()
+    (root / ".aws" / "credentials").write_text("aws_secret_access_key=do-not-package", encoding="utf-8")
 
     archive_path = tmp_path / "out" / "everguide-test.zip"
     result = package_release.build_release_archive(
@@ -65,6 +70,10 @@ def test_release_archive_contains_required_files_and_excludes_secrets_and_local_
     assert ".env.example" in names
     assert ".env" not in names
     assert ".env.production" not in names
+    assert "production.env" not in names
+    assert ".npmrc" not in names
+    assert ".pypirc" not in names
+    assert not any(name.startswith(".aws/") for name in names)
     assert not any(name.startswith("data/") for name in names)
     assert not any(name.startswith("pgdata/") for name in names)
     assert not any("/node_modules/" in name for name in names)
