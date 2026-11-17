@@ -37,6 +37,8 @@ def test_release_archive_contains_required_files_and_excludes_secrets_and_local_
     (root / ".env.example").write_text("APP_ENV=example", encoding="utf-8")
     (root / ".npmrc").write_text("//registry.example/:_authToken=do-not-package", encoding="utf-8")
     (root / ".pypirc").write_text("[pypi] password=do-not-package", encoding="utf-8")
+    (root / "stage1_api_patch.py").write_text("development patch helper", encoding="utf-8")
+    (root / "stage1_task_patch.py").write_text("development patch helper", encoding="utf-8")
     (root / "data").mkdir()
     (root / "data" / "candidate.parquet").write_bytes(b"local candidate data")
     (root / "pgdata").mkdir()
@@ -73,6 +75,8 @@ def test_release_archive_contains_required_files_and_excludes_secrets_and_local_
     assert "production.env" not in names
     assert ".npmrc" not in names
     assert ".pypirc" not in names
+    assert "stage1_api_patch.py" not in names
+    assert "stage1_task_patch.py" not in names
     assert not any(name.startswith(".aws/") for name in names)
     assert not any(name.startswith("data/") for name in names)
     assert not any(name.startswith("pgdata/") for name in names)
