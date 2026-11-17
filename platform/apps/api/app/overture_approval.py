@@ -56,7 +56,8 @@ def assess_overture_candidate(
         name=row.get("name", ""),
         basic_category=row.get("basic_category", ""),
         taxonomy_primary=row.get("taxonomy_primary", ""),
-        website=row.get("website", ""),
+        # Overture website fields are contributor leads, not service classification evidence.
+        website="",
         description=row.get("description", ""),
     )
     if service_class != "funeral_director_candidate":
