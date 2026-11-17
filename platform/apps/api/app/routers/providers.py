@@ -35,7 +35,7 @@ def list_providers(q: str | None = None, status: str | None = None, limit: int =
     return {"items":[provider_dict(p) for p in rows],"count":query.count()}
 
 @router.post("/providers", status_code=410)
-def create_provider(payload: ProviderCreate, db: Session = Depends(get_db)):
+def create_provider(payload: ProviderCreate, reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     """Retired: providers may only be created by the Overture publication service."""
     raise HTTPException(
         status_code=410,
@@ -58,7 +58,7 @@ def update_provider(provider_id: int, payload: ProviderUpdate, reviewer: str = D
     return provider_dict(p)
 
 @router.post("/providers/{provider_id}/branches", status_code=410)
-def add_branch(provider_id: int, payload: BranchInput, db: Session = Depends(get_db)):
+def add_branch(provider_id: int, payload: BranchInput, reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     """Retired: branches may only be created by the Overture publication service."""
     raise HTTPException(
         status_code=410,
