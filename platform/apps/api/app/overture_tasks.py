@@ -809,8 +809,10 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                     verified_url = (verification or {}).get("final_url") or discovery_url
                 verified_first_party = bool(verified_url and extracted and verification.get("status") == "reachable"
                     and verification.get("robots_allowed") is True)
-                website_conflict = bool(extracted and _candidate_evidence_matches(raw, extracted) is False
-                    and extracted.get("has_complete_branch_address") is True)
+                website_conflict = bool(
+                    extracted and extracted.get("has_complete_branch_address") is True
+                    and normalise_postcode(extracted.get("postcode")) != normalise_postcode(raw.get("postcode"))
+                )
                 conflict_codes = _verified_companies_house_conflicts(db, candidate)
                 if extracted and str(extracted.get("branch_status") or extracted.get("business_status") or "").strip().lower() in {
                     "closed", "permanently_closed", "permanently closed"
