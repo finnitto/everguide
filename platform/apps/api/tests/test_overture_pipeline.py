@@ -19,7 +19,7 @@ def _candidate_row():
         "gers_id": "gers-test-001", "version": "2026-10-15",
         "name": "Test Funeral Directors", "basic_category": "family_service",
         "taxonomy_primary": "funeral_service", "confidence": "0.99",
-        "address": "1 High Street", "postcode": "RM18 7QX", "phone": "01375 856903",
+        "address": "1 High Street", "address_line_1": "1 High Street", "town_city": "Tilbury", "postcode": "RM18 7QX", "phone": "01375 856903",
         "website": "https://test-funerals.example/", "latitude": "1", "longitude": "1",
         "sources_json": [{"dataset": "Microsoft", "provider": "microsoft", "record_id": "source-1", "license": "CDLA-Permissive-2.0"}],
         "possible_duplicate": "False",
