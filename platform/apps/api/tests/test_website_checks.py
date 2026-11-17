@@ -24,3 +24,57 @@ def test_public_dns_address_is_accepted(monkeypatch):
     parsed, host = website_checks._validate_public_https("https://example.org/page")
     assert parsed.scheme == "https"
     assert host == "example.org"
+
+
+def test_extracts_explicit_business_status_from_branch_scoped_structured_data():
+    decoded = """
+    <html><head><title>Example Funeral Directors</title></head>
+    <body>Funeral directors and funeral services.
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FuneralHome",
+      "name": "Example Funeral Directors",
+      "description": "Funeral directors",
+      "businessStatus": "https://schema.org/ClosedPermanently",
+      "address": {
+        "@type": "PostalAddress",
+        "streetAddress": "1 High Street",
+        "addressLocality": "Tilbury",
+        "postalCode": "RM18 7QX",
+        "addressCountry": "GB"
+      }
+    }
+    </script></body></html>
+    """
+    extracted = website_checks._extract_funeral_provider_data(decoded)
+    assert extracted is not None
+    assert extracted["branch_status"] == "permanently_closed"
+    assert extracted["street"] == "1 High Street"
+    assert extracted["town"] == "Tilbury"
+
+
+def test_unknown_or_unscoped_business_status_is_not_treated_as_branch_closure():
+    decoded = """
+    <html><head><title>Example Funeral Directors</title></head>
+    <body>Funeral directors and funeral services.
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": "Example Funeral Directors",
+      "description": "Funeral directors",
+      "businessStatus": "https://schema.org/ClosedPermanently",
+      "address": {
+        "@type": "PostalAddress",
+        "streetAddress": "1 High Street",
+        "addressLocality": "Tilbury",
+        "postalCode": "RM18 7QX",
+        "addressCountry": "GB"
+      }
+    }
+    </script></body></html>
+    """
+    extracted = website_checks._extract_funeral_provider_data(decoded)
+    assert extracted is not None
+    assert extracted["branch_status"] is None
