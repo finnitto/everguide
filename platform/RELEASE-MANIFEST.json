@@ -56,12 +56,12 @@
     "new_regression_tests_added": 3,
     "python_compileall": "passed",
     "targeted_pytest": "Covered by full API suite; 151 passed.",
-    "full_api_pytest": "Latest evidenced GitHub Actions run #38 passed the complete API test suite within quick validation.",
+    "full_api_pytest": "Latest successful pre-Stage-3 run #63 passed 160 API tests; migration 0023 and new Stage 3 tests were added after that run and remain CI-pending.",
     "production_database_accessed_during_build": false,
     "frontend_build": "Latest evidenced GitHub Actions run #38 passed the production frontend build.",
     "docker_build": "not run",
-    "isolated_docker_integration": "Latest evidenced GitHub Actions run #38 passed isolated Docker integration, reaching migration 0022_branch_overture_provenance and checking API readiness/version, admin HTTP 200, worker liveness/idle state and empty Beat schedule.",
-    "validation_run": "https://github.com/finnitto/everguide/actions/runs/44118434200"
+    "isolated_docker_integration": "Latest successful pre-Stage-3 run #63 passed isolated Docker integration through migration 0022_branch_overture_provenance, checking API readiness/version, reviewer credential forwarding, disabled safety controls, admin HTTP 200, worker liveness/idle state and empty Beat schedule. Migration 0023 and its disposable upgrade validation are pending.",
+    "validation_run": "https://github.com/finnitto/everguide/actions/runs/44128256045"
   },
   "approval_policy": {
     "shared_policy_version": "shared-provider approval policy is not authoritative for the Overture adapter",
@@ -109,7 +109,7 @@
     "legacy_discovery": "Independent Google Places, Companies House and company-website discovery entry points and legacy worker tasks are disabled.",
     "public_endpoint": "/api/v1/directory/search remains public; internal directory and candidate/admin endpoints require reviewer authentication."
   },
-  "stage1_status": "Core Overture-only discovery, GERS/provenance, reviewer-authenticated CH links, retirement of bypass creation/discovery paths, and Overture-first approval safeguards are implemented. One active unprotected observation-write route found in review has been secured; current CI and endpoint/security regression tests remain to be confirmed.",
+  "stage1_status": "Core Overture-only discovery, GERS/provenance, reviewer-authenticated CH links, retirement of bypass creation/discovery paths, and Overture-first approval safeguards are implemented. The observation-write reviewer gap is closed. Stage 1 code and tests passed in Actions run #63 (160 API tests and isolated Docker through migration 0022); formal source-rights and admin-access acceptance remain outstanding. Later Stage 3 changes are not covered by that run.",
   "stage5_status": "Partially validated. CI previously passed frontend production build and isolated Docker migration/integration through 0022. Current security/conflict changes and release metadata require the latest branch workflow. Current root release_v2.8.0 snapshot is marked superseded; current archive regeneration, exclusion/integrity checks and migration rehearsal/rollback evidence remain outstanding.",
   "security_review": {
     "access_control": "Bearer reviewer authentication required for active administrative reads and mutations; public directory search and health endpoints remain intentionally public; disabled/retired endpoints return HTTP 410.",
@@ -121,7 +121,7 @@
     ],
     "regression_tests": "platform/apps/api/tests/test_stage1_admin_auth.py includes unauthenticated observation-write coverage; the unmounted enrichment routes are not incorrectly asserted as live."
   },
-  "stage2_status": "Overture-first ruleset v2.0 is implemented. Conflict detection now requires verified first-party evidence and same-branch street/locality alignment for website postcode conflicts. Remaining acceptance includes synthetic edge-case coverage and non-mutating analysis of a safe candidate snapshot; no live processing/publication.",
+  "stage2_status": "Overture-first ruleset v2.0 and synthetic regression coverage are implemented and were included in successful Actions run #63. Conflict detection uses verified first-party evidence and same-branch street/locality alignment for website postcode conflicts. Non-mutating candidate outcome analysis and product acceptance remain outstanding; no live processing/publication.",
   "stage3_status": "Partially implemented. Migration 0023 adds separate pricing, membership and regulatory evidence domains, provider/branch scope, audited business-form representation and a bounded idempotent reviewer-recorded revalidation ledger. Source-specific rights/policy, automated retrieval and refresh, full freshness/exception tests and product acceptance remain open. See docs/STAGE3-EVIDENCE-DATA-DICTIONARY.md.",
   "stage4_status": "Partially implemented. Reviewer-authenticated access and audit attribution are in place; the one active route gap found in review has been closed with a regression test. Two handlers in an unmounted legacy enrichment router have defence-in-depth auth. Role separation, credential lifecycle, backup/restore proof, observability, retention and runbooks remain open.",
   "implementation_plan": "docs/FIVE-STAGE-ACCEPTANCE-PLAN.md"
