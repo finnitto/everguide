@@ -392,7 +392,7 @@ def decide_quality_action(action_id: int, decision: dict, reviewer: str = Depend
             provider.provider_type = new_type
             db.add(AuditEvent(entity_type="provider", entity_id=provider.id, action="quality_reclassification_approved",
                 detail={"old_provider_type": old_type, "new_provider_type": new_type,
-                        "quality_action_id": action.id, "evidence": action.evidence}, actor="local-admin"))
+                        "quality_action_id": action.id, "evidence": action.evidence}, actor=reviewer))
         else:
             raise HTTPException(400, "This proposal is review-only and cannot be applied automatically")
         action.status = "approved"
@@ -403,7 +403,7 @@ def decide_quality_action(action_id: int, decision: dict, reviewer: str = Depend
     action.decided_at = datetime.now(timezone.utc)
     db.add(AuditEvent(entity_type="provider_quality_action", entity_id=action.id,
         action=("approved" if outcome == "approve" else "rejected"), detail={"provider_id": provider.id, "category": action.category,
-        "action_type": action.action_type, "note": action.decision_note}, actor="local-admin"))
+        "action_type": action.action_type, "note": action.decision_note}, actor=reviewer))
     db.commit()
     return {"id": action.id, "status": action.status, "provider_id": provider.id,
             "provider_status": provider.status, "provider_type": provider.provider_type,
