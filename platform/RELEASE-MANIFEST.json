@@ -108,19 +108,20 @@
     "legacy_discovery": "Independent Google Places, Companies House and company-website discovery entry points and legacy worker tasks are disabled.",
     "public_endpoint": "/api/v1/directory/search remains public; internal directory and candidate/admin endpoints require reviewer authentication."
   },
-  "stage1_status": "Core Overture-only discovery, GERS/provenance, reviewer-authenticated CH links, retirement of bypass creation/discovery paths, and Overture-first approval safeguards are implemented. Final acceptance follows the current branch CI and endpoint/security sweep.",
+  "stage1_status": "Core Overture-only discovery, GERS/provenance, reviewer-authenticated CH links, retirement of bypass creation/discovery paths, and Overture-first approval safeguards are implemented. One active unprotected observation-write route found in review has been secured; current CI and endpoint/security regression tests remain to be confirmed.",
   "stage5_status": "Partially validated. CI previously passed frontend production build and isolated Docker migration/integration through 0022. Current security/conflict changes and release metadata require the latest branch workflow. Current root release_v2.8.0 snapshot is marked superseded; current archive regeneration, exclusion/integrity checks and migration rehearsal/rollback evidence remain outstanding.",
   "security_review": {
     "access_control": "Bearer reviewer authentication required for active administrative reads and mutations; public directory search and health endpoints remain intentionally public; disabled/retired endpoints return HTTP 410.",
     "reviewed_gaps_fixed": [
-      "POST /api/v1/observations now requires a reviewer and uses authenticated reviewer identity as audit actor",
-      "GET /api/v1/enrichment/sources now requires reviewer authentication",
-      "GET /api/v1/enrichment/checks now requires reviewer authentication"
+      "POST /api/v1/observations now requires a reviewer and uses authenticated reviewer identity as audit actor."
     ],
-    "regression_tests": "platform/apps/api/tests/test_stage1_admin_auth.py covers the three formerly unprotected routes."
+    "defence_in_depth": [
+      "GET /api/v1/enrichment/sources and GET /api/v1/enrichment/checks now have reviewer dependencies. Their enrichment router is not currently mounted in app.main, so these paths are not active API routes."
+    ],
+    "regression_tests": "platform/apps/api/tests/test_stage1_admin_auth.py includes unauthenticated observation-write coverage; the unmounted enrichment routes are not incorrectly asserted as live."
   },
   "stage2_status": "Overture-first ruleset v2.0 is implemented. Conflict detection now requires verified first-party evidence and same-branch street/locality alignment for website postcode conflicts. Remaining acceptance includes synthetic edge-case coverage and non-mutating analysis of a safe candidate snapshot; no live processing/publication.",
   "stage3_status": "Not signed off. Scope includes optional enrichment, independent pricing evidence, NAFD/SAIF/FCA status checks, sole-trader/partnership representation, multi-branch discovery/revalidation, and separate approval/freshness controls.",
-  "stage4_status": "Partially implemented. Reviewer-authenticated access and audit attribution are in place; route gaps identified in review have been closed with regression tests. Remaining acceptance includes role separation, credential lifecycle/rotation, backup and restore proof, observability, retention, and resilience/recovery runbooks.",
+  "stage4_status": "Partially implemented. Reviewer-authenticated access and audit attribution are in place; the one active route gap found in review has been closed with a regression test. Two handlers in an unmounted legacy enrichment router have defence-in-depth auth. Role separation, credential lifecycle, backup/restore proof, observability, retention and runbooks remain open.",
   "implementation_plan": "docs/FIVE-STAGE-ACCEPTANCE-PLAN.md"
 }
