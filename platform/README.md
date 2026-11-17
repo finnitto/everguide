@@ -171,7 +171,7 @@ OVERTURE_SCHEDULED_TASKS_ENABLED=false
 OVERTURE_FEED_DAILY_HOUR=4
 OVERTURE_FEED_DAILY_MINUTE=30
 OVERTURE_FEED_BATCH_SIZE=500
-OVERTURE_AUTO_PROCESS=true
+OVERTURE_AUTO_PROCESS=false
 AUTO_APPROVE_PROVIDERS=false
 AUTO_APPROVAL_MIN_CONFIDENCE=0.94
 ONS_BOUNDARY_CACHE_TTL_HOURS=720
@@ -181,7 +181,7 @@ Automatic publication is disabled by default. Keep it disabled while validating 
 
 DuckDB and its HTTPFS/spatial extensions are used by the worker to query public Parquet data in place. The first feed check after deployment may take longer while extensions are installed and the England area is queried. A new Overture release is ingested once; unchanged daily catalogue checks do not rescan the dataset.
 
-See [docs/OVERTURE-AUTOMATIC-APPROVAL.md](docs/OVERTURE-AUTOMATIC-APPROVAL.md) for the feed design, API and safeguards. The API retains the old CSV import endpoint for compatibility, but it is no longer exposed as a normal admin workflow.
+See [docs/OVERTURE-AUTOMATIC-APPROVAL.md](docs/OVERTURE-AUTOMATIC-APPROVAL.md) for the feed design, API and safeguards. The Overture CSV import and processing endpoints are reviewer-authenticated. Automatic post-import processing is disabled by default; scheduled ingestion and retry/recovery remain separately controlled by `OVERTURE_SCHEDULED_TASKS_ENABLED`.
 
 
 ## Unified provider approval policy (v2.7.7)
