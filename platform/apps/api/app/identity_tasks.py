@@ -40,6 +40,8 @@ def verified_overture_company_query(db):
             OvertureCompanyLink.status == "verified",
             OvertureCompanyLink.reviewed_at.isnot(None),
             OvertureCompanyLink.reviewed_by.isnot(None),
+            OvertureCompanyLink.evidence_json.isnot(None),
+            OvertureCompanyLink.evidence_json != {},
             CompaniesHouseCandidate.company_status == "active",
         )
     )

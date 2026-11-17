@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.main import app
 from app.models import (
+    AuditEvent,
     CompaniesHouseCandidate,
     OvertureCandidate,
     OvertureCompanyLink,
@@ -80,7 +81,11 @@ def test_provenance_link_is_pending_until_reviewed_and_audited():
 
             missing_evidence = client.patch(
                 f"/api/v1/identity-review/overture-links/{link_id}",
-                json={"status": "verified", "reviewed_by": "reviewer"},
+                json={
+                    "status": "verified",
+                    "reviewed_by": "reviewer",
+                    "evidence": {"source_reference": "just a note"},
+                },
             )
             assert missing_evidence.status_code == 400
 
@@ -90,8 +95,10 @@ def test_provenance_link_is_pending_until_reviewed_and_audited():
                     "status": "verified",
                     "reviewed_by": "reviewer",
                     "evidence": {
-                        "company_number_match": "01234567",
-                        "source_reference": "manual evidence review",
+                        "source_type": "official_website",
+                        "source_reference": "https://examplefunerals.co.uk/about",
+                        "finding": "The official site identifies the same trading name and company number.",
+                        "matched_fields": ["trading_name", "branch_address", "company_number"],
                     },
                     "review_notes": "Identity relationship checked.",
                 },
@@ -108,6 +115,15 @@ def test_provenance_link_is_pending_until_reviewed_and_audited():
             assert listing.status_code == 200
             assert listing.json()["items"][0]["gers_id"] == "GERS-TEST-001"
             assert listing.json()["items"][0]["reviewed_by"] == "reviewer"
+            db = factory()
+            audit = db.query(AuditEvent).filter(
+                AuditEvent.entity_type == "overture_company_link",
+                AuditEvent.entity_id == link_id,
+                AuditEvent.action == "status_changed",
+            ).first()
+            assert audit is not None
+            assert audit.detail["status"] == "verified"
+            db.close()
     finally:
         app.dependency_overrides.pop(get_db, None)
         Base.metadata.drop_all(engine)

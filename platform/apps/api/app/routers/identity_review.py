@@ -135,8 +135,26 @@ def review_overture_link(link_id: int, payload: dict, db: Session = Depends(get_
             raise HTTPException(400, "reviewed_by is required to verify provenance")
         if not isinstance(evidence, dict) or not evidence:
             raise HTTPException(400, "Non-empty structured evidence is required to verify provenance")
-        if not any(str(k).strip() and v not in (None, "", [], {}) for k, v in evidence.items()):
-            raise HTTPException(400, "Evidence must contain at least one substantive value")
+        source_type = str(evidence.get("source_type") or "").strip().lower()
+        source_reference = str(evidence.get("source_reference") or "").strip()
+        finding = str(evidence.get("finding") or "").strip()
+        matched_fields = evidence.get("matched_fields")
+        allowed_source_types = {"official_website", "companies_house_profile", "official_document", "first_party_record"}
+        allowed_match_fields = {"trading_name", "branch_address", "postcode", "company_number", "official_domain"}
+        if source_type not in allowed_source_types or not source_reference or not finding:
+            raise HTTPException(
+                400,
+                "Evidence must include an allowed source_type, source_reference and finding",
+            )
+        if not isinstance(matched_fields, list):
+            raise HTTPException(400, "Evidence matched_fields must be a list")
+        matched_fields = {str(value).strip().lower() for value in matched_fields}
+        if len(matched_fields & allowed_match_fields) < 2:
+            raise HTTPException(400, "At least two recognised identity fields must be evidenced")
+        if not (matched_fields & {"trading_name", "branch_address", "postcode"}):
+            raise HTTPException(400, "Evidence must connect the Overture location to the trading identity")
+        if not (matched_fields & {"company_number", "official_domain"}):
+            raise HTTPException(400, "Evidence must connect the trading identity to the legal company")
         if not db.get(CompaniesHouseCandidate, link.companies_house_candidate_id):
             raise HTTPException(409, "Companies House candidate no longer exists")
         if not db.get(OvertureCandidate, link.overture_candidate_id):
