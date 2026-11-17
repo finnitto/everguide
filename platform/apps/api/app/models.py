@@ -278,6 +278,9 @@ class CompanyBranchProposal(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     companies_house_candidate_id: Mapped[int] = mapped_column(ForeignKey("companies_house_candidates.id", ondelete="CASCADE"), index=True)
     website_candidate_id: Mapped[int] = mapped_column(ForeignKey("company_website_candidates.id", ondelete="CASCADE"), unique=True, index=True)
+    overture_company_link_id: Mapped[int | None] = mapped_column(
+        ForeignKey("overture_company_links.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
     proposed_branch_name: Mapped[str | None] = mapped_column(String(240))
     address_line: Mapped[str | None] = mapped_column(String(500))
