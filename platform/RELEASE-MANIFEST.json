@@ -53,13 +53,13 @@
     "publication_fields": "Provider and branch name/address/postcode/coordinates come from normalized Overture fields; corroborating sources do not silently replace them."
   },
   "tests": {
-    "new_regression_tests_added": 3,
-    "python_compileall": "passed",
+    "new_regression_tests_added": 13,
+    "python_compileall": "Latest successful pre-Stage-3 run #63 passed Python compile; the Stage 3 additions are pending current-branch validation.",
     "targeted_pytest": "Covered by full API suite; 151 passed.",
-    "full_api_pytest": "Latest successful pre-Stage-3 run #63 passed 160 API tests; migration 0023 and new Stage 3 tests were added after that run and remain CI-pending.",
+    "full_api_pytest": "Latest successful pre-Stage-3 run #63 passed 160 tests. Ten Stage 3 evidence tests were added afterwards and are pending current-branch CI.",
     "production_database_accessed_during_build": false,
     "frontend_build": "Latest evidenced GitHub Actions run #38 passed the production frontend build.",
-    "docker_build": "not run",
+    "docker_build": "Passed as part of successful pre-Stage-3 isolated Docker integration in run #63; the migration 0023 upgrade is pending.",
     "isolated_docker_integration": "Latest successful pre-Stage-3 run #63 passed isolated Docker integration through migration 0022_branch_overture_provenance, checking API readiness/version, reviewer credential forwarding, disabled safety controls, admin HTTP 200, worker liveness/idle state and empty Beat schedule. Migration 0023 and its disposable upgrade validation are pending.",
     "validation_run": "https://github.com/finnitto/everguide/actions/runs/44128256045"
   },
@@ -114,12 +114,13 @@
   "security_review": {
     "access_control": "Bearer reviewer authentication required for active administrative reads and mutations; public directory search and health endpoints remain intentionally public; disabled/retired endpoints return HTTP 410.",
     "reviewed_gaps_fixed": [
-      "POST /api/v1/observations now requires a reviewer and uses authenticated reviewer identity as audit actor."
+      "POST /api/v1/observations now requires a reviewer and uses authenticated reviewer identity as audit actor.",
+      "Provider edits, provider status changes and observation decisions now attribute audit events to the authenticated reviewer instead of the legacy local-admin default."
     ],
     "defence_in_depth": [
       "GET /api/v1/enrichment/sources and GET /api/v1/enrichment/checks now have reviewer dependencies. Their enrichment router is not currently mounted in app.main, so these paths are not active API routes."
     ],
-    "regression_tests": "platform/apps/api/tests/test_stage1_admin_auth.py includes unauthenticated observation-write coverage; the unmounted enrichment routes are not incorrectly asserted as live."
+    "regression_tests": "Stage 1 observation-write auth coverage is in test_stage1_admin_auth.py; Stage 3 reviewer, scope, permission-domain, expiry, idempotency and bounded-retry coverage is in test_stage3_evidence.py. These additions are pending current-branch CI."
   },
   "stage2_status": "Overture-first ruleset v2.0 and synthetic regression coverage are implemented and were included in successful Actions run #63. Conflict detection uses verified first-party evidence and same-branch street/locality alignment for website postcode conflicts. Non-mutating candidate outcome analysis and product acceptance remain outstanding; no live processing/publication.",
   "stage3_status": "Partially implemented. Migration 0023 adds separate pricing, membership and regulatory evidence domains, provider/branch scope, audited business-form representation and a bounded idempotent reviewer-recorded revalidation ledger. Source-specific rights/policy, automated retrieval and refresh, full freshness/exception tests and product acceptance remain open. See docs/STAGE3-EVIDENCE-DATA-DICTIONARY.md.",
