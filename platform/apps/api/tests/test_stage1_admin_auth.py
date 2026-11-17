@@ -33,3 +33,44 @@ def test_quality_action_decision_requires_reviewer_credentials():
         response = client.post("/api/v1/website-discovery/quality-actions/1/decide", json={"decision": "reject"})
 
     assert response.status_code == 401, response.text
+
+
+
+def test_administrative_read_endpoints_require_reviewer_credentials():
+    paths = [
+        "/api/v1/dashboard",
+        "/api/v1/providers",
+        "/api/v1/providers/1",
+        "/api/v1/observations",
+        "/api/v1/matching/summary",
+        "/api/v1/matching/queue",
+        "/api/v1/companies-house/status",
+        "/api/v1/companies-house/runs",
+        "/api/v1/companies-house/candidates",
+        "/api/v1/companies-house/profiles/summary",
+        "/api/v1/companies-house/classification/summary",
+        "/api/v1/company-websites/status",
+        "/api/v1/company-websites/runs",
+        "/api/v1/company-websites/candidates",
+        "/api/v1/discovery/status",
+        "/api/v1/discovery/runs",
+        "/api/v1/discovery/observations",
+        "/api/v1/website-discovery/status",
+        "/api/v1/website-discovery/verification-runs",
+        "/api/v1/website-discovery/identity-review",
+        "/api/v1/website-discovery/quality-actions",
+        "/api/v1/website-discovery/analytics",
+        "/api/v1/website-discovery/candidates",
+        "/api/v1/overture/status",
+        "/api/v1/overture/imports",
+        "/api/v1/overture/candidates",
+        "/api/v1/identity-review/summary",
+        "/api/v1/identity-review/overture-links",
+        "/api/v1/identity-review/identities",
+        "/api/v1/identity-review/branches",
+    ]
+
+    with TestClient(app) as client:
+        for path in paths:
+            response = client.get(path)
+            assert response.status_code == 401, f"GET {path}: {response.status_code} {response.text}"
