@@ -20,10 +20,10 @@ See `docs/OVERTURE-AUTOMATIC-APPROVAL.md` for the Overture feed, assessment and 
 
 ## Database migrations
 
-Release 2.8.0 includes additive Alembic revisions `0021_overture_company_links` and
-`0022_branch_overture_provenance, 0023_stage3_evidence`. Revision 0021 creates the auditable,
-reviewer-verified Overture-to-Companies House link table. Revision 0022 adds an
-optional link from website-derived branch proposals to that verified link.
+Release 2.8.0 includes additive Alembic revisions:
+- `0021_overture_company_links` creates the auditable, reviewer-verified Overture-to-Companies House link table.
+- `0022_branch_overture_provenance` adds an optional link from website-derived branch proposals to that verified link.
+- `0023_stage3_evidence` adds separate pricing, membership, regulatory and revalidation evidence tables plus provider business-form metadata.
 
 The 0022 proposal-provenance relationship is separate from direct Overture-first
 publication: an Overture candidate does **not** need a Companies House link to be
