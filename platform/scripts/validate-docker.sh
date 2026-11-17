@@ -110,6 +110,24 @@ printf '%s' "$MIGRATION" | grep -q '0023_stage3_evidence' || {
   exit 1
 }
 
+echo "[CHECK] Disposable migration downgrade to 0022 and forward upgrade to 0023"
+dc exec -T api alembic downgrade 0022_branch_overture_provenance
+MIGRATION_DOWN="$(dc exec -T api alembic current)"
+printf '%s\n' "$MIGRATION_DOWN"
+printf '%s' "$MIGRATION_DOWN" | grep -q '0022_branch_overture_provenance' || {
+  echo "Expected disposable database to downgrade to 0022_branch_overture_provenance." >&2
+  exit 1
+}
+
+dc exec -T api alembic upgrade head
+MIGRATION_UP="$(dc exec -T api alembic current)"
+printf '%s\n' "$MIGRATION_UP"
+printf '%s' "$MIGRATION_UP" | grep -q '0023_stage3_evidence' || {
+  echo "Expected disposable database to upgrade back to 0023_stage3_evidence." >&2
+  exit 1
+}
+dc exec -T api python -c 'from sqlalchemy import inspect; from app.database import engine; i=inspect(engine); tables=set(i.get_table_names()); expected={"pricing_evidence","membership_evidence","regulatory_evidence","evidence_revalidation_requests","evidence_revalidation_attempts"}; assert expected.issubset(tables), expected - tables; cols={c["name"] for c in i.get_columns("providers")}; assert "business_form" in cols; print("Stage 3 tables and provider.business_form are present after re-upgrade")'
+
 echo "[CHECK] Admin route responds from the new web container"
 dc exec -T web node -e 'fetch("http://127.0.0.1:3000/admin").then(r=>{console.log("Admin HTTP",r.status); if(r.status!==200) process.exit(1)}).catch(e=>{console.error(e);process.exit(1)})'
 
