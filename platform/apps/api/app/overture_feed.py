@@ -112,7 +112,9 @@ def _normalise_record(row: tuple) -> dict | None:
     return {
         "gers_id": str(gers_id), "name": str(name),
         "basic_category": basic_category or "", "taxonomy_primary": taxonomy_primary or "",
-        "confidence": confidence or "", "address": address.get("freeform") or address.get("locality") or "",
+        "confidence": confidence or "", "address": address.get("freeform") or address.get("street") or address.get("locality") or "",
+        "address_line_1": address.get("street") or address.get("street_address") or address.get("address_line_1") or "",
+        "town_city": address.get("locality") or address.get("town") or address.get("city") or "",
         "postcode": address.get("postcode") or "", "phone": phone or "", "website": website or "",
         "latitude": float(latitude), "longitude": float(longitude),
         "addresses_json": addresses, "phones_json": phones, "websites_json": websites,
