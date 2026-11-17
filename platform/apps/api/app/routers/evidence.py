@@ -165,6 +165,10 @@ def _common_fields(payload: EvidenceCommonIn) -> dict:
     values = payload.model_dump()
     values["source_url"] = str(payload.source_url)
     values["source_retrieved_at"] = payload.source_retrieved_at or _now()
+    for field_name in ("source_retrieved_at", "expires_at", "effective_from", "effective_to", "valid_from", "valid_to"):
+        field_value = values.get(field_name)
+        if field_value is not None:
+            values[field_name] = _as_utc(field_value)
     values["evidence_sha256"] = payload.evidence_sha256.lower()
     return values
 
