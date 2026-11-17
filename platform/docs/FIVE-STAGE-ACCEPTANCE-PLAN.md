@@ -44,7 +44,7 @@ Status labels:
 - [ ] Stage acceptance records source-rights and admin-access review.
 
 ### Current assessment
-Core implementation is present. A code review found and fixed three missed administrative protections: observation creation, source-permission listing and website-check listing. The new regression tests and current full CI run must pass before Stage 1 is signed off.
+Core implementation is present. A code review found one active missed administrative protection: observation creation. It now requires a reviewer and records the authenticated reviewer as audit actor. Two similar read handlers exist in an enrichment router that is not currently mounted in the FastAPI app; they have also been guarded so a future registration cannot expose them. The new regression tests and current full CI run must pass before Stage 1 is signed off.
 
 ## Stage 2 — Overture-first identity and branch approval
 
@@ -115,7 +115,7 @@ Not signed off. Some legacy enrichment components exist, but the current Overtur
 - [ ] No production readiness claim is made from unit tests or disposable CI alone.
 
 ### Current assessment
-Partially implemented. Reviewer bearer authentication, audit attribution, health/readiness checks, retry/recovery paths and several CI safeguards exist. This review found three route-level authentication gaps and closed them in code with tests. Role separation, credential lifecycle, proven backup/restore, observability/alerts and operational runbooks remain open.
+Partially implemented. Reviewer bearer authentication, audit attribution, health/readiness checks, retry/recovery paths and several CI safeguards exist. This review found one unprotected active write route and closed it with regression coverage; two handlers in an unmounted legacy router were hardened as defence-in-depth. Role separation, credential lifecycle, proven backup/restore, observability/alerts and operational runbooks remain open.
 
 ## Stage 5 — Integrated release validation and packaging
 
