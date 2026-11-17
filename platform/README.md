@@ -189,3 +189,16 @@ See [docs/OVERTURE-AUTOMATIC-APPROVAL.md](docs/OVERTURE-AUTOMATIC-APPROVAL.md) f
 Website/Companies House and Overture approval adapters now call the same versioned common evidence policy for access/robots permission, complete branch address, valid UK postcode, telephone, approval enablement and the configured confidence threshold. Each adapter retains its source-specific checks and reason codes. The configured 0.94 threshold is not a claim of 94% measured accuracy.
 
 The provider/Companies House path now requires explicit official England-boundary confirmation (`point_in_england=True`). Its current task callers do not yet supply that boundary result, so that route deliberately fails closed rather than publishing without the required geography evidence. The Overture path retains its existing ONS England boundary gate. Automatic approval remains disabled by default and Overture scheduled tasks remain disabled by default. See `RELEASE-NOTES-2.7.7.md` for validation and remaining integration work.
+
+
+## Identity-review API credentials
+
+The identity-review API (`/api/v1/identity-review/*`) requires an HTTP Bearer token. Configure `IDENTITY_REVIEW_CREDENTIALS` in the backend environment as a JSON object mapping stable reviewer IDs to SHA-256 hashes of high-entropy tokens, for example:
+
+```json
+{"reviewer-1":"<64-character-sha256-hex-digest>"}
+```
+
+Generate the token securely outside the repository, calculate its SHA-256 digest, and give the raw token only to the intended reviewer. Store only the digest in the environment configuration. The API derives `reviewed_by` and the audit actor from the matched configured reviewer ID; request-body reviewer names are not trusted. If credentials are missing or invalid, identity-review routes fail closed with HTTP 401.
+
+This is a dedicated control for identity-review routes, not application-wide authentication. Other admin/API routes remain unauthenticated in this development architecture; do not expose the application publicly until comprehensive authentication and authorization are implemented.
