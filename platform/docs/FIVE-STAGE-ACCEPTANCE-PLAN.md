@@ -93,7 +93,7 @@ This stage must keep distinct evidence domains separate:
 - [ ] Test fixtures cover stale, missing, conflicting, expired and unavailable source evidence across the complete automated revalidation path.
 
 ### Current assessment
-Partially implemented and CI-pending. Additive migration 0023 and reviewer-only APIs now capture discrete pricing, membership and regulator evidence, support sole-trader/partnership business forms without fabricated Companies House links, and provide idempotent bounded reviewer-recorded revalidation attempts. No external source is fetched by these APIs, no membership/FCA status is inferred, and approval of an evidence item does not approve or publish a provider. Source-specific automation, source-policy/legal review and broader freshness/exception tests remain open.
+The Stage 3 evidence foundation is implemented and the current branch passed GitHub Actions run #110: 171 API tests, Python compile, frontend lint/type/build, and disposable PostgreSQL migration/integration through `0023_stage3_evidence`. The implementation captures separate pricing, membership and regulatory evidence, supports provider/branch scope and sole-trader/partnership business forms, and provides reviewer-entered, idempotent and bounded revalidation history. Evidence approval does not approve or publish a provider. Automated source-specific retrieval/scheduling, source-policy/legal sign-off, agreed pricing taxonomy and the complete automated freshness/exception path remain open; therefore Stage 3 is not signed off.
 
 ## Stage 4 — Operational resilience, security and maintenance
 
@@ -129,8 +129,8 @@ Partially implemented. Reviewer bearer authentication, health/readiness checks, 
 - Review migration SQL/DDL, schema compatibility, target Alembic revision and rollback limitations. Rehearse against a disposable copy, never against the persistent operational database as a routine CI action.
 
 ### Exit criteria
-- [ ] All CI jobs pass on a commit containing the final code and docs.
-- [ ] Release metadata and manifest agree; migrations 0021, 0022 and 0023 are declared.
+- [x] Current implementation commit passed GitHub Actions run #110: API/frontend checks and isolated Docker integration through migration 0023. This is an implementation checkpoint, not release sign-off.
+- [x] Release manifest and migration list declare migrations 0021, 0022 and 0023; version consistency passed run #110.
 - [ ] Release archive is reproducible from the maintained source and passes ZIP/integrity checks.
 - [ ] Archive exclusion audit confirms no secrets or live data are included.
 - [ ] Migration upgrade is rehearsed on a disposable database; rollback/forward-fix approach is documented.
@@ -139,7 +139,7 @@ Partially implemented. Reviewer bearer authentication, health/readiness checks, 
 - [ ] Release sign-off records the exact source commit, archive hash, CI run and migration evidence.
 
 ### Current assessment
-Partially validated. Run #63 passed 160 API tests, frontend lint/type/production build and isolated Docker integration through migration 0022. Stage 3 migration 0023 and its new APIs/tests were added afterwards and still require CI and disposable migration validation. The root `release_v2.8.0/` snapshot is marked superseded. Current archive regeneration, integrity/exclusion audit, disposable migration rehearsal and target-host checklist remain outstanding.
+CI and disposable migration validation are now passed for commit `241c77968fc7612f7204b7bb8e8b3b895e1425d9` in [run #110](https://github.com/finnitto/everguide/actions/runs/44137685301): 171 API tests, frontend lint/type/production build, and isolated Docker PostgreSQL upgrade to `0023_stage3_evidence`, with safety controls disabled. The root `release_v2.8.0/` snapshot remains superseded. Archive regeneration, reproducibility/integrity and exclusion audit, a separate upgrade/downgrade rehearsal with a documented forward-fix decision, and target-host backup/replacement checklist remain outstanding.
 
 ## Non-negotiable operating safeguards
 
@@ -155,7 +155,7 @@ Partially validated. Run #63 passed 160 API tests, frontend lint/type/production
 - Current implementation branch: `stage1-overture-identity-provenance`.
 - Handover baseline: `0958c66a2ec6b6b387accde2b802f84ec927faf1`.
 - Earlier CI baseline: [run #38](https://github.com/finnitto/everguide/actions/runs/44118434200).
-- Latest successful pre-Stage-3 CI: [run #63](https://github.com/finnitto/everguide/actions/runs/44128256045), commit `35c604e7d8c76e2d48e35fcdb55bcb27355c97f2`; this run did not include migration 0023 or the Stage 3 additions.
+- Latest successful CI including Stage 3 migration and tests: [run #110](https://github.com/finnitto/everguide/actions/runs/44137685301), commit `241c77968fc7612f7204b7bb8e8b3b895e1425d9`; 171 API tests and disposable Docker migration head `0023_stage3_evidence` passed.
 - Overture approval policy: [OVERTURE-AUTOMATIC-APPROVAL.md](OVERTURE-AUTOMATIC-APPROVAL.md).
 - Validation procedure: [VALIDATION.md](VALIDATION.md).
 - Current release metadata: [RELEASE-MANIFEST.json](../RELEASE-MANIFEST.json).
