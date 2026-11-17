@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.identity_review_auth import require_identity_reviewer
 from app.main import app
-from app.models import Branch, EvidenceRevalidationRequest, MembershipEvidence, Provider
+from app.models import Branch, EvidenceRevalidationRequest, MembershipEvidence, Provider, SourcePermission
 
 
 SOURCE = {
@@ -204,6 +204,56 @@ def test_membership_and_fca_evidence_are_independent_and_not_inferred():
         _close(engine)
 
 
+def test_approved_source_permission_cannot_authorise_another_domain():
+    engine, factory, ids = _client()
+    try:
+        with factory() as db:
+            permission = SourcePermission(
+                provider_id=ids["provider_id"],
+                source_url="https://allowed.example.org/terms",
+                source_domain="allowed.example.org",
+                permission_status="approved",
+                permission_basis="Reviewed terms",
+            )
+            db.add(permission)
+            db.commit()
+            permission_id = permission.id
+        payload = {
+            **SOURCE,
+            "provider_id": ids["provider_id"],
+            "source_permission_id": permission_id,
+            "service_category": "cremation",
+            "service_name": "Direct cremation",
+            "fee_type": "package",
+            "amount": "900.00",
+        }
+        with TestClient(app) as client:
+            response = client.post("/api/v1/evidence/pricing", json=payload)
+            assert response.status_code == 400, response.text
+            assert "outside the approved" in response.json()["detail"]
+    finally:
+        _close(engine)
+
+
+def test_evidence_dates_must_be_timezone_aware():
+    engine, _factory, ids = _client()
+    try:
+        payload = {
+            **SOURCE,
+            "provider_id": ids["provider_id"],
+            "source_retrieved_at": "2026-01-01T00:00:00",
+            "service_category": "cremation",
+            "service_name": "Direct cremation",
+            "fee_type": "package",
+            "amount": "900.00",
+        }
+        with TestClient(app) as client:
+            response = client.post("/api/v1/evidence/pricing", json=payload)
+            assert response.status_code == 422, response.text
+            assert "timezone" in response.text
+    finally:
+        _close(engine)
+
 def test_revalidation_is_idempotent_bounded_and_transient_failures_do_not_change_evidence():
     from app.routers import evidence as evidence_router
 
@@ -234,6 +284,11 @@ def test_revalidation_is_idempotent_bounded_and_transient_failures_do_not_change
             assert request1.status_code == 201
             assert request2.status_code == 201
             assert request1.json()["id"] == request2.json()["id"]
+            changed_request = client.post(
+                "/api/v1/evidence/revalidation-requests",
+                json={**request_payload, "reason": "Different purpose"},
+            )
+            assert changed_request.status_code == 409, changed_request.text
 
             request_id = request1.json()["id"]
             first_attempt_payload = {
@@ -253,6 +308,11 @@ def test_revalidation_is_idempotent_bounded_and_transient_failures_do_not_change
             )
             assert duplicate_attempt.status_code == 200, duplicate_attempt.text
             assert duplicate_attempt.json()["attempt"]["id"] == first_attempt.json()["attempt"]["id"]
+            changed_attempt = client.post(
+                f"/api/v1/evidence/revalidation-requests/{request_id}/attempts",
+                json={**first_attempt_payload, "detail": "Different result"},
+            )
+            assert changed_attempt.status_code == 409, changed_attempt.text
             state = first_attempt.json()["request"]
             now["value"] = datetime.fromisoformat(state["next_attempt_at"].replace("Z", "+00:00"))
             for attempt_number in range(2, 5):
