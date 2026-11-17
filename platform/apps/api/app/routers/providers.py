@@ -15,7 +15,7 @@ def audit(db, entity_type, entity_id, action, detail=None, actor="local-admin"):
     db.add(AuditEvent(entity_type=entity_type, entity_id=entity_id, action=action, detail=detail or {}, actor=actor))
 
 def provider_dict(p):
-    return {"id":p.id,"trading_name":p.trading_name,"display_name":p.display_name,"registered_name":p.registered_name,"website":p.website,"provider_type":p.provider_type,"status":p.status,"verification_status":p.verification_status,"quality_status":p.quality_status,"notes":p.notes,"created_at":p.created_at,"updated_at":p.updated_at,"branches":[branch_dict(b) for b in p.branches]}
+    return {"id":p.id,"trading_name":p.trading_name,"display_name":p.display_name,"registered_name":p.registered_name,"website":p.website,"provider_type":p.provider_type,"status":p.status,"verification_status":p.verification_status,"quality_status":p.quality_status,"business_form":p.business_form,"notes":p.notes,"created_at":p.created_at,"updated_at":p.updated_at,"branches":[branch_dict(b) for b in p.branches]}
 
 def branch_dict(b):
     return {"id":b.id,"provider_id":b.provider_id,"branch_name":b.branch_name,"address_line_1":b.address_line_1,"address_line_2":b.address_line_2,"town_city":b.town_city,"county":b.county,"postcode":b.postcode,"telephone":b.telephone,"email":b.email,"website":b.website,"latitude":b.latitude,"longitude":b.longitude,"services":b.services or [],"status":b.status}
