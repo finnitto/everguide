@@ -110,11 +110,22 @@ def test_internal_router_accepts_valid_reviewer_credential(monkeypatch):
     digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
     monkeypatch.setattr(settings, "identity_review_credentials", json.dumps({"stage4-reviewer": digest}))
     with TestClient(app) as client:
-        response = client.get(
+        accepted = client.get(
             "/api/v1/discovery/status",
             headers={"Authorization": f"Bearer {token}"},
         )
-    assert response.status_code == 200, response.text
+        rejected = client.get(
+            "/api/v1/discovery/status",
+            headers={"Authorization": "Bearer invalid-token"},
+        )
+        assert accepted.status_code == 200, accepted.text
+        assert rejected.status_code == 401, rejected.text
+        monkeypatch.setattr(settings, "identity_review_credentials", json.dumps({}))
+        revoked = client.get(
+            "/api/v1/discovery/status",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert revoked.status_code == 401, revoked.text
 
 
 def test_health_and_api_root_remain_public():
