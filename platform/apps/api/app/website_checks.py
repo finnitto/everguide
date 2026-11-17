@@ -127,6 +127,18 @@ def _extract_funeral_provider_data(decoded: str):
             email = str(item.get('email') or '')[:254] or None
             website = str(item.get('url') or '')[:1000] or None
             complete_address = bool(street and town and postcode_ok)
+            # A closure status is retained only from an explicitly branch-scoped
+            # LocalBusiness/FuneralHome node with a complete structured address.
+            branch_status = None
+            business_status = item.get('businessStatus')
+            if isinstance(business_status, dict):
+                business_status = business_status.get('@id') or business_status.get('name') or business_status.get('value')
+            status_token = re.sub(r'[^a-z0-9]', '', str(business_status or '').rsplit('/', 1)[-1].lower())
+            if complete_address and any(t in ('funeralhome', 'localbusiness') for t in type_names):
+                if status_token == 'closedpermanently':
+                    branch_status = 'permanently_closed'
+                elif status_token == 'closedtemporarily':
+                    branch_status = 'temporarily_closed'
             # At least one independent contact/location signal is mandatory.
             if not (complete_address or telephone or email):
                 continue
@@ -136,7 +148,7 @@ def _extract_funeral_provider_data(decoded: str):
                 'postcode': postcode if postcode_ok else None, 'telephone': telephone, 'email': email,
                 'website': website, 'source_type': 'schema_org_funeralhome' if explicit_funeral_type else 'schema_org_' + (type_names[0] if type_names else 'business'),
                 'country': country_text or 'unspecified', 'confidence': confidence,
-                'funeral_signals': hits, 'has_complete_branch_address': complete_address})
+                'funeral_signals': hits, 'branch_status': branch_status, 'has_complete_branch_address': complete_address})
     if not candidates:
         return None
     return sorted(candidates, key=lambda x: (x['confidence'], bool(x['telephone']), bool(x['email'])), reverse=True)[0]
