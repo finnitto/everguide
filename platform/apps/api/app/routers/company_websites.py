@@ -8,7 +8,7 @@ from app.config import settings
 from app.models import (CompaniesHouseCandidate, CompanyWebsiteCandidate, CompanyWebsiteDiscoveryRun, Provider, AuditEvent)
 from app.tasks import discover_company_websites
 
-router = APIRouter(prefix="/api/v1/company-websites", tags=["company website discovery"])
+router = APIRouter(prefix="/api/v1/company-websites", tags=["company website discovery"], dependencies=[Depends(require_identity_reviewer)])
 
 def _run_dict(run):
     if not run: return None
