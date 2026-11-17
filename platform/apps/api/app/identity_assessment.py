@@ -153,16 +153,70 @@ def branch_eligible(lead, data):
     return complete and country_ok and structured and official_source and not non_provider, geo_reason
 
 def _normalise_postcode(value):
-    return re.sub(r"\s+", "", str(value or "").upper())
+    return re.sub(r"\\s+", "", str(value or "").upper())
 
 
-def matched_overture_company_link(db, company_id, postcode):
-    """Return the sole verified Overture link for this exact branch postcode.
+def _normalise_address_text(value):
+    """Normalise address punctuation and common UK road-type abbreviations."""
+    words = re.findall(r"[a-z0-9]+", str(value or "").lower())
+    if not words:
+        return ""
+    suffixes = {
+        "rd": "road", "st": "street", "ave": "avenue", "av": "avenue",
+        "ln": "lane", "dr": "drive", "cres": "crescent", "ct": "court",
+        "cl": "close", "gdns": "gardens", "sq": "square", "ter": "terrace",
+    }
+    words[-1] = suffixes.get(words[-1], words[-1])
+    return " ".join(words)
 
-    A company-level link is not branch evidence. Ambiguous postcode matches,
-    missing postcodes, and unreviewed links deliberately return no match.
+
+def _overture_address_matches(candidate, branch_data):
+    """Require street, locality and postcode agreement against Overture address data.
+
+    Freeform addresses are only usable when the first comma-delimited component
+    is an exact street-line match. Incomplete or differently formatted addresses
+    fail closed rather than falling back to postcode-only matching.
     """
-    postcode_key = _normalise_postcode(postcode)
+    data = candidate.raw_data or {}
+    addresses = data.get("addresses_json")
+    if not isinstance(addresses, list) or not addresses:
+        return None
+    website_street = _normalise_address_text(branch_data.get("street"))
+    website_town = _normalise_address_text(branch_data.get("town"))
+    website_postcode = _normalise_postcode(branch_data.get("postcode"))
+    if not all((website_street, website_town, website_postcode)):
+        return None
+    matches = []
+    for address in addresses:
+        if not isinstance(address, dict):
+            continue
+        street = next((address.get(key) for key in ("street", "street_address", "address_line_1")
+                       if isinstance(address.get(key), str) and address.get(key).strip()), None)
+        freeform = address.get("freeform")
+        if not street and isinstance(freeform, str):
+            street = freeform.split(",", 1)[0].strip()
+        locality = next((address.get(key) for key in ("locality", "town", "city")
+                         if isinstance(address.get(key), str) and address.get(key).strip()), None)
+        postcode = address.get("postcode")
+        if (_normalise_address_text(street) == website_street
+                and _normalise_address_text(locality) == website_town
+                and _normalise_postcode(postcode) == website_postcode):
+            matches.append({
+                "street": str(street).strip(),
+                "locality": str(locality).strip(),
+                "postcode": str(postcode).strip(),
+            })
+    return matches[0] if len(matches) == 1 else None
+
+
+def matched_overture_company_link(db, company_id, branch_data):
+    """Return one verified Overture link only when its branch address matches.
+
+    A postcode match alone is insufficient. Street line, locality and postcode
+    must all match one address on one uniquely linked Overture candidate.
+    Ambiguity, missing address detail and unreviewed links return no match.
+    """
+    postcode_key = _normalise_postcode(branch_data.get("postcode"))
     if not postcode_key:
         return None
     from app.models import OvertureCandidate, OvertureCompanyLink
@@ -179,10 +233,13 @@ def matched_overture_company_link(db, company_id, postcode):
         )
         .all()
     )
-    matches = [
-        (link, candidate) for link, candidate in rows
-        if _normalise_postcode(candidate.postcode) == postcode_key
-    ]
+    matches = []
+    for link, candidate in rows:
+        if _normalise_postcode(candidate.postcode) != postcode_key:
+            continue
+        address_match = _overture_address_matches(candidate, branch_data)
+        if address_match:
+            matches.append((link, candidate, address_match))
     return matches[0] if len(matches) == 1 else None
 
 
@@ -232,10 +289,10 @@ def process_company(db, company_id):
         data = lead.extracted_data or {}
         eligible, geo_reason = branch_eligible(lead,data)
         proposal = db.query(CompanyBranchProposal).filter_by(website_candidate_id=lead.id).first()
-        overture_match = matched_overture_company_link(db, company_id, data.get("postcode")) if eligible else None
+        overture_match = matched_overture_company_link(db, company_id, data) if eligible else None
         if eligible and overture_match is None:
             eligible = False
-            geo_reason = "no_unique_verified_overture_branch_postcode_match"
+            geo_reason = "no_unique_verified_overture_branch_address_match"
         if not eligible:
             skipped += 1
             # Pending proposals are recalculated; never silently retain a proposal
@@ -247,7 +304,7 @@ def process_company(db, company_id):
                 proposal.review_notes = (proposal.review_notes or "")
                 proposal.updated_at = now
             continue
-        link, overture_candidate = overture_match
+        link, overture_candidate, matched_address = overture_match
         if proposal is None:
             proposal=CompanyBranchProposal(
                 companies_house_candidate_id=company_id,
@@ -276,10 +333,10 @@ def process_company(db, company_id):
                 "overture_candidate_id":overture_candidate.id,
                 "overture_gers_id":overture_candidate.gers_id,
                 "overture_candidate_postcode":overture_candidate.postcode,
-                "branch_postcode_match":"exact_normalised_postcode",
+                "branch_address_match":"exact_normalised_street_locality_postcode",\n                "overture_matched_address":matched_address,
                 "source_domain":domain(lead.final_url or lead.result_url),
                 "source_type":data.get("source_type"),"geography_assessment":geo_reason,
-                "branch_eligibility_rule":"complete structured address; England-only postcode/country evidence; source page domain must match declared business website; non-directory domain; adjacent sectors excluded",
+                "branch_eligibility_rule":"complete structured address; England-only postcode/country evidence; source page domain must match declared business website; non-directory domain; adjacent sectors excluded; exact Overture street, locality and postcode match",
                 "assessment_version":"identity_rules_v3",
                 "telephone_omitted_numeric_source": isinstance(data.get("telephone"), float)}
             proposal.updated_at=now
