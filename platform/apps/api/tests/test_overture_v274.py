@@ -201,7 +201,7 @@ def test_stale_empty_import_run_is_closed_with_audit(monkeypatch):
     result = tasks.reconcile_stale_overture_import_runs.run()
     db = factory()
     run = db.get(OvertureImportRun, run_id)
-    assert result["failed_runs"] == [run_id]
+    assert result["failed_orphaned_runs"] == [run_id]
     assert run.status == "failed"
     assert "no linked candidate records" in run.error_message
     assert db.query(AuditEvent).filter_by(action="stale_import_run_closed_without_candidates").count() == 1
