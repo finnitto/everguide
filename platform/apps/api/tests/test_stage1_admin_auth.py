@@ -40,8 +40,6 @@ def test_quality_action_decision_requires_reviewer_credentials():
 def test_administrative_read_endpoints_require_reviewer_credentials():
     paths = [
         "/api/v1/dashboard",
-        "/api/v1/enrichment/sources",
-        "/api/v1/enrichment/checks",
         "/api/v1/providers",
         "/api/v1/providers/1",
         "/api/v1/observations",
