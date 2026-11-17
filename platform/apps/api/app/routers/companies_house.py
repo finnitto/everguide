@@ -11,7 +11,7 @@ from app.company_classification import run_classification, classification_summar
 
 router = APIRouter(prefix="/api/v1/companies-house", tags=["companies-house"])
 
-@router.get("/status")
+@router.get("/status", dependencies=[Depends(require_identity_reviewer)])
 def status(db: Session = Depends(get_db)):
     return {
         "configured": bool(settings.companies_house_api_key),
@@ -32,7 +32,7 @@ def _run_dict(run):
     if not run: return None
     return {"id":run.id,"status":run.status,"sic_codes":run.sic_codes,"total_results":run.total_results,"imported":run.imported,"pages_fetched":run.pages_fetched,"api_items_per_page":run.api_items_per_page,"unique_companies_seen":run.unique_companies_seen,"error_message":run.error_message,"created_at":run.created_at.isoformat() if run.created_at else None,"completed_at":run.completed_at.isoformat() if run.completed_at else None}
 
-@router.get("/runs")
+@router.get("/runs", dependencies=[Depends(require_identity_reviewer)])
 def runs(db: Session = Depends(get_db)):
     return {"items": [_run_dict(x) for x in db.query(CompaniesHouseRun).order_by(CompaniesHouseRun.id.desc()).limit(20).all()]}
 
@@ -40,7 +40,7 @@ def runs(db: Session = Depends(get_db)):
 def start_import():
     raise HTTPException(status_code=410, detail="Independent Companies House candidate discovery is disabled. Overture is the sole source of initial discovery candidates.")
 
-@router.get("/candidates")
+@router.get("/candidates", dependencies=[Depends(require_identity_reviewer)])
 def candidates(limit: int = 100, offset: int = 0, db: Session = Depends(get_db)):
     limit = max(1, min(limit, 500))
     q = db.query(CompaniesHouseCandidate).order_by(CompaniesHouseCandidate.company_name.asc())
@@ -53,7 +53,7 @@ def candidates(limit: int = 100, offset: int = 0, db: Session = Depends(get_db))
 def start_profile_enrichment():
     raise HTTPException(status_code=410, detail="Independent Companies House enrichment is disabled pending the Overture-led workflow.")
 
-@router.get("/profiles/summary")
+@router.get("/profiles/summary", dependencies=[Depends(require_identity_reviewer)])
 def profile_summary(db: Session = Depends(get_db)):
     total = db.query(func.count(CompaniesHouseCandidate.id)).filter(CompaniesHouseCandidate.company_status == "active").scalar() or 0
     completed = db.query(func.count(CompaniesHouseCandidate.id)).filter(CompaniesHouseCandidate.company_status == "active", CompaniesHouseCandidate.profile_status == "completed").scalar() or 0
@@ -66,6 +66,6 @@ def classify_candidates(reviewer: str = Depends(require_identity_reviewer), db: 
     result = run_classification(db)
     return {"message": "Candidate triage completed. No providers were created or published.", **result}
 
-@router.get("/classification/summary")
+@router.get("/classification/summary", dependencies=[Depends(require_identity_reviewer)])
 def get_classification_summary(db: Session = Depends(get_db)):
     return classification_summary(db)
