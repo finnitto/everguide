@@ -9,8 +9,9 @@ from app.database import get_db
 from app.models import (CompaniesHouseCandidate, CompanyWebsiteCandidate,
     CompanyIdentityReview, CompanyBranchProposal, AuditEvent, IdentityAssessmentRun, OvertureCandidate, OvertureCompanyLink)
 from app.identity_tasks import run_identity_assessment, verified_overture_company_query
+from app.identity_review_auth import require_identity_reviewer
 
-router = APIRouter(prefix="/api/v1/identity-review", tags=["identity and branch review"])
+router = APIRouter(prefix="/api/v1/identity-review", tags=["identity and branch review"], dependencies=[Depends(require_identity_reviewer)])
 
 # Backwards-compatible helpers retained for older tests and integrations.
 def _domain(url):
@@ -83,7 +84,7 @@ def overture_links(limit: int = 50, status: str = "all", db: Session = Depends(g
 
 
 @router.post("/overture-links")
-def create_overture_link(payload: dict, db: Session = Depends(get_db)):
+def create_overture_link(payload: dict, db: Session = Depends(get_db), reviewer: str = Depends(require_identity_reviewer)):
     """Create a pending link only; creation never verifies provenance."""
     overture_id = payload.get("overture_candidate_id")
     company_id = payload.get("companies_house_candidate_id")
@@ -114,13 +115,14 @@ def create_overture_link(payload: dict, db: Session = Depends(get_db)):
         entity_id=link.id,
         action="created_pending",
         detail={"overture_candidate_id": overture_id, "companies_house_candidate_id": company_id},
+        actor=reviewer,
     ))
     db.commit()
     return {"id": link.id, "status": link.status, "message": "Pending link created. It cannot enter identity assessment until explicitly verified."}
 
 
 @router.patch("/overture-links/{link_id}")
-def review_overture_link(link_id: int, payload: dict, db: Session = Depends(get_db)):
+def review_overture_link(link_id: int, payload: dict, db: Session = Depends(get_db), reviewer: str = Depends(require_identity_reviewer)):
     """Verify or reject a provenance link with reviewer attribution and evidence."""
     link = db.get(OvertureCompanyLink, link_id)
     if not link:
@@ -128,11 +130,9 @@ def review_overture_link(link_id: int, payload: dict, db: Session = Depends(get_
     status = payload.get("status")
     if status not in {"verified", "rejected", "needs_more_evidence", "pending"}:
         raise HTTPException(400, "Unsupported provenance link status")
-    reviewer = str(payload.get("reviewed_by") or "").strip()[:120]
+    # Reviewer identity comes only from the authenticated bearer credential.
     evidence = payload.get("evidence")
     if status == "verified":
-        if not reviewer:
-            raise HTTPException(400, "reviewed_by is required to verify provenance")
         if not isinstance(evidence, dict) or not evidence:
             raise HTTPException(400, "Non-empty structured evidence is required to verify provenance")
         source_type = str(evidence.get("source_type") or "").strip().lower()
@@ -161,14 +161,12 @@ def review_overture_link(link_id: int, payload: dict, db: Session = Depends(get_
             raise HTTPException(409, "Companies House candidate no longer exists")
         if not db.get(OvertureCandidate, link.overture_candidate_id):
             raise HTTPException(409, "Overture candidate no longer exists")
-        link.reviewed_by = reviewer
-        link.reviewed_at = datetime.now(timezone.utc)
         link.evidence_json = evidence
     else:
-        link.reviewed_by = reviewer or link.reviewed_by
-        link.reviewed_at = datetime.now(timezone.utc) if reviewer else link.reviewed_at
         if isinstance(evidence, dict):
             link.evidence_json = evidence
+    link.reviewed_by = reviewer
+    link.reviewed_at = datetime.now(timezone.utc)
     link.status = status
     link.review_notes = str(payload.get("review_notes") or "")[:4000] or link.review_notes
     link.updated_at = datetime.now(timezone.utc)
@@ -177,6 +175,7 @@ def review_overture_link(link_id: int, payload: dict, db: Session = Depends(get_
         entity_id=link.id,
         action="status_changed",
         detail={"status": status, "reviewed_by": link.reviewed_by, "evidence": link.evidence_json or {}},
+        actor=reviewer,
     ))
     db.commit()
     return {"id": link.id, "status": link.status, "reviewed_by": link.reviewed_by,
@@ -253,7 +252,7 @@ def branches(limit: int = 50, status: str = "pending", db: Session = Depends(get
     return {"items":[_branch_dict(r,c) for r,c in rows]}
 
 @router.patch("/identities/{review_id}")
-def update_identity(review_id: int, payload: dict, db: Session = Depends(get_db)):
+def update_identity(review_id: int, payload: dict, db: Session = Depends(get_db), reviewer: str = Depends(require_identity_reviewer)):
     row = db.get(CompanyIdentityReview, review_id)
     if not row: raise HTTPException(404, "Identity review not found")
     status = payload.get("status")
@@ -263,12 +262,12 @@ def update_identity(review_id: int, payload: dict, db: Session = Depends(get_db)
     row.review_notes = str(payload.get("review_notes") or "")[:4000] or None
     row.updated_at = datetime.now(timezone.utc)
     db.add(AuditEvent(entity_type="company_identity_review", entity_id=row.id, action="status_changed",
-        detail={"status":status,"review_notes":row.review_notes,"publication_changes":0}))
+        detail={"status":status,"review_notes":row.review_notes,"publication_changes":0}, actor=reviewer))
     db.commit()
     return {"id":row.id,"status":row.status,"message":"Review decision recorded. No provider was created or published."}
 
 @router.patch("/branches/{proposal_id}")
-def update_branch(proposal_id: int, payload: dict, db: Session = Depends(get_db)):
+def update_branch(proposal_id: int, payload: dict, db: Session = Depends(get_db), reviewer: str = Depends(require_identity_reviewer)):
     row = db.get(CompanyBranchProposal, proposal_id)
     if not row: raise HTTPException(404, "Branch proposal not found")
     status = payload.get("status")
@@ -278,6 +277,6 @@ def update_branch(proposal_id: int, payload: dict, db: Session = Depends(get_db)
     row.review_notes = str(payload.get("review_notes") or "")[:4000] or None
     row.updated_at = datetime.now(timezone.utc)
     db.add(AuditEvent(entity_type="company_branch_proposal", entity_id=row.id, action="status_changed",
-        detail={"status":status,"review_notes":row.review_notes,"publication_changes":0}))
+        detail={"status":status,"review_notes":row.review_notes,"publication_changes":0}, actor=reviewer))
     db.commit()
     return {"id":row.id,"status":row.status,"message":"Branch proposal decision recorded. No branch was created or published."}
