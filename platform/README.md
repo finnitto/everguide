@@ -40,21 +40,38 @@ applied to production customer data.
 
 ## Validation status (17 November 2026)
 
-GitHub Actions [run #38](https://github.com/finnitto/everguide/actions/runs/44118434200)
-on reviewed commit `0958c66a2ec6b6b387accde2b802f84ec927faf1` passed both jobs:
+The latest successful implementation checkpoint is GitHub Actions
+[run #166](https://github.com/finnitto/everguide/actions/runs/44153667313)
+on branch commit `32b1ddef7e94e9493371081e6fe57fd1ac077fa8`. It passed:
 
-- Python and frontend checks, including the full API test suite, frontend lint/type
-  checks and production frontend build.
-- Isolated Docker integration, including API readiness/version, migration head
-  `0022_branch_overture_provenance`, admin HTTP 200, worker liveness/idle checks
-  and an empty Beat schedule.
+- **179 API tests**, Python compilation, frontend lint, TypeScript and the
+  production frontend build.
+- Deterministic release archive generation, ZIP integrity/required-file checks,
+  repeat-build checksum tests and upload of the ZIP plus checksum/package
+  manifest as a 14-day Actions artifact.
+- Isolated Docker integration with reviewer credentials forwarded, automatic
+  approval/feed/processing/scheduling disabled, admin HTTP 200 and idle worker/
+  empty Beat checks.
+- Disposable PostgreSQL migration rehearsal: downgrade
+  `0023_stage3_evidence` to `0022_branch_overture_provenance`, upgrade back to
+  `0023_stage3_evidence`, then verify the five evidence tables and
+  `providers.business_form`.
 
-The disposable CI environment explicitly disables feed access, automatic
-processing, scheduled tasks and automatic publication, and removes its isolated
-containers and database/cache volumes after validation. This is not evidence of
-a persistent local or production database migration, operational Overture feed
-processing, candidate publication, production deployment or release archive
+Manual inspection of that first package found two development patch helper
+scripts (`stage1_api_patch.py` and `stage1_task_patch.py`) that should not ship.
+The packager now excludes both and has a regression test; the corrected archive
+is awaiting a fresh workflow run. **Do not distribute the artifact from run
+#166.** The corrected artifact link/hash will be recorded after CI passes.
+
+All Docker migration and worker checks run against an isolated disposable
+PostgreSQL/Redis Compose project. No persistent local or production database was
+migrated, no live Overture feed was processed, no candidate was published and
+no production deployment was performed. CI success is not release or operational
 sign-off.
+
+See [docs/VALIDATION.md](docs/VALIDATION.md) for quick/full validation and
+package-audit instructions, and [docs/FIVE-STAGE-ACCEPTANCE-PLAN.md](docs/FIVE-STAGE-ACCEPTANCE-PLAN.md)
+for the remaining product and operational acceptance items.
 
 ## Historical release notes
 
