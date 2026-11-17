@@ -116,7 +116,7 @@ Partially implemented and CI-pending. Additive migration 0023 and reviewer-only 
 - [ ] No production readiness claim is made from unit tests or disposable CI alone.
 
 ### Current assessment
-Partially implemented. Reviewer bearer authentication, audit attribution, health/readiness checks, retry/recovery paths and several CI safeguards exist. This review found one unprotected active write route and closed it with regression coverage; two handlers in an unmounted legacy router were hardened as defence-in-depth. Role separation, credential lifecycle, proven backup/restore, observability/alerts and operational runbooks remain open.
+Partially implemented. Reviewer bearer authentication, health/readiness checks, retry/recovery paths and several CI safeguards exist. Observation creation now uses authenticated reviewer attribution; provider edits, status changes and observation decisions now also record the authenticated reviewer rather than a legacy default actor. Two handlers in an unmounted legacy router were hardened as defence-in-depth. The route-by-route positive/negative auth matrix, explicit role separation, credential lifecycle, proven backup/restore, observability/alerts and operational runbooks remain open.
 
 ## Stage 5 — Integrated release validation and packaging
 
