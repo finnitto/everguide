@@ -162,12 +162,22 @@ def _common_fields(payload: EvidenceCommonIn) -> dict:
 
 
 def _validate_dates(payload: EvidenceCommonIn) -> None:
+    date_values = {
+        name: getattr(payload, name, None)
+        for name in ("source_retrieved_at", "expires_at", "effective_from", "effective_to", "valid_from", "valid_to")
+    }
+    for name, value in date_values.items():
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise HTTPException(422, f"{name} must include a timezone")
     for start_name, end_name in (("effective_from", "effective_to"), ("valid_from", "valid_to")):
         start = getattr(payload, start_name, None)
         end = getattr(payload, end_name, None)
         if start and end and end < start:
             raise HTTPException(422, f"{end_name} must be on or after {start_name}")
-    if payload.expires_at and payload.source_retrieved_at and payload.expires_at < payload.source_retrieved_at:
+    retrieved_at = payload.source_retrieved_at
+    if retrieved_at and retrieved_at > _now() + timedelta(minutes=5):
+        raise HTTPException(422, "source_retrieved_at cannot be more than five minutes in the future")
+    if payload.expires_at and retrieved_at and payload.expires_at < retrieved_at:
         raise HTTPException(422, "expires_at must be on or after source_retrieved_at")
 
 
