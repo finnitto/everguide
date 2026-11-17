@@ -102,11 +102,11 @@ dc exec -T api python -c 'import json, os; expected={"ci-reviewer":"aaaaaaaaaaaa
 echo "[CHECK] Safety controls are disabled in the isolated stack"
 dc exec -T api python -c 'from app.config import settings; assert settings.auto_approve_providers is False; assert settings.overture_auto_process is False; assert settings.overture_feed_enabled is False; assert settings.overture_scheduled_tasks_enabled is False; print("automatic approval, processing, feed and scheduled tasks are disabled")'
 
-echo "[CHECK] Complete migration chain reached 0022"
+echo "[CHECK] Complete migration chain reached 0023"
 MIGRATION="$(dc exec -T api alembic current)"
 printf '%s\n' "$MIGRATION"
-printf '%s' "$MIGRATION" | grep -q '0022_branch_overture_provenance' || {
-  echo "Expected migration 0022_branch_overture_provenance to be current." >&2
+printf '%s' "$MIGRATION" | grep -q '0023_stage3_evidence' || {
+  echo "Expected migration 0023_stage3_evidence to be current." >&2
   exit 1
 }
 
