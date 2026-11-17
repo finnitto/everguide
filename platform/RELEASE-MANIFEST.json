@@ -1,8 +1,10 @@
 {
   "product": "Everguide",
-  "version": "2.7.8",
+  "version": "2.8.0",
   "archive_layout": "project files at archive root for direct overlay extraction",
-  "database_migrations_added": [],
+  "database_migrations_added": [
+    "0021_overture_company_links"
+  ],
   "migration_revision_fix": "0020_overture_feed (18 characters), within PostgreSQL default alembic_version.version_num VARCHAR(32)",
   "production_database_accessed_during_build": false,
   "secrets_excluded": [
@@ -27,7 +29,7 @@
   "overture_pipeline": {
     "database_ingestion_and_publication_integrated": true,
     "ingestion_adapter": "Scheduled daily STAC release detection; DuckDB queries public Places GeoParquet for England in place",
-    "admin_csv_upload": "removed from normal admin workflow; legacy API retained for compatibility",
+    "admin_csv_upload": "Normal admin CSV workflow removed; legacy Overture import API retained for compatibility and requires reviewer authentication.",
     "candidate_identity": "GERS ID",
     "geography_scope": "England; broad bbox followed by official ONS county/unitary authority point-in-polygon validation",
     "new_release_only": "yes; daily STAC checks do not rescan an unchanged release",
@@ -36,13 +38,15 @@
     "boundary_cache": "Persistent named Docker volume; source, retrieval timestamp, schema version and SHA-256 validated; 30-day TTL",
     "website_leads": "Original Overture URL retained separately; search alternatives are filtered, individually recorded with source/query/status and body-free structured identity evidence; mismatches are never promoted.",
     "enrichment_retries": "Initial assessment plus at most three scheduled retries after 2, 7 and 21 days; excludes exceptions and exclusions",
-    "stale_run_recovery": "Daily recovery after 24 hours: release stale candidate claims, resume pending work, close empty orphaned runs with audit events; never deletes history"
+    "stale_run_recovery": "Daily recovery after 24 hours: release stale candidate claims, resume pending work, close empty orphaned runs with audit events; never deletes history",
+    "automatic_processing_default": false,
+    "scheduled_tasks_default": false
   },
   "tests": {
     "new_regression_tests_added": 3,
     "python_compileall": "passed",
-    "targeted_pytest": "not run in build container: celery, redis and psycopg are unavailable; package installation blocked by network restrictions",
-    "full_api_pytest": "not run in build container for same missing runtime dependencies",
+    "targeted_pytest": "Covered by full API suite; 151 passed.",
+    "full_api_pytest": "151 passed, 1 Starlette/AnyIO deprecation warning; run locally on Windows by project maintainer after commit 179539a.",
     "production_database_accessed_during_build": false,
     "frontend_build": "not run",
     "docker_build": "not run"
@@ -78,5 +82,16 @@
     "identity_evidence": "Persist only selected structured identity fields, page title, response status and SHA-256 digest; page bodies are discarded.",
     "third_party_filtering": "Expanded exclusions for social networks, public registers, news, notices, directories, job pages and document URLs.",
     "approval_policy": "No approval thresholds or publication gates relaxed; automatic approval remains disabled by default."
-  }
+  },
+  "identity_provenance": {
+    "source_policy": "Overture Places is the sole initial discovery source; Companies House and provider-owned websites are supporting identity and branch evidence only.",
+    "link_table": "overture_company_links",
+    "link_revision": "0021_overture_company_links",
+    "verification": "Reviewer-authenticated, explicit Overture-to-Companies House links with structured evidence; pending links are ineligible for identity assessment.",
+    "reviewer_authentication": "Identity-review credentials are configured as reviewer IDs mapped to SHA-256 token hashes; administrative read and mutation endpoints require bearer authentication.",
+    "direct_creation": "Direct provider and branch creation endpoints return 410; direct provider publication is rejected. Active publication is restricted to the Overture worker.",
+    "legacy_discovery": "Independent Google Places, Companies House and company-website discovery entry points and legacy worker tasks are disabled.",
+    "public_endpoint": "/api/v1/directory/search remains public; internal directory and candidate/admin endpoints require reviewer authentication."
+  },
+  "stage1_status": "Implementation and API test suite complete; release readiness remains subject to frontend, container, migration dry-run and package validation in Stage 5. No production deployment or database migration performed."
 }
