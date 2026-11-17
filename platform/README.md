@@ -21,7 +21,7 @@ See `docs/OVERTURE-AUTOMATIC-APPROVAL.md` for the Overture feed, assessment and 
 ## Database migrations
 
 Release 2.8.0 includes additive Alembic revisions `0021_overture_company_links` and
-`0022_branch_overture_provenance`. Revision 0021 creates the auditable,
+`0022_branch_overture_provenance, 0023_stage3_evidence`. Revision 0021 creates the auditable,
 reviewer-verified Overture-to-Companies House link table. Revision 0022 adds an
 optional link from website-derived branch proposals to that verified link.
 
@@ -216,3 +216,6 @@ The identity-review API (`/api/v1/identity-review/*`) requires an HTTP Bearer to
 Generate the token securely outside the repository, calculate its SHA-256 digest, and give the raw token only to the intended reviewer. Store only the digest in the environment configuration. The API derives `reviewed_by` and the audit actor from the matched configured reviewer ID; request-body reviewer names are not trusted. If credentials are missing or invalid, identity-review routes fail closed with HTTP 401.
 
 This is a dedicated control for identity-review routes, not application-wide authentication. Other admin/API routes remain unauthenticated in this development architecture; do not expose the application publicly until comprehensive authentication and authorization are implemented.
+
+
+Stage 3 pricing, membership, regulatory evidence and manual revalidation data contracts are documented in [STAGE3-EVIDENCE-DATA-DICTIONARY.md](docs/STAGE3-EVIDENCE-DATA-DICTIONARY.md). These reviewer-entry APIs do not fetch external sources or publish providers.
