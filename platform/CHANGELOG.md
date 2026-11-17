@@ -12,7 +12,10 @@
 - Keeps `AUTO_APPROVE_PROVIDERS=false`, `OVERTURE_AUTO_PROCESS=false` and `OVERTURE_SCHEDULED_TASKS_ENABLED=false` as defaults. CI uses a disposable stack with feed access and all processing/publication switches disabled.
 - Requires reviewer authentication for administrative reads and mutations. Review found and closed gaps in observation creation, source-permission listing and website-check listing; regression coverage was added. Audit actor attribution uses the authenticated reviewer.
 - Preserves provider/branch/source-observation/audit writes atomically and does not overwrite existing provider/branch fields.
-- Earlier baseline validation: GitHub Actions [run #38](https://github.com/finnitto/everguide/actions/runs/44118434200) passed API/frontend checks, production frontend build and isolated Docker integration through migration 0022. The follow-up security/conflict changes are subject to the current branch workflow; no persistent database was migrated and no live candidate was processed or published.
+- Adds migration `0023_stage3_evidence` with independent pricing, membership and regulatory evidence records, source provenance, provider/branch scope, validity/freshness and reviewer decisions.
+- Represents limited companies, LLPs, partnerships and sole traders as provider business forms without requiring an invented Companies House link. Adds a persisted, idempotent and four-attempt manual revalidation ledger; transient failures do not alter evidence status.
+- The Stage 3 API accepts reviewer-entered evidence only. It does not fetch external sources, infer NAFD/SAIF membership or FCA applicability, alter Overture identity fields or publish providers. See `docs/STAGE3-EVIDENCE-DATA-DICTIONARY.md`.
+- Earlier baseline validation: GitHub Actions [run #63](https://github.com/finnitto/everguide/actions/runs/44128256045) passed API/frontend checks and isolated Docker integration through migration 0022. Migration 0023 and the Stage 3 additions await the current branch workflow; no persistent database was migrated and no live candidate was processed or published.
 
 ## 2.7.4 — First-party website classification and persistent ONS boundaries
 
