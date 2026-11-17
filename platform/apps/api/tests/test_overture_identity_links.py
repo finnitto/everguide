@@ -282,3 +282,15 @@ def test_direct_worker_invocation_completes_without_processing_unlinked_company(
     finally:
         Base.metadata.drop_all(engine)
         engine.dispose()
+
+def test_overture_write_endpoints_reject_requests_without_reviewer_credentials():
+    requests = [
+        ("/api/v1/overture/imports", {"records": [{"gers_id": "GERS-AUTH-TEST", "name": "Test Funeral Directors"}]}),
+        ("/api/v1/overture/feed/check", None),
+        ("/api/v1/overture/process", None),
+    ]
+    with TestClient(app) as client:
+        for path, payload in requests:
+            response = client.post(path, json=payload) if payload is not None else client.post(path)
+            assert response.status_code == 401, (path, response.status_code, response.text)
+
