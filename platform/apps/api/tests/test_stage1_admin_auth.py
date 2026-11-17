@@ -11,6 +11,7 @@ def test_active_administrative_mutations_require_reviewer_credentials():
         ("post", "/api/v1/website-discovery/quality-assessments/reassess", None),
         ("post", "/api/v1/website-discovery/quality-actions/seed", None),
         ("post", "/api/v1/website-discovery/branch-enrichment/postcodes", None),
+        ("post", "/api/v1/observations", {"source_name": "Unauthenticated test observation"}),
     ]
 
     with TestClient(app) as client:
@@ -39,6 +40,8 @@ def test_quality_action_decision_requires_reviewer_credentials():
 def test_administrative_read_endpoints_require_reviewer_credentials():
     paths = [
         "/api/v1/dashboard",
+        "/api/v1/enrichment/sources",
+        "/api/v1/enrichment/checks",
         "/api/v1/providers",
         "/api/v1/providers/1",
         "/api/v1/observations",
