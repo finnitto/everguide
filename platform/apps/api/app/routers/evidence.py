@@ -5,6 +5,7 @@ infer membership/regulatory status, alter Overture identity fields, or publish p
 """
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from urllib.parse import urlsplit
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
