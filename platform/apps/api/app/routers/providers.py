@@ -11,8 +11,8 @@ router = APIRouter(prefix="/api/v1", tags=["directory"])
 ALLOWED_PROVIDER_STATUSES = {"draft", "needs_review", "approved", "published", "suspended", "rejected"}
 ALLOWED_BRANCH_STATUSES = {"draft", "published", "suspended"}
 
-def audit(db, entity_type, entity_id, action, detail=None):
-    db.add(AuditEvent(entity_type=entity_type, entity_id=entity_id, action=action, detail=detail or {}))
+def audit(db, entity_type, entity_id, action, detail=None, actor="local-admin"):
+    db.add(AuditEvent(entity_type=entity_type, entity_id=entity_id, action=action, detail=detail or {}, actor=actor))
 
 def provider_dict(p):
     return {"id":p.id,"trading_name":p.trading_name,"display_name":p.display_name,"registered_name":p.registered_name,"website":p.website,"provider_type":p.provider_type,"status":p.status,"verification_status":p.verification_status,"quality_status":p.quality_status,"notes":p.notes,"created_at":p.created_at,"updated_at":p.updated_at,"branches":[branch_dict(b) for b in p.branches]}
@@ -83,10 +83,14 @@ def set_provider_status(provider_id: int, status: str, reviewer: str = Depends(r
     audit(db,"provider",p.id,"status_changed",{"status":status}); db.commit(); return {"id":p.id,"status":p.status}
 
 @router.post("/observations", status_code=201)
-def create_observation(payload: ObservationCreate, db: Session = Depends(get_db)):
+def create_observation(
+    payload: ObservationCreate,
+    reviewer: str = Depends(require_identity_reviewer),
+    db: Session = Depends(get_db),
+):
     if payload.provider_id and not db.get(Provider,payload.provider_id): raise HTTPException(404,"Provider not found")
     if payload.branch_id and not db.get(Branch,payload.branch_id): raise HTTPException(404,"Branch not found")
-    o=SourceObservation(**payload.model_dump()); db.add(o); db.flush(); audit(db,"observation",o.id,"captured",{"source_name":o.source_name}); db.commit(); db.refresh(o)
+    o=SourceObservation(**payload.model_dump()); db.add(o); db.flush(); audit(db,"observation",o.id,"captured",{"source_name":o.source_name}, actor=reviewer); db.commit(); db.refresh(o)
     return observation_dict(o)
 
 def observation_dict(o):
