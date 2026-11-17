@@ -477,7 +477,9 @@ def get_revalidation_request(request_id: int, db: Session = Depends(get_db)):
 def record_revalidation_attempt(request_id: int, payload: RevalidationAttemptIn,
                                 reviewer: str = Depends(require_identity_reviewer),
                                 db: Session = Depends(get_db)):
-    request = db.get(EvidenceRevalidationRequest, request_id)
+    request = db.query(EvidenceRevalidationRequest).filter(
+        EvidenceRevalidationRequest.id == request_id
+    ).with_for_update().first()
     if not request:
         raise HTTPException(404, "Revalidation request not found")
     prior = db.query(EvidenceRevalidationAttempt).filter(
