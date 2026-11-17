@@ -18,15 +18,43 @@ Configure `IDENTITY_REVIEW_CREDENTIALS` in the backend environment as a JSON obj
 
 See `docs/OVERTURE-AUTOMATIC-APPROVAL.md` for the Overture feed, assessment and publication safeguards.
 
-## Database migration
+## Database migrations
 
-Release 2.8.0 adds Alembic revision `0021_overture_company_links`. It creates the auditable Overture-to-Companies House provenance-link table and is additive; no production database migration has been run as part of Stage 1. Do not deploy or run migrations against production. The historical destructive migration `0013_ch_reset` is documented in earlier release notes and must never be applied to production customer data.
+Release 2.8.0 includes additive Alembic revisions `0021_overture_company_links` and
+`0022_branch_overture_provenance`. Revision 0021 creates the auditable,
+reviewer-verified Overture-to-Companies House link table. Revision 0022 adds an
+optional link from website-derived branch proposals to that verified link.
 
-## Validation status
+The 0022 proposal-provenance relationship is separate from direct Overture-first
+publication: an Overture candidate does **not** need a Companies House link to be
+eligible. A verified link is required only before a Companies House record can be
+used as a conflict signal in the Overture assessment.
 
-- API suite: **151 passed**, with one Starlette/AnyIO deprecation warning.
-- Frontend build, Docker build, migration execution and integrated release validation remain outstanding for Stage 5.
-- No production environment has been created or deployed. No Overture import, candidate processing, enrichment, approval or publication has been run.
+No migration has been run against a persistent operational database as part of
+this implementation review. Before replacing any existing workload, inspect the
+target database and current Alembic revision, take and verify a restorable backup,
+review the migration plan and rollback constraints, and use the controlled local
+replacement procedure. Never use `docker compose down -v` against the existing
+project. The historical destructive migration `0013_ch_reset` must never be
+applied to production customer data.
+
+## Validation status (17 November 2026)
+
+GitHub Actions [run #38](https://github.com/finnitto/everguide/actions/runs/44118434200)
+on reviewed commit `0958c66a2ec6b6b387accde2b802f84ec927faf1` passed both jobs:
+
+- Python and frontend checks, including the full API test suite, frontend lint/type
+  checks and production frontend build.
+- Isolated Docker integration, including API readiness/version, migration head
+  `0022_branch_overture_provenance`, admin HTTP 200, worker liveness/idle checks
+  and an empty Beat schedule.
+
+The disposable CI environment explicitly disables feed access, automatic
+processing, scheduled tasks and automatic publication, and removes its isolated
+containers and database/cache volumes after validation. This is not evidence of
+a persistent local or production database migration, operational Overture feed
+processing, candidate publication, production deployment or release archive
+sign-off.
 
 ## Historical release notes
 
