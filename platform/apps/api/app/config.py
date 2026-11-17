@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     overture_feed_daily_hour: int = 4
     overture_feed_daily_minute: int = 30
     overture_feed_batch_size: int = 500
+    # JSON object mapping reviewer IDs to SHA-256 hashes of bearer tokens.
+    identity_review_credentials: str = "{}"
     model_config = SettingsConfigDict(case_sensitive=False, extra="ignore")
 
 settings = Settings()
