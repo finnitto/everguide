@@ -106,9 +106,9 @@ The Stage 3 evidence foundation is implemented and the current branch passed Git
 - Data retention, privacy and evidence revalidation policy.
 
 ### Exit criteria
-- [ ] Route-by-route auth matrix and tests for every active admin read/write, including negative and positive credential tests (router-level reviewer guards and a route-introspection regression are now added; current CI is pending).
+- [x] Route-by-route auth boundary and regression matrix: every internal `/api/v1/...` route requires the reviewer dependency except public `/api/v1/directory/search`; valid, invalid/revoked token, unauthenticated read/write and public-route checks passed run #147.
 - [ ] Role and permission matrix agreed; a single reviewer token role is not treated as a complete RBAC design.
-- [ ] Secret lifecycle and rotation runbook tested ([reviewer credential operations](REVIEWER-CREDENTIAL-OPERATIONS.md) documents provisioning, rotation, revocation and current limitations; actual target-environment execution remains outstanding).
+- [ ] Secret lifecycle and rotation runbook tested ([reviewer credential operations](REVIEWER-CREDENTIAL-OPERATIONS.md) documents provisioning, rotation, revocation, and the in-memory admin token flow; simulated invalid/revoked-token tests passed run #147, but target-environment rotation/revocation remains outstanding).
 - [ ] Backup artifact is produced, integrity-checked and restored into an isolated environment; restore evidence recorded.
 - [ ] Failure injection covers database/Redis interruption, worker loss, task redelivery, rate limiting and upstream outage.
 - [ ] Alerts and operational dashboards cover the agreed service-level indicators.
@@ -155,7 +155,7 @@ CI and disposable migration validation are now passed for commit `241c77968fc761
 - Current implementation branch: `stage1-overture-identity-provenance`.
 - Handover baseline: `0958c66a2ec6b6b387accde2b802f84ec927faf1`.
 - Earlier CI baseline: [run #38](https://github.com/finnitto/everguide/actions/runs/44118434200).
-- Latest successful CI including Stage 3 migration and tests: [run #110](https://github.com/finnitto/everguide/actions/runs/44137685301), commit `241c77968fc7612f7204b7bb8e8b3b895e1425d9`; 171 API tests and disposable Docker migration head `0023_stage3_evidence` passed.
+- Latest successful CI including Stage 3, Stage 4 route guards and admin token flow: [run #147](https://github.com/finnitto/everguide/actions/runs/44151136460), commit `35c0d0cf53162c9bcd37dca4a6fc9e1af9d61707`; 176 API tests and disposable Docker migration head `0023_stage3_evidence` passed.
 - Overture approval policy: [OVERTURE-AUTOMATIC-APPROVAL.md](OVERTURE-AUTOMATIC-APPROVAL.md).
 - Validation procedure: [VALIDATION.md](VALIDATION.md).
 - Current release metadata: [RELEASE-MANIFEST.json](../RELEASE-MANIFEST.json).
