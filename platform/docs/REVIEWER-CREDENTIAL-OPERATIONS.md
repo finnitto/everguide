@@ -4,6 +4,10 @@
 **Current implementation:** reviewer IDs mapped to SHA-256 token digests  
 **Security limitation:** every configured reviewer currently receives the same reviewer-level permissions; there is no role claim, token expiry or in-application credential administration.
 
+## Admin browser sign-in
+
+The `/admin` page prompts for the configured reviewer Bearer token before making internal API calls. The browser keeps the token in React component memory only; it is not written to local storage, session storage or cookies. Reloading the page or selecting **Sign out** clears it. A server response of HTTP 401 clears the in-memory token and returns the page to the sign-in prompt. Every admin API call uses the same authenticated fetch wrapper.
+
 ## Credential format
 
 Configure `IDENTITY_REVIEW_CREDENTIALS` as a JSON object mapping a stable reviewer identifier to the SHA-256 hexadecimal digest of a high-entropy token:
