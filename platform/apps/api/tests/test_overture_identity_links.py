@@ -22,6 +22,7 @@ from app.identity_tasks import (
     run_identity_assessment,
 )
 import app.identity_tasks as identity_tasks
+from app.identity_review_auth import require_identity_reviewer
 
 
 def make_database():
@@ -52,6 +53,12 @@ def seed_candidates(factory):
     return ids
 
 
+def test_identity_review_api_rejects_requests_without_reviewer_credentials():
+    with TestClient(app) as client:
+        response = client.get("/api/v1/identity-review/overture-links")
+    assert response.status_code == 401
+
+
 def test_provenance_link_is_pending_until_reviewed_and_audited():
     engine, factory = make_database()
 
@@ -63,6 +70,7 @@ def test_provenance_link_is_pending_until_reviewed_and_audited():
             db.close()
 
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[require_identity_reviewer] = lambda: "authenticated-reviewer"
     overture_id, company_id = seed_candidates(factory)
     try:
         with TestClient(app) as client:
@@ -83,7 +91,7 @@ def test_provenance_link_is_pending_until_reviewed_and_audited():
                 f"/api/v1/identity-review/overture-links/{link_id}",
                 json={
                     "status": "verified",
-                    "reviewed_by": "reviewer",
+                    "reviewed_by": "attacker-supplied-name",
                     "evidence": {"source_reference": "just a note"},
                 },
             )
@@ -105,6 +113,7 @@ def test_provenance_link_is_pending_until_reviewed_and_audited():
             )
             assert verified.status_code == 200, verified.text
             assert verified.json()["status"] == "verified"
+            assert verified.json()["reviewed_by"] == "authenticated-reviewer"
 
             db = factory()
             assert _company_has_verified_overture_link(db, company_id)
@@ -114,7 +123,7 @@ def test_provenance_link_is_pending_until_reviewed_and_audited():
             listing = client.get("/api/v1/identity-review/overture-links?status=verified")
             assert listing.status_code == 200
             assert listing.json()["items"][0]["gers_id"] == "GERS-TEST-001"
-            assert listing.json()["items"][0]["reviewed_by"] == "reviewer"
+            assert listing.json()["items"][0]["reviewed_by"] == "authenticated-reviewer"
             db = factory()
             audit = db.query(AuditEvent).filter(
                 AuditEvent.entity_type == "overture_company_link",
@@ -126,6 +135,7 @@ def test_provenance_link_is_pending_until_reviewed_and_audited():
             db.close()
     finally:
         app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(require_identity_reviewer, None)
         Base.metadata.drop_all(engine)
         engine.dispose()
 
