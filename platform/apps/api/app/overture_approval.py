@@ -106,6 +106,7 @@ def assess_overture_candidate(
     for code in conflict_codes:
         if code in {
             "official_site_branch_closed",
+            "official_site_branch_postcode_mismatch",
             "official_site_different_operator_at_same_address",
             "verified_companies_house_entity_dissolved",
             "verified_companies_house_identity_conflict",
