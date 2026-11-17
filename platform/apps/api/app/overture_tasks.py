@@ -446,6 +446,7 @@ def _overture_duplicate_conflict(db, candidate):
 
 
 def _normalised_assessment_row(raw):
+    """Normalise Overture fields without replacing them with website data."""
     row = dict(raw)
     row["sources_json"] = _as_sources(row.get("sources_json"))
     row["website"] = _https_website(row.get("website"))
@@ -453,6 +454,23 @@ def _normalised_assessment_row(raw):
         websites = _as_sources(raw.get("websites_json"))
         if websites and isinstance(websites[0], str):
             row["website"] = _https_website(websites[0])
+    addresses = _as_sources(raw.get("addresses_json"))
+    address = addresses[0] if isinstance(addresses, list) and addresses and isinstance(addresses[0], dict) else {}
+    street = (address.get("street") or address.get("street_address") or address.get("address_line_1")
+              or row.get("address_line_1"))
+    town = (address.get("locality") or address.get("town") or address.get("city")
+            or row.get("town_city") or row.get("town") or row.get("locality"))
+    freeform = str(address.get("freeform") or row.get("address") or "").strip()
+    if not street and freeform:
+        parts = [part.strip() for part in freeform.split(",") if part.strip()]
+        if len(parts) >= 2:
+            street = parts[0]
+            if not town:
+                town = parts[-1]
+        else:
+            street = freeform
+    row["address_line_1"] = str(street or "").strip()
+    row["town_city"] = str(town or "").strip()
     return row
 
 
