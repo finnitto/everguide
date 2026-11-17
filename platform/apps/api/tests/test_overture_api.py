@@ -3,6 +3,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
+from app.identity_review_auth import require_identity_reviewer
 from app.main import app
 from app.models import OvertureImportRun
 from app.overture_tasks import import_overture_records
@@ -19,6 +20,7 @@ def test_overture_import_endpoint_queues_and_reports_run(monkeypatch):
         finally:
             db.close()
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[require_identity_reviewer] = lambda: "test-reviewer"
     monkeypatch.setattr(import_overture_records, "delay", lambda *a, **k: type("Task", (), {"id": "queued-task"})())
     try:
         with TestClient(app) as client:
@@ -36,6 +38,7 @@ def test_overture_import_endpoint_queues_and_reports_run(monkeypatch):
             assert invalid.status_code == 400
     finally:
         app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(require_identity_reviewer, None)
         Base.metadata.drop_all(engine)
         engine.dispose()
 
@@ -52,6 +55,7 @@ def test_overture_feed_check_endpoint_queues_latest_release_check(monkeypatch):
         finally:
             db.close()
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[require_identity_reviewer] = lambda: "test-reviewer"
     monkeypatch.setattr(overture_router.settings, "overture_feed_enabled", True)
     monkeypatch.setattr(overture_router.poll_latest_overture_release, "delay",
         lambda *a, **k: type("Task", (), {"id": "feed-check-task"})())
@@ -65,6 +69,7 @@ def test_overture_feed_check_endpoint_queues_latest_release_check(monkeypatch):
             assert status["feed_schedule"].startswith("Daily at")
     finally:
         app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(require_identity_reviewer, None)
         Base.metadata.drop_all(engine)
         engine.dispose()
 
@@ -81,6 +86,7 @@ def test_manual_feed_check_remains_available_when_scheduling_is_disabled(monkeyp
         finally:
             db.close()
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[require_identity_reviewer] = lambda: "test-reviewer"
     monkeypatch.setattr(overture_router.settings, "overture_feed_enabled", True)
     monkeypatch.setattr(overture_router.settings, "overture_scheduled_tasks_enabled", False)
     monkeypatch.setattr(overture_router.poll_latest_overture_release, "delay",
@@ -96,5 +102,6 @@ def test_manual_feed_check_remains_available_when_scheduling_is_disabled(monkeyp
             assert status["feed_schedule_enabled"] is False
     finally:
         app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(require_identity_reviewer, None)
         Base.metadata.drop_all(engine)
         engine.dispose()
