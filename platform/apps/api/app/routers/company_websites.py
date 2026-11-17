@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.identity_review_auth import require_identity_reviewer
 from app.config import settings
 from app.models import (CompaniesHouseCandidate, CompanyWebsiteCandidate, CompanyWebsiteDiscoveryRun, Provider, AuditEvent)
 from app.tasks import discover_company_websites
@@ -17,7 +18,7 @@ def _run_dict(run):
         "error_message":run.error_message,"created_at":run.created_at.isoformat() if run.created_at else None,
         "started_at":run.started_at.isoformat() if run.started_at else None,"completed_at":run.completed_at.isoformat() if run.completed_at else None}
 
-@router.get("/status")
+@router.get("/status", dependencies=[Depends(require_identity_reviewer)])
 def status(db: Session = Depends(get_db)):
     eligible = db.query(func.count(CompaniesHouseCandidate.id)).filter(CompaniesHouseCandidate.company_status == "active",
         CompaniesHouseCandidate.profile_status == "completed", CompaniesHouseCandidate.classification.in_(["likely_funeral_director", "uncertain"])).scalar() or 0
@@ -40,7 +41,7 @@ def status(db: Session = Depends(get_db)):
             "published_provider_total": db.query(Provider).filter(Provider.status == "published").count()},
         "note":"Eligible high-confidence first-party provider website evidence is automatically approved and published. Incomplete, conflicting, low-confidence and duplicate candidates are routed to the administrator exception queue. Website page bodies are discarded."}
 
-@router.get("/runs")
+@router.get("/runs", dependencies=[Depends(require_identity_reviewer)])
 def runs(limit: int = 10, db: Session = Depends(get_db)):
     rows = db.query(CompanyWebsiteDiscoveryRun).order_by(CompanyWebsiteDiscoveryRun.id.desc()).limit(min(max(limit,1),50)).all()
     return {"items":[_run_dict(x) for x in rows]}
@@ -53,7 +54,7 @@ def start_run():
 def resume_run(run_id: int):
     raise HTTPException(status_code=410, detail="Legacy company website discovery runs cannot be resumed.")
 
-@router.get("/candidates")
+@router.get("/candidates", dependencies=[Depends(require_identity_reviewer)])
 def candidates(limit: int=50, offset: int=0, db: Session=Depends(get_db)):
     q=db.query(CompanyWebsiteCandidate).order_by(CompanyWebsiteCandidate.match_score.desc(),CompanyWebsiteCandidate.id.desc())
     total=q.count(); rows=q.offset(max(0,offset)).limit(min(max(limit,1),200)).all()
