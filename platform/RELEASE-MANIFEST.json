@@ -55,13 +55,13 @@
   "tests": {
     "new_regression_tests_added": 13,
     "python_compileall": "Run #108's Python/frontend job passed compileall for application and migration sources.",
-    "targeted_pytest": "Run #110 full API suite passed 171 tests; targeted Stage 3 tests are included.",
-    "full_api_pytest": "GitHub Actions run #110 passed 171 API tests, Python compile, frontend lint, TypeScript and production build.",
+    "targeted_pytest": "Run #147 full API suite passed 176 tests, including evidence-domain, migration-chain, reviewer route-matrix, token validity/revocation and public-route regressions.",
+    "full_api_pytest": "GitHub Actions run #147 passed 176 API tests, Python compile, frontend lint, TypeScript and production build.",
     "production_database_accessed_during_build": false,
-    "frontend_build": "GitHub Actions run #110 passed the frontend production build.",
-    "docker_build": "GitHub Actions run #110 passed isolated Docker image build and stack integration.",
-    "isolated_docker_integration": "GitHub Actions run #110 passed isolated Docker integration through migration head 0023_stage3_evidence; API readiness/version, reviewer credential forwarding, disabled approval/feed/processing/scheduling, admin HTTP 200, idle worker and empty Beat schedule were verified.",
-    "validation_run": "https://github.com/finnitto/everguide/actions/runs/44137685301"
+    "frontend_build": "GitHub Actions run #147 passed the frontend production build, including the reviewer-token sign-in page.",
+    "docker_build": "GitHub Actions run #147 passed isolated Docker image build and stack integration.",
+    "isolated_docker_integration": "GitHub Actions run #147 passed isolated Docker integration through migration head 0023_stage3_evidence; reviewer credential forwarding, disabled automatic approval/feed/processing/scheduling, API readiness/version, admin HTTP 200, worker idle state and empty Beat schedule were verified.",
+    "validation_run": "https://github.com/finnitto/everguide/actions/runs/44151136460"
   },
   "approval_policy": {
     "shared_policy_version": "shared-provider approval policy is not authoritative for the Overture adapter",
@@ -110,7 +110,7 @@
     "public_endpoint": "/api/v1/directory/search remains public; internal directory and candidate/admin endpoints require reviewer authentication."
   },
   "stage1_status": "Core Overture-only discovery, GERS/provenance, reviewer-authenticated CH links, retired bypass paths and Overture-first approval safeguards are implemented. The observation-write gap is closed and reviewer audit attribution is tested. Current branch passed run #110 (171 API tests and Docker integration through migration 0023). Formal source-rights and admin-access acceptance remain outstanding.",
-  "stage5_status": "CI and disposable migration validation passed in run #110 on commit 241c77968fc7612f7204b7bb8e8b3b895e1425d9; 171 API tests, frontend lint/type/build and disposable PostgreSQL migration to 0023 passed. Archive regeneration, reproducibility/exclusion audit, migration downgrade/forward-fix rehearsal, target-host backup and replacement checklist, and release sign-off remain outstanding.",
+  "stage5_status": "Current implementation commit 35c0d0cf53162c9bcd37dca4a6fc9e1af9d61707 passed run #147: 176 API tests, frontend lint/type/production build and disposable PostgreSQL migration to 0023_stage3_evidence. The isolated stack confirms safety controls disabled and reviewer-authenticated admin page HTTP 200. Archive regeneration, reproducibility/exclusion audit, migration downgrade/forward-fix rehearsal, target-host backup/replacement checklist and release sign-off remain outstanding.",
   "security_review": {
     "access_control": "Bearer reviewer authentication required for active administrative reads and mutations; public directory search and health endpoints remain intentionally public; disabled/retired endpoints return HTTP 410.",
     "reviewed_gaps_fixed": [
@@ -124,6 +124,6 @@
   },
   "stage2_status": "Overture-first ruleset v2.0 and synthetic regression coverage passed current branch run #110. Conflict detection uses verified first-party evidence and same-branch street/locality alignment. Non-mutating live-candidate outcome analysis and product acceptance remain outstanding; no live processing/publication.",
   "stage3_status": "Evidence-domain data foundation is implemented and passed run #110 (171 API tests and Docker migration 0023). Separate pricing, membership and regulatory evidence, provider/branch scope, audited business forms and bounded reviewer-recorded revalidation are present. Automated source-specific retrieval/refresh, policy/legal acceptance, canonical pricing taxonomy and full freshness/exception path remain open.",
-  "stage4_status": "Partially implemented. Reviewer bearer authentication, authenticated audit attribution, health/readiness and bounded Overture recovery controls exist. Run #110 passed current regression tests. Route-by-route guard consistency, RBAC, credential lifecycle, backup/restore proof, observability/alerts, retention and operational runbooks remain open.",
+  "stage4_status": "Partially implemented. Reviewer bearer guard is applied to all internal API routes except the intentionally public directory search; route-introspection, anonymous read/write, valid/invalid/revoked token and public-route tests passed run #147. Admin frontend now prompts for a reviewer token held in memory and attaches it to all API calls. Audit attribution is tested and a credential operations runbook is documented. Role separation, target-environment rotation/revocation, backup/restore, observability, retention and operational runbooks remain open.",
   "implementation_plan": "docs/FIVE-STAGE-ACCEPTANCE-PLAN.md"
 }
