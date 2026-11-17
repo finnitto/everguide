@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.database import get_db
+from app.identity_review_auth import require_identity_reviewer
 from app.config import settings
 from app.models import CompaniesHouseRun, CompaniesHouseCandidate
 from app.companies_house import import_companies_house_sic, enrich_company_profiles
@@ -61,7 +62,7 @@ def profile_summary(db: Session = Depends(get_db)):
     return {"total_active": total, "completed": completed, "failed": failed, "not_found": not_found, "remaining": max(0, total-completed-not_found)}
 
 @router.post("/classification/run")
-def classify_candidates(db: Session = Depends(get_db)):
+def classify_candidates(reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     result = run_classification(db)
     return {"message": "Candidate triage completed. No providers were created or published.", **result}
 
