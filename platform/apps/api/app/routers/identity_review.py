@@ -53,6 +53,7 @@ def _branch_dict(row, company):
         "legal_name":company.company_name,"status":row.status,"branch_name":row.proposed_branch_name,
         "address_line":row.address_line,"town_city":row.town_city,"postcode":row.postcode,
         "telephone":row.telephone,"website":row.website,"confidence":row.confidence,
+        "overture_company_link_id":row.overture_company_link_id,
         "evidence":row.evidence or {},"review_notes":row.review_notes}
 
 @router.get("/overture-links")
