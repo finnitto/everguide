@@ -13,7 +13,7 @@ class SourceInput(BaseModel):
     source_url: str = Field(min_length=10, max_length=1000)
     permission_basis: str | None = Field(default=None, max_length=4000)
     permission_reference: str | None = Field(default=None, max_length=500)
-@router.get("/sources")
+@router.get("/sources", dependencies=[Depends(require_identity_reviewer)])
 def list_sources(db: Session = Depends(get_db)):
     rows=db.query(SourcePermission).order_by(SourcePermission.created_at.desc()).limit(200).all()
     return {"items":[{"id":x.id,"provider_id":x.provider_id,"provider_name":db.get(Provider,x.provider_id).trading_name if db.get(Provider,x.provider_id) else "(deleted)","source_url":x.source_url,"source_domain":x.source_domain,"permission_status":x.permission_status,"permission_basis":x.permission_basis,"permission_reference":x.permission_reference,"approved_at":x.approved_at} for x in rows]}
@@ -39,7 +39,7 @@ def approve_source(source_id:int, reviewer: str = Depends(require_identity_revie
 def run_enrichment(reviewer: str = Depends(require_identity_reviewer)):
     task=check_approved_sources.delay()
     return {"status":"queued","task_id":task.id,"message":"Eligible registered HTTPS sources will be checked automatically. robots.txt is treated only as a crawler instruction, not as a licence or reuse permission."}
-@router.get("/checks")
+@router.get("/checks", dependencies=[Depends(require_identity_reviewer)])
 def list_checks(limit:int=100,db:Session=Depends(get_db)):
     rows=db.query(WebsiteEvidenceCheck).order_by(WebsiteEvidenceCheck.checked_at.desc()).limit(min(max(limit,1),250)).all()
     return {"items":[{"id":x.id,"source_permission_id":x.source_permission_id,"provider_id":x.provider_id,"checked_at":x.checked_at,"status":x.status,"http_status":x.http_status,"page_title":x.page_title,"content_sha256":x.content_sha256,"detail":x.detail} for x in rows]}
