@@ -9,7 +9,7 @@ from app.overture_tasks import process_overture_candidates
 from app.overture_feed import poll_latest_overture_release
 from app.identity_review_auth import require_identity_reviewer
 
-router = APIRouter(prefix="/api/v1/overture", tags=["Overture discovery and approval"])
+router = APIRouter(prefix="/api/v1/overture", tags=["Overture discovery and approval"], dependencies=[Depends(require_identity_reviewer)])
 
 class OvertureImportPayload(BaseModel):
     records: list[dict] = Field(min_length=1, max_length=5000)
