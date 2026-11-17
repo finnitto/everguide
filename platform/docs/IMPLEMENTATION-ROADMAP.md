@@ -58,6 +58,15 @@
 - [x] Document credential provisioning, rotation, revocation and incident handling in [REVIEWER-CREDENTIAL-OPERATIONS.md](REVIEWER-CREDENTIAL-OPERATIONS.md); the admin page now uses an in-memory token prompt.
 - [ ] Agree and implement role-based permissions and least privilege; test secret lifecycle in the target environment; prove backup/restore, failure recovery, monitoring, retention and runbooks.
 
+## Stage 5 release packaging and migration rehearsal
+
+- [x] Add deterministic ZIP generation from the maintained `platform/` tree, fixed timestamps/member order, required-file/version checks, SHA-256 checksum and source-commit package manifest.
+- [x] Add synthetic regression tests for archive reproducibility, ZIP integrity, required files and secret/local-data exclusions.
+- [x] Add CI artifact upload for the ZIP and both sidecars, with 14-day retention.
+- [x] Add disposable PostgreSQL downgrade from migration 0023 to 0022 and forward-upgrade to 0023, verifying the new evidence tables/column.
+- [ ] Re-run CI after the final package correction excluding `stage1_api_patch.py` and `stage1_task_patch.py`; distribute only the corrected artifact.
+- [ ] Complete target-host backup/restore, rollback/forward-fix and replacement checklist before any persistent workload change.
+
 ## Five-stage implementation acceptance
 
 The current five-stage status, exit criteria, evidence requirements and operating
