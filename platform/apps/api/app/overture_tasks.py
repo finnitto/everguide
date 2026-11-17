@@ -491,25 +491,28 @@ def _normalised_assessment_row(raw):
     return row
 
 
-def _same_asserted_branch_postcode_conflict(raw, extracted):
-    """Only flag a postcode contradiction when the structured page identifies the same branch address."""
+def _same_asserted_branch_location(raw, extracted):
+    """Whether website structured data identifies the same street and locality."""
     if not isinstance(extracted, dict) or extracted.get("has_complete_branch_address") is not True:
-        return False
-    observed_postcode = normalise_postcode(extracted.get("postcode"))
-    asserted_postcode = normalise_postcode(raw.get("postcode"))
-    if not observed_postcode or not asserted_postcode or observed_postcode == asserted_postcode:
         return False
     asserted_street = normalise_identity_name(raw.get("address_line_1") or raw.get("address"))
     observed_street = normalise_identity_name(extracted.get("street"))
     asserted_town = normalise_identity_name(raw.get("town_city") or raw.get("town") or raw.get("locality"))
     observed_town = normalise_identity_name(extracted.get("town"))
-    # A provider's other branch may legitimately have a different postcode.
-    # Require both street and locality to match before treating a postcode
-    # mismatch as evidence about this exact Overture branch.
+    # A provider's other branch may legitimately have a different address.
     return bool(
         asserted_street and observed_street and asserted_street == observed_street
         and asserted_town and observed_town and asserted_town == observed_town
     )
+
+
+def _same_asserted_branch_postcode_conflict(raw, extracted):
+    """A different postcode is material only for the exact same street/locality."""
+    if not _same_asserted_branch_location(raw, extracted):
+        return False
+    observed_postcode = normalise_postcode(extracted.get("postcode"))
+    asserted_postcode = normalise_postcode(raw.get("postcode"))
+    return bool(observed_postcode and asserted_postcode and observed_postcode != asserted_postcode)
 
 
 def _first_party_website_conflicts(raw, extracted, *, verified_first_party):
@@ -518,7 +521,9 @@ def _first_party_website_conflicts(raw, extracted, *, verified_first_party):
         return []
     conflicts = []
     branch_status = str(extracted.get("branch_status") or extracted.get("business_status") or "").strip().lower()
-    if branch_status in {"closed", "permanently_closed", "permanently closed"}:
+    if (branch_status in {"closed", "permanently_closed", "permanently closed",
+                          "temporarily_closed", "temporarily closed"}
+            and _same_asserted_branch_location(raw, extracted)):
         conflicts.append("official_site_branch_closed")
     if _same_asserted_branch_postcode_conflict(raw, extracted):
         conflicts.append("official_site_branch_postcode_mismatch")
