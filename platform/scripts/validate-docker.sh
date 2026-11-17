@@ -52,7 +52,7 @@ OVERTURE_SCHEDULED_TASKS_ENABLED=false
 OVERTURE_FEED_DAILY_HOUR=4
 OVERTURE_FEED_DAILY_MINUTE=30
 OVERTURE_FEED_BATCH_SIZE=50
-IDENTITY_REVIEW_CREDENTIALS={}
+IDENTITY_REVIEW_CREDENTIALS='{"ci-reviewer":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
 ONS_BOUNDARY_CACHE_TTL_HOURS=720
 EOF
 chmod 600 "$ENV_FILE" 2>/dev/null || true
@@ -95,6 +95,9 @@ dc up --build --detach --wait --wait-timeout 240
 
 echo "[CHECK] API readiness and release version"
 dc exec -T api python -c 'import json, urllib.request; d=json.load(urllib.request.urlopen("http://127.0.0.1:8000/health/ready", timeout=5)); assert d["status"] == "ready", d; h=json.load(urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5)); assert h["version"] == __import__("os").environ["APP_VERSION"], h; print(h); print(d)'
+
+echo "[CHECK] Reviewer credential hash map reaches the API container"
+dc exec -T api python -c 'import json, os; expected={"ci-reviewer":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}; assert json.loads(os.environ.get("IDENTITY_REVIEW_CREDENTIALS", "{}")) == expected'
 
 echo "[CHECK] Safety controls are disabled in the isolated stack"
 dc exec -T api python -c 'from app.config import settings; assert settings.auto_approve_providers is False; assert settings.overture_auto_process is False; assert settings.overture_feed_enabled is False; assert settings.overture_scheduled_tasks_enabled is False; print("automatic approval, processing, feed and scheduled tasks are disabled")'

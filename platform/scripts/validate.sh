@@ -28,6 +28,10 @@ ENV_EXAMPLE_VERSION="$(sed -n '/^APP_VERSION=/s/^APP_VERSION=//p' .env.example |
 [[ "$VERSION" == "$ENV_EXAMPLE_VERSION" ]] || fail "VERSION ($VERSION) does not match .env.example ($ENV_EXAMPLE_VERSION)"
 log PASS "All release version files agree: $VERSION"
 
+log CHECK "Reviewer credentials are forwarded to the API service"
+grep -Fq 'IDENTITY_REVIEW_CREDENTIALS: ${IDENTITY_REVIEW_CREDENTIALS:-}' "$ROOT_DIR/docker-compose.yml" || fail "docker-compose.yml must pass the reviewer credential map to the API container"
+log PASS "Reviewer credential map is forwarded to the API container"
+
 log CHECK "Shell script syntax"
 bash -n "$ROOT_DIR/scripts/validate.sh"
 bash -n "$ROOT_DIR/scripts/validate-docker.sh"
