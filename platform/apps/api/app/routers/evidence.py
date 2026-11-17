@@ -139,7 +139,7 @@ def _validate_subject(db: Session, provider_id: int, branch_id: int | None) -> N
             raise HTTPException(400, "Branch does not belong to the selected provider")
 
 
-def _validate_source_permission(db: Session, provider_id: int, permission_id: int | None) -> None:
+def _validate_source_permission(db: Session, provider_id: int, permission_id: int | None, source_url: str) -> None:
     if permission_id is None:
         return
     permission = db.get(SourcePermission, permission_id)
@@ -147,6 +147,10 @@ def _validate_source_permission(db: Session, provider_id: int, permission_id: in
         raise HTTPException(400, "Source permission does not belong to this provider")
     if permission.permission_status != "approved":
         raise HTTPException(409, "The referenced source permission is not approved")
+    source_host = (urlsplit(source_url).hostname or "").lower().removeprefix("www.")
+    permitted_domain = (permission.source_domain or "").lower().removeprefix("www.")
+    if not source_host or not permitted_domain or not (source_host == permitted_domain or source_host.endswith("." + permitted_domain)):
+        raise HTTPException(400, "Source URL host is outside the approved source-permission domain")
 
 
 def _common_fields(payload: EvidenceCommonIn) -> dict:
@@ -221,7 +225,7 @@ def _list_records(db: Session, model, provider_id, branch_id, review_status, inc
 
 def _create_evidence(db: Session, model, payload: EvidenceCommonIn, reviewer: str, detail: dict):
     _validate_subject(db, payload.provider_id, payload.branch_id)
-    _validate_source_permission(db, payload.provider_id, payload.source_permission_id)
+    _validate_source_permission(db, payload.provider_id, payload.source_permission_id, str(payload.source_url))
     _validate_dates(payload)
     values = _common_fields(payload)
     # Shared request schemas contain both effective-date and validity-date pairs;
@@ -296,7 +300,6 @@ def capture_pricing(payload: PricingEvidenceIn, reviewer: str = Depends(require_
                     db: Session = Depends(get_db)):
     if payload.amount_upper is not None and payload.amount_upper < payload.amount:
         raise HTTPException(422, "amount_upper must be greater than or equal to amount")
-    values = _common_fields(payload)
     row = _create_evidence(db, PricingEvidence, payload, reviewer, {
         "service_category": payload.service_category, "service_name": payload.service_name,
         "fee_type": payload.fee_type, "amount": str(payload.amount), "currency": payload.currency,
@@ -393,8 +396,8 @@ def create_revalidation_request(payload: RevalidationRequestIn,
         EvidenceRevalidationRequest.idempotency_key == payload.idempotency_key
     ).first()
     if existing:
-        if existing.domain != payload.domain or existing.evidence_id != payload.evidence_id:
-            raise HTTPException(409, "Idempotency key was already used for a different evidence item")
+        if (existing.domain != payload.domain or existing.evidence_id != payload.evidence_id or existing.reason != payload.reason):
+            raise HTTPException(409, "Idempotency key was already used for a different request payload")
         return _request_dict(existing)
     row = EvidenceRevalidationRequest(
         idempotency_key=payload.idempotency_key,
@@ -472,6 +475,15 @@ def record_revalidation_attempt(request_id: int, payload: RevalidationAttemptIn,
         EvidenceRevalidationAttempt.idempotency_key == payload.idempotency_key,
     ).first()
     if prior:
+        same_payload = (
+            prior.outcome == payload.outcome
+            and prior.failure_class == payload.failure_class
+            and prior.source_url == (str(payload.source_url) if payload.source_url else None)
+            and prior.evidence_sha256 == (payload.evidence_sha256.lower() if payload.evidence_sha256 else None)
+            and prior.detail == payload.detail
+        )
+        if not same_payload:
+            raise HTTPException(409, "Attempt idempotency key was already used for a different payload")
         return {"request": _request_dict(request), "attempt": {
             "id": prior.id, "attempt_number": prior.attempt_number, "outcome": prior.outcome,
             "checked_at": prior.checked_at, "actor": prior.actor,
