@@ -17,8 +17,8 @@ if [[ "${CI:-}" == "true" ]]; then
   BUILD_HTTP_PROXY="${VALIDATION_HTTP_PROXY:-}"
   BUILD_HTTPS_PROXY="${VALIDATION_HTTPS_PROXY:-}"
 else
-  BUILD_HTTP_PROXY="${VALIDATION_HTTP_PROXY:-${HTTP_PROXY:-http://http.docker.internal:3128}}"
-  BUILD_HTTPS_PROXY="${VALIDATION_HTTPS_PROXY:-${HTTPS_PROXY:-http://http.docker.internal:3128}}"
+  BUILD_HTTP_PROXY="${VALIDATION_HTTP_PROXY:-${HTTP_PROXY:-}}"
+  BUILD_HTTPS_PROXY="${VALIDATION_HTTPS_PROXY:-${HTTPS_PROXY:-}}"
 fi
 
 DB_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(24))')"
