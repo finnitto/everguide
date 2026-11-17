@@ -16,7 +16,7 @@ England-only funeral director directory with Overture-first discovery, evidence-
 
 Configure `IDENTITY_REVIEW_CREDENTIALS` in the backend environment as a JSON object mapping stable reviewer IDs to SHA-256 hashes of high-entropy bearer tokens. The API never accepts reviewer identity from request bodies. Keep raw tokens out of source control, logs and release archives. An empty configuration denies reviewer access.
 
-See `docs/OVERTURE-AUTOMATIC-APPROVAL.md` for the Overture feed, assessment and publication safeguards.
+See `docs/OVERTURE-AUTOMATIC-APPROVAL.md` for the Overture feed, assessment and publication safeguards. The five-stage scope and exit criteria are maintained in `docs/FIVE-STAGE-ACCEPTANCE-PLAN.md`.
 
 ## Database migrations
 
