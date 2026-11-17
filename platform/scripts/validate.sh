@@ -22,9 +22,16 @@ log CHECK "Release version consistency"
 VERSION="$(tr -d '\r\n' < VERSION)"
 MANIFEST_VERSION="$(python -c 'import json; print(json.load(open("RELEASE-MANIFEST.json", encoding="utf-8"))["version"])')"
 WEB_VERSION="$(python -c 'import json; print(json.load(open("apps/web/package.json", encoding="utf-8"))["version"])')"
+ENV_EXAMPLE_VERSION="$(sed -n '/^APP_VERSION=/s/^APP_VERSION=//p' .env.example | head -n 1)"
 [[ "$VERSION" == "$MANIFEST_VERSION" ]] || fail "VERSION ($VERSION) does not match RELEASE-MANIFEST.json ($MANIFEST_VERSION)"
 [[ "$VERSION" == "$WEB_VERSION" ]] || fail "VERSION ($VERSION) does not match web package version ($WEB_VERSION)"
+[[ "$VERSION" == "$ENV_EXAMPLE_VERSION" ]] || fail "VERSION ($VERSION) does not match .env.example ($ENV_EXAMPLE_VERSION)"
 log PASS "All release version files agree: $VERSION"
+
+log CHECK "Shell script syntax"
+bash -n "$ROOT_DIR/scripts/validate.sh"
+bash -n "$ROOT_DIR/scripts/validate-docker.sh"
+log PASS "Validation scripts have valid Bash syntax"
 
 log CHECK "Python compile check"
 (
