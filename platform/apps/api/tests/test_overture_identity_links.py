@@ -101,7 +101,7 @@ def test_provenance_link_is_pending_until_reviewed_and_audited():
                 f"/api/v1/identity-review/overture-links/{link_id}",
                 json={
                     "status": "verified",
-                    "reviewed_by": "reviewer",
+                    "reviewed_by": "attacker-supplied-name",
                     "evidence": {
                         "source_type": "official_website",
                         "source_reference": "https://examplefunerals.co.uk/about",
@@ -132,6 +132,7 @@ def test_provenance_link_is_pending_until_reviewed_and_audited():
             ).first()
             assert audit is not None
             assert audit.detail["status"] == "verified"
+            assert audit.actor == "authenticated-reviewer"
             db.close()
     finally:
         app.dependency_overrides.pop(get_db, None)
@@ -176,6 +177,7 @@ def test_duplicate_candidate_pair_is_rejected_but_company_can_link_to_multiple_o
             db.close()
 
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[require_identity_reviewer] = lambda: "authenticated-reviewer"
     overture_id, company_id = seed_candidates(factory)
     try:
         with TestClient(app) as client:
@@ -206,6 +208,7 @@ def test_duplicate_candidate_pair_is_rejected_but_company_can_link_to_multiple_o
             assert second_pair.status_code == 200, second_pair.text
     finally:
         app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(require_identity_reviewer, None)
         Base.metadata.drop_all(engine)
         engine.dispose()
 
