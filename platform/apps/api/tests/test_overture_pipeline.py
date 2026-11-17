@@ -81,8 +81,40 @@ def test_pipeline_publishes_only_when_independent_evidence_and_boundary_pass(mon
     branch = db.get(Branch, candidate.branch_id)
     assert provider.status == "published" and provider.verification_status == "approved"
     assert branch.status == "published" and branch.postcode == "RM18 7QX"
+    assert branch.address_line_1 == "1 High Street" and branch.town_city == "Tilbury"
+    assert branch.latitude == 1.0 and branch.longitude == 1.0
     assert db.query(SourceObservation).filter_by(source_type="provider_owned_website_structured_data", review_status="accepted").count() == 1
     assert db.query(AuditEvent).filter_by(entity_type="provider", action="auto_approved_published").count() == 1
+    db.close(); engine.dispose()
+
+
+def test_overture_location_can_publish_without_a_website(monkeypatch, tmp_path):
+    engine, factory = _session_factory()
+    monkeypatch.setattr(overture_tasks, "SessionLocal", factory)
+    monkeypatch.setattr(overture_tasks, "ONS_BOUNDARY_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(overture_tasks.settings, "auto_approve_providers", True)
+    monkeypatch.setattr(overture_tasks, "_fetch_ons_geometry", lambda: {
+        "type": "Polygon", "coordinates": [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]]
+    })
+    db = factory()
+    raw = _candidate_row()
+    raw["website"] = ""
+    candidate = OvertureCandidate(gers_id="gers-no-website", candidate_name="Test Funeral Directors",
+        postcode="RM18 7QX", raw_data=raw, outcome="awaiting_enrichment", status="awaiting_enrichment")
+    db.add(candidate); db.commit(); candidate_id = candidate.id; db.close()
+
+    result = overture_tasks.process_overture_candidates.run(None, 20)
+    assert result["outcomes"] == {"auto_approved_published": 1}
+    db = factory()
+    candidate = db.get(OvertureCandidate, candidate_id)
+    branch = db.get(Branch, candidate.branch_id)
+    provider = db.get(Provider, candidate.provider_id)
+    assert provider.status == "published"
+    assert provider.website is None
+    assert branch.address_line_1 == "1 High Street"
+    assert branch.town_city == "Tilbury"
+    assert branch.postcode == "RM18 7QX"
+    assert db.query(SourceObservation).filter_by(source_type="provider_owned_website_structured_data").count() == 0
     db.close(); engine.dispose()
 
 
