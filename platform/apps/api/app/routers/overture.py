@@ -8,6 +8,7 @@ from app.config import settings
 from app.models import OvertureCandidate, OvertureImportRun, Provider, AuditEvent
 from app.overture_tasks import import_overture_records, process_overture_candidates
 from app.overture_feed import poll_latest_overture_release
+from app.identity_review_auth import require_identity_reviewer
 
 router = APIRouter(prefix="/api/v1/overture", tags=["Overture discovery and approval"])
 
@@ -44,7 +45,7 @@ def overture_status(db: Session = Depends(get_db)):
 
 
 @router.post("/imports", status_code=202)
-def start_overture_import(payload: OvertureImportPayload, db: Session = Depends(get_db)):
+def start_overture_import(payload: OvertureImportPayload, reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     invalid = [i for i, row in enumerate(payload.records) if not (row.get("gers_id") or row.get("id")) or not row.get("name")]
     if invalid:
         raise HTTPException(400, detail={"message": "Every Overture row must contain gers_id and name.", "invalid_row_indexes": invalid[:25]})
@@ -58,7 +59,7 @@ def start_overture_import(payload: OvertureImportPayload, db: Session = Depends(
 
 
 @router.post("/feed/check", status_code=202)
-def check_overture_feed_now():
+def check_overture_feed_now(reviewer: str = Depends(require_identity_reviewer)):
     if not settings.overture_feed_enabled:
         raise HTTPException(409, detail="Automatic Overture feed ingestion is disabled in configuration.")
     task = poll_latest_overture_release.delay()
@@ -66,7 +67,7 @@ def check_overture_feed_now():
 
 
 @router.post("/process", status_code=202)
-def queue_overture_processing(limit: int = 20, db: Session = Depends(get_db)):
+def queue_overture_processing(limit: int = 20, reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     task = process_overture_candidates.delay(None, max(1, min(limit, 50)))
     return {"status": "queued", "task_id": task.id, "limit": max(1, min(limit, 50))}
 
