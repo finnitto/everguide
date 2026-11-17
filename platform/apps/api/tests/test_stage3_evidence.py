@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.identity_review_auth import require_identity_reviewer
 from app.main import app
-from app.models import Branch, EvidenceRevalidationRequest, MembershipEvidence, Provider, SourcePermission
+from app.models import AuditEvent, Branch, EvidenceRevalidationRequest, MembershipEvidence, Provider, SourcePermission
 
 
 SOURCE = {
@@ -169,6 +169,27 @@ def test_sole_trader_and_partnership_do_not_need_companies_house_links():
     finally:
         _close(engine)
 
+
+def test_provider_update_audit_uses_authenticated_reviewer():
+    engine, factory, ids = _client()
+    try:
+        with TestClient(app) as client:
+            response = client.patch(
+                f"/api/v1/providers/{ids['provider_id']}",
+                json={"trading_name": "Updated Funeral Care"},
+            )
+            assert response.status_code == 200, response.text
+        with factory() as db:
+            event = (
+                db.query(AuditEvent)
+                .filter(AuditEvent.entity_type == "provider", AuditEvent.entity_id == ids["provider_id"])
+                .order_by(AuditEvent.id.desc())
+                .first()
+            )
+            assert event is not None
+            assert event.actor == "stage3-reviewer"
+    finally:
+        _close(engine)
 
 def test_membership_and_fca_evidence_are_independent_and_not_inferred():
     engine, _factory, ids = _client()
