@@ -207,7 +207,7 @@ The provider/Companies House path now requires explicit official England-boundar
 
 ## Identity-review API credentials
 
-The identity-review API (`/api/v1/identity-review/*`) requires an HTTP Bearer token. Configure `IDENTITY_REVIEW_CREDENTIALS` in the backend environment as a JSON object mapping stable reviewer IDs to SHA-256 hashes of high-entropy tokens, for example:
+The administrative API routes, including identity review and the Stage 3 evidence APIs, require an HTTP Bearer token. Configure `IDENTITY_REVIEW_CREDENTIALS` in the backend environment as a JSON object mapping stable reviewer IDs to SHA-256 hashes of high-entropy tokens, for example:
 
 ```json
 {"reviewer-1":"<64-character-sha256-hex-digest>"}
@@ -215,7 +215,7 @@ The identity-review API (`/api/v1/identity-review/*`) requires an HTTP Bearer to
 
 Generate the token securely outside the repository, calculate its SHA-256 digest, and give the raw token only to the intended reviewer. Store only the digest in the environment configuration. The API derives `reviewed_by` and the audit actor from the matched configured reviewer ID; request-body reviewer names are not trusted. If credentials are missing or invalid, identity-review routes fail closed with HTTP 401.
 
-This is a dedicated control for identity-review routes, not application-wide authentication. Other admin/API routes remain unauthenticated in this development architecture; do not expose the application publicly until comprehensive authentication and authorization are implemented.
+This is a reviewer-token gate for the currently mounted administrative API routes; public directory search and health/readiness endpoints remain intentionally public. It is not yet a complete role-based access-control design. Do not expose the application publicly until role separation, least-privilege permissions, credential lifecycle, monitoring and the remaining Stage 4 controls are accepted.
 
 
 Stage 3 pricing, membership, regulatory evidence and manual revalidation data contracts are documented in [STAGE3-EVIDENCE-DATA-DICTIONARY.md](docs/STAGE3-EVIDENCE-DATA-DICTIONARY.md). These reviewer-entry APIs do not fetch external sources or publish providers.
