@@ -41,3 +41,11 @@
 - [ ] Automate NAFD, SAIF/SAIFCharter and FCA checks with independent status records.
 - [ ] Add source-permission policy configuration and legal review before commercial rollout.
 - [ ] Expand the ruleset with calibrated validation data and false-positive/false-negative monitoring.
+
+
+## Five-stage implementation acceptance
+
+The current five-stage status, exit criteria, evidence requirements and operating
+safeguards are maintained in [FIVE-STAGE-ACCEPTANCE-PLAN.md](FIVE-STAGE-ACCEPTANCE-PLAN.md).
+The plan preserves the Overture-first policy and separates implemented code,
+CI validation, product acceptance and operational sign-off.
