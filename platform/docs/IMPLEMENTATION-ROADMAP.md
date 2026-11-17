@@ -43,6 +43,13 @@
 - [ ] Expand the ruleset with calibrated validation data and false-positive/false-negative monitoring.
 
 
+## Stage 3 evidence data foundation
+
+- [x] Separate pricing, membership and regulatory evidence records with source provenance and reviewer-only decisions.
+- [x] Provider-wide and branch-specific evidence scopes; explicit sole-trader/partnership business form without requiring a Companies House link.
+- [x] Idempotent, bounded reviewer-recorded revalidation ledger; transient failure does not imply negative verification.
+- [ ] Source-specific permitted retrieval, automated refresh, agreed pricing taxonomy and signed policy remain open. See [Stage 3 evidence data dictionary](STAGE3-EVIDENCE-DATA-DICTIONARY.md).
+
 ## Five-stage implementation acceptance
 
 The current five-stage status, exit criteria, evidence requirements and operating
