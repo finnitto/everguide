@@ -10,10 +10,19 @@
   "migration_revision_fix": "0020_overture_feed (18 characters), within PostgreSQL default alembic_version.version_num VARCHAR(32)",
   "production_database_accessed_during_build": false,
   "secrets_excluded": [
-    ".env",
-    ".env.local",
-    ".env.development",
-    ".env.production"
+    ".env and *.env files except *.example templates",
+    ".npmrc",
+    ".pypirc",
+    ".netrc",
+    "credentials.json",
+    "secrets.json",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "SSH/AWS/Azure/GPG credential directories",
+    "stage1_api_patch.py",
+    "stage1_task_patch.py"
   ],
   "postgres_data_excluded": true,
   "automatic_approval": {
@@ -53,15 +62,14 @@
     "publication_fields": "Provider and branch name/address/postcode/coordinates come from normalized Overture fields; corroborating sources do not silently replace them."
   },
   "tests": {
-    "new_regression_tests_added": 13,
-    "python_compileall": "Run #108's Python/frontend job passed compileall for application and migration sources.",
-    "targeted_pytest": "Run #147 full API suite passed 176 tests, including evidence-domain, migration-chain, reviewer route-matrix, token validity/revocation and public-route regressions.",
-    "full_api_pytest": "GitHub Actions run #147 passed 176 API tests, Python compile, frontend lint, TypeScript and production build.",
+    "python_compileall": "GitHub Actions run #166 passed Python compileall for application and migrations.",
+    "targeted_pytest": "Run #166 full API suite passed 179 tests, including Stage 3 evidence, Stage 4 route authentication, Stage 5 archive reproducibility/exclusion and migration revision tests.",
+    "full_api_pytest": "GitHub Actions run #166 passed 179 API tests (one existing deprecation warning), Python compile, frontend lint, TypeScript and production build.",
     "production_database_accessed_during_build": false,
-    "frontend_build": "GitHub Actions run #147 passed the frontend production build, including the reviewer-token sign-in page.",
-    "docker_build": "GitHub Actions run #147 passed isolated Docker image build and stack integration.",
-    "isolated_docker_integration": "GitHub Actions run #147 passed isolated Docker integration through migration head 0023_stage3_evidence; reviewer credential forwarding, disabled automatic approval/feed/processing/scheduling, API readiness/version, admin HTTP 200, worker idle state and empty Beat schedule were verified.",
-    "validation_run": "https://github.com/finnitto/everguide/actions/runs/44151136460"
+    "frontend_build": "GitHub Actions run #166 passed the frontend production build, including reviewer-token sign-in.",
+    "docker_build": "GitHub Actions run #166 passed isolated Docker image build and integration.",
+    "isolated_docker_integration": "GitHub Actions run #166 passed disposable Docker integration; migration 0023 was downgraded to 0022 and upgraded back to 0023, after which all five evidence tables and providers.business_form were verified. Reviewer credential forwarding, disabled approval/feed/processing/scheduling, API readiness/version, admin HTTP 200, idle worker and empty Beat schedule also passed.",
+    "validation_run": "https://github.com/finnitto/everguide/actions/runs/44153667313"
   },
   "approval_policy": {
     "shared_policy_version": "shared-provider approval policy is not authoritative for the Overture adapter",
@@ -109,8 +117,8 @@
     "legacy_discovery": "Independent Google Places, Companies House and company-website discovery entry points and legacy worker tasks are disabled.",
     "public_endpoint": "/api/v1/directory/search remains public; internal directory and candidate/admin endpoints require reviewer authentication."
   },
-  "stage1_status": "Core Overture-only discovery, GERS/provenance, reviewer-authenticated CH links, retired bypass paths and Overture-first approval safeguards are implemented. The observation-write gap is closed and reviewer audit attribution is tested. Current branch passed run #110 (171 API tests and Docker integration through migration 0023). Formal source-rights and admin-access acceptance remain outstanding.",
-  "stage5_status": "Current implementation commit 35c0d0cf53162c9bcd37dca4a6fc9e1af9d61707 passed run #147: 176 API tests, frontend lint/type/production build and disposable PostgreSQL migration to 0023_stage3_evidence. The isolated stack confirms safety controls disabled and reviewer-authenticated admin page HTTP 200. Archive regeneration, reproducibility/exclusion audit, migration downgrade/forward-fix rehearsal, target-host backup/replacement checklist and release sign-off remain outstanding.",
+  "stage1_status": "Core Overture-only discovery, GERS/provenance, reviewer-authenticated Companies House links, retired bypass paths and Overture-first approval safeguards are implemented. Reviewer auth and audit attribution tests passed in run #166 (179 API tests and disposable Docker integration). Formal source-rights and product/operational acceptance remain outstanding; no live processing/publication.",
+  "stage5_status": "Run #166 passed 179 API tests, frontend lint/type/build, initial deterministic package generation/upload and disposable PostgreSQL 0023 downgrade/forward-upgrade. Manual inspection found stage1_api_patch.py and stage1_task_patch.py in the initial ZIP. The packager now excludes both and tests this explicitly; the corrected archive and CI artifact are pending validation. Target-host backup/replacement checklist and release sign-off remain outstanding.",
   "security_review": {
     "access_control": "Bearer reviewer authentication required for active administrative reads and mutations; public directory search and health endpoints remain intentionally public; disabled/retired endpoints return HTTP 410.",
     "reviewed_gaps_fixed": [
@@ -120,10 +128,22 @@
     "defence_in_depth": [
       "GET /api/v1/enrichment/sources and GET /api/v1/enrichment/checks now have reviewer dependencies. Their enrichment router is not currently mounted in app.main, so these paths are not active API routes."
     ],
-    "regression_tests": "Stage 1 observation-write auth coverage is in test_stage1_admin_auth.py; Stage 3 reviewer, scope, permission-domain, expiry, idempotency and bounded-retry coverage is in test_stage3_evidence.py. These additions are pending current-branch CI."
+    "regression_tests": "Run #166 passed 179 API tests including the reviewer route-introspection matrix, valid/invalid/revoked token, public-route, evidence-domain, package exclusion/reproducibility and migration revision tests."
   },
-  "stage2_status": "Overture-first ruleset v2.0 and synthetic regression coverage passed current branch run #110. Conflict detection uses verified first-party evidence and same-branch street/locality alignment. Non-mutating live-candidate outcome analysis and product acceptance remain outstanding; no live processing/publication.",
-  "stage3_status": "Evidence-domain data foundation is implemented and passed run #110 (171 API tests and Docker migration 0023). Separate pricing, membership and regulatory evidence, provider/branch scope, audited business forms and bounded reviewer-recorded revalidation are present. Automated source-specific retrieval/refresh, policy/legal acceptance, canonical pricing taxonomy and full freshness/exception path remain open.",
-  "stage4_status": "Partially implemented. Reviewer bearer guard is applied to all internal API routes except the intentionally public directory search; route-introspection, anonymous read/write, valid/invalid/revoked token and public-route tests passed run #147. Admin frontend now prompts for a reviewer token held in memory and attaches it to all API calls. Audit attribution is tested and a credential operations runbook is documented. Role separation, target-environment rotation/revocation, backup/restore, observability, retention and operational runbooks remain open.",
-  "implementation_plan": "docs/FIVE-STAGE-ACCEPTANCE-PLAN.md"
+  "stage2_status": "Overture-first ruleset v2.0 and synthetic approval/conflict regression coverage passed run #166. Conflict detection uses verified Companies House links and branch-aligned first-party website evidence. Non-mutating live-candidate outcome analysis and product acceptance remain outstanding; no live processing/publication.",
+  "stage3_status": "Separate pricing, membership and regulatory evidence, provenance, provider/branch scope, sole-trader/partnership representation, reviewer-only decisions and bounded idempotent manual revalidation passed run #166. Migration 0023 passed disposable downgrade/forward-upgrade rehearsal. Automated source-specific retrieval/refresh, source policy/legal sign-off, canonical pricing taxonomy and complete automated freshness/exception path remain open.",
+  "stage4_status": "Partially implemented. Every internal API route except public directory search is reviewer-protected; route-introspection, anonymous read/write, valid/invalid/revoked token and public-route tests passed run #166. Admin frontend uses an in-memory reviewer token, audit attribution is tested and credential rotation/revocation guidance is documented. RBAC, target-environment secret rotation, backup/restore, observability/alerts and retention remain open.",
+  "implementation_plan": "docs/FIVE-STAGE-ACCEPTANCE-PLAN.md",
+  "release_packaging": {
+    "generator": "scripts/package_release.py",
+    "format": "everguide-v2.8.0.zip",
+    "deterministic": "Fixed ZIP timestamps, sorted member order and stable file modes; repeated-build SHA-256 equality is covered by tests.",
+    "checks": "Required-file validation, VERSION/release-manifest consistency, duplicate-path rejection, ZIP integrity validation and explicit exclusion checks.",
+    "sidecars": [
+      "everguide-v2.8.0.zip.sha256",
+      "everguide-v2.8.0.package-manifest.json"
+    ],
+    "ci_artifact": "GitHub Actions uploads the archive, SHA-256 sidecar and package manifest with 14-day retention.",
+    "current_status": "Initial packaging run #166 passed tests and uploaded an artifact, but manual inspection found development patch helper files in that initial ZIP. Explicit exclusions and regression tests for stage1_api_patch.py and stage1_task_patch.py are now committed; the corrected archive is awaiting a fresh CI run. Do not distribute the initial artifact."
+  }
 }
