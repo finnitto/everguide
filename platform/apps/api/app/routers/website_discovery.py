@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.identity_review_auth import require_identity_reviewer
 from app.config import settings
 from app.models import AuditEvent, WebsiteDiscoveryResult, WebsiteVerification, WebsiteVerificationRun, Provider, Branch, SourceObservation, ProviderQualityAction
 from app.tasks import discover_provider_websites, verify_website_candidates
@@ -141,7 +142,7 @@ def verification_runs(limit: int = 10, db: Session = Depends(get_db)):
 
 
 @router.post("/quality-assessments", status_code=200)
-def assess_existing_provider_quality(db: Session = Depends(get_db)):
+def assess_existing_provider_quality(reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     """Idempotently assess existing provider records from retained evidence only."""
     providers = db.query(Provider).order_by(Provider.id.asc()).all()
     observations = db.query(SourceObservation).all()
@@ -166,7 +167,7 @@ def assess_existing_provider_quality(db: Session = Depends(get_db)):
 
 
 @router.post("/quality-assessments/reassess", status_code=200)
-def reassess_existing_provider_quality(db: Session = Depends(get_db)):
+def reassess_existing_provider_quality(reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     """Re-evaluate all providers using the corrected retained-evidence rules.
 
     Provider publication status and branch records are deliberately untouched.
@@ -281,7 +282,7 @@ def list_quality_actions(status: str | None = "pending", db: Session = Depends(g
 
 
 @router.post("/quality-actions/seed")
-def seed_quality_actions(db: Session = Depends(get_db)):
+def seed_quality_actions(reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     """Create idempotent, evidence-linked proposals; never mutate live providers."""
     report = provider_identity_review(db)
     created = 0
@@ -353,7 +354,7 @@ def seed_quality_actions(db: Session = Depends(get_db)):
 
 
 @router.post("/quality-actions/{action_id}/decide")
-def decide_quality_action(action_id: int, decision: dict, db: Session = Depends(get_db)):
+def decide_quality_action(action_id: int, decision: dict, reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     action = db.get(ProviderQualityAction, action_id)
     if not action:
         raise HTTPException(404, "Quality action not found")
@@ -382,7 +383,7 @@ def decide_quality_action(action_id: int, decision: dict, db: Session = Depends(
                 detail={"old_trading_name": old_name, "new_trading_name": new_name,
                         "old_display_name": old_display_name, "new_display_name": provider.display_name,
                         "registered_name_unchanged": provider.registered_name,
-                        "quality_action_id": action.id, "evidence": action.evidence}, actor="local-admin"))
+                        "quality_action_id": action.id, "evidence": action.evidence}, actor=reviewer))
         elif action.action_type == "reclassify":
             new_type = (action.proposed_value or {}).get("provider_type")
             if new_type not in {"directory", "related_service"}:
@@ -398,7 +399,7 @@ def decide_quality_action(action_id: int, decision: dict, db: Session = Depends(
     else:
         action.status = "rejected"
     action.decision_note = str(decision.get("note") or "")[:2000] or None
-    action.decided_by = "local-admin"
+    action.decided_by = reviewer
     action.decided_at = datetime.now(timezone.utc)
     db.add(AuditEvent(entity_type="provider_quality_action", entity_id=action.id,
         action=("approved" if outcome == "approve" else "rejected"), detail={"provider_id": provider.id, "category": action.category,
@@ -411,7 +412,7 @@ def decide_quality_action(action_id: int, decision: dict, db: Session = Depends(
 
 
 @router.post("/branch-enrichment/postcodes")
-def enrich_published_branch_counties(db: Session = Depends(get_db)):
+def enrich_published_branch_counties(reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     """Fill missing published-branch counties from the Postcodes.io bulk API.
 
     Only explicit admin_county values are written. Unitary-authority and other
