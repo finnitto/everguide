@@ -146,9 +146,11 @@ def review_overture_link(link_id: int, payload: dict, db: Session = Depends(get_
                 400,
                 "Evidence must include an allowed source_type, source_reference and finding",
             )
-        if not isinstance(matched_fields, list):
-            raise HTTPException(400, "Evidence matched_fields must be a list")
-        matched_fields = {str(value).strip().lower() for value in matched_fields}
+        if not isinstance(matched_fields, list) or not matched_fields:
+            raise HTTPException(400, "Evidence matched_fields must be a non-empty list")
+        if any(not isinstance(value, str) or not value.strip() for value in matched_fields):
+            raise HTTPException(400, "Evidence matched_fields must contain only non-empty strings")
+        matched_fields = {value.strip().lower() for value in matched_fields}
         if len(matched_fields & allowed_match_fields) < 2:
             raise HTTPException(400, "At least two recognised identity fields must be evidenced")
         if not (matched_fields & {"trading_name", "branch_address", "postcode"}):
