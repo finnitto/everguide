@@ -84,6 +84,8 @@ class PricingEvidenceIn(EvidenceCommonIn):
 
 
 class MembershipEvidenceIn(EvidenceCommonIn):
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
     scheme_code: Literal["NAFD", "SAIF", "SAIFCharter", "other"]
     membership_number: str | None = Field(default=None, max_length=100)
     member_name: str | None = Field(default=None, max_length=240)
@@ -92,6 +94,8 @@ class MembershipEvidenceIn(EvidenceCommonIn):
 
 
 class RegulatoryEvidenceIn(EvidenceCommonIn):
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
     regulator_code: Literal["FCA", "other"]
     reference_number: str | None = Field(default=None, max_length=100)
     permissions: list[str] = Field(default_factory=list, max_length=100)
@@ -155,8 +159,11 @@ def _common_fields(payload: EvidenceCommonIn) -> dict:
 
 
 def _validate_dates(payload: EvidenceCommonIn) -> None:
-    if payload.effective_from and payload.effective_to and payload.effective_to < payload.effective_from:
-        raise HTTPException(422, "effective_to must be on or after effective_from")
+    for start_name, end_name in (("effective_from", "effective_to"), ("valid_from", "valid_to")):
+        start = getattr(payload, start_name, None)
+        end = getattr(payload, end_name, None)
+        if start and end and end < start:
+            raise HTTPException(422, f"{end_name} must be on or after {start_name}")
     if payload.expires_at and payload.source_retrieved_at and payload.expires_at < payload.source_retrieved_at:
         raise HTTPException(422, "expires_at must be on or after source_retrieved_at")
 
@@ -201,7 +208,13 @@ def _list_records(db: Session, model, provider_id, branch_id, review_status, inc
     if review_status is not None:
         query = query.filter(model.review_status == review_status)
     if not include_expired:
-        query = query.filter(or_(model.expires_at.is_(None), model.expires_at >= _now()))
+        now = _now()
+        expiry_conditions = [or_(model.expires_at.is_(None), model.expires_at >= now)]
+        for expiry_field in ("effective_to", "valid_to"):
+            expiry_column = getattr(model, expiry_field, None)
+            if expiry_column is not None:
+                expiry_conditions.append(or_(expiry_column.is_(None), expiry_column >= now))
+        query = query.filter(*expiry_conditions)
     total = query.count()
     rows = query.order_by(model.source_retrieved_at.desc(), model.id.desc()).offset(offset).limit(limit).all()
     return {"count": total, "items": [_record_dict(row) for row in rows]}
@@ -212,6 +225,10 @@ def _create_evidence(db: Session, model, payload: EvidenceCommonIn, reviewer: st
     _validate_source_permission(db, payload.provider_id, payload.source_permission_id)
     _validate_dates(payload)
     values = _common_fields(payload)
+    # Shared request schemas contain both effective-date and validity-date pairs;
+    # retain only fields defined by the selected evidence-domain table.
+    model_columns = {column.name for column in model.__table__.columns}
+    values = {key: value for key, value in values.items() if key in model_columns}
     values["review_status"] = "pending"
     row = model(**values)
     db.add(row)
