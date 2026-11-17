@@ -25,7 +25,7 @@ def _run_dict(run):
         "created_at": run.created_at, "started_at": run.started_at, "completed_at": run.completed_at}
 
 
-@router.get("/status")
+@router.get("/status", dependencies=[Depends(require_identity_reviewer)])
 def overture_status(db: Session = Depends(get_db)):
     counts = dict(db.query(OvertureCandidate.outcome, func.count(OvertureCandidate.id)).group_by(OvertureCandidate.outcome).all())
     latest = db.query(OvertureImportRun).order_by(OvertureImportRun.id.desc()).first()
@@ -72,13 +72,13 @@ def queue_overture_processing(limit: int = 20, reviewer: str = Depends(require_i
     return {"status": "queued", "task_id": task.id, "limit": max(1, min(limit, 50))}
 
 
-@router.get("/imports")
+@router.get("/imports", dependencies=[Depends(require_identity_reviewer)])
 def list_overture_imports(limit: int = 20, db: Session = Depends(get_db)):
     rows = db.query(OvertureImportRun).order_by(OvertureImportRun.id.desc()).limit(min(max(limit, 1), 100)).all()
     return {"items": [_run_dict(row) for row in rows]}
 
 
-@router.get("/candidates")
+@router.get("/candidates", dependencies=[Depends(require_identity_reviewer)])
 def list_overture_candidates(outcome: str | None = None, limit: int = 100, offset: int = 0, db: Session = Depends(get_db)):
     query = db.query(OvertureCandidate)
     if outcome:
