@@ -57,12 +57,26 @@ def test_website_postcode_conflict_requires_same_branch_address_and_verified_fir
     ) == []
 
 
-def test_explicit_closure_is_only_a_conflict_from_verified_first_party_evidence():
+def test_explicit_closure_requires_verified_first_party_evidence_for_same_branch():
     raw = overture_tasks._normalised_assessment_row(_candidate_row())
-    closed = {"branch_status": "permanently closed"}
+    closed = {
+        "branch_status": "permanently_closed",
+        "street": "1 High Street",
+        "town": "Tilbury",
+        "postcode": "RM18 7QX",
+        "has_complete_branch_address": True,
+    }
     assert overture_tasks._first_party_website_conflicts(
         raw, closed, verified_first_party=True
     ) == ["official_site_branch_closed"]
+
+    other_branch = {**closed, "street": "2 Station Road"}
+    assert overture_tasks._first_party_website_conflicts(
+        raw, other_branch, verified_first_party=True
+    ) == []
+    assert overture_tasks._first_party_website_conflicts(
+        raw, closed, verified_first_party=False
+    ) == []
 
 
 def test_import_persists_overture_provenance_and_is_idempotent(monkeypatch):
