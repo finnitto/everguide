@@ -487,8 +487,7 @@ def _candidate_evidence_matches(raw, extracted):
     token_match = (len(candidate_tokens & evidence_tokens) / max(1, min(len(candidate_tokens), len(evidence_tokens)))) >= 0.8
     name_match = bool(candidate_name and evidence_name and (SequenceMatcher(None, candidate_name, evidence_name).ratio() >= 0.72 or token_match))
     postcode_match = normalise_postcode(raw.get("postcode")) == normalise_postcode(extracted.get("postcode"))
-    phone_match = normalise_phone(raw.get("phone")) == normalise_phone(extracted.get("telephone"))
-    return name_match and postcode_match and phone_match
+    return name_match and postcode_match
 
 
 def _is_non_first_party_url(url: str | None) -> bool:
@@ -779,47 +778,46 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                 authority_codes = (_authority_codes_for_point(boundary, float(raw.get("longitude")), float(raw.get("latitude")))
                     if boundary and geography_scope == "england" and point is True else [])
                 discovery_url = row.get("website")
-                verified_url, verification = _verify_overture_website(raw, discovery_url)
-                extracted = verification.get("extracted_data") if verification else None
-                verified_first_party = bool(verified_url and extracted and verification.get("discovery_source") != "identity_or_branch_mismatch")
-                # Do not let a third-party directory/news/company-record URL become
-                # the candidate's official website or trigger a false domain conflict.
-                row["website"] = verified_url if verified_first_party or (verification and verification.get("discovery_source") == "identity_or_branch_mismatch") else None
+                verification = None
+                verified_url = None
+                extracted = None
+                # Website corroboration is optional and never supplies published branch fields.
+                if discovery_url and not _is_non_first_party_url(discovery_url):
+                    try:
+                        verification = verify_candidate(discovery_url)
+                    except Exception as exc:
+                        verification = {"status": "check_blocked_or_failed", "detail": str(exc)[:800],
+                            "robots_allowed": None, "final_url": discovery_url}
+                    extracted = (verification or {}).get("extracted_data") or None
+                    verified_url = (verification or {}).get("final_url") or discovery_url
+                verified_first_party = bool(verified_url and extracted and verification.get("status") == "reachable"
+                    and verification.get("robots_allowed") is True)
+                website_conflict = bool(extracted and _candidate_evidence_matches(raw, extracted) is False
+                    and extracted.get("has_complete_branch_address") is True)
+                if not discovery_url or _is_non_first_party_url(discovery_url):
+                    row["website"] = None
                 evidence = {
                     "source_type": "first_party_website" if verified_first_party else None,
                     "discovery_url": discovery_url,
-                    "discovery_url_class": "third_party_lead" if _is_non_first_party_url(discovery_url) else "unverified_website_lead",
-                    "business_name": extracted.get("name") if verified_first_party or (verification and verification.get("discovery_source") == "identity_or_branch_mismatch") else None,
-                    "reachable": bool(verified_first_party and verification.get("status") == "reachable"),
-                    "robots_allowed": verification.get("robots_allowed") if verified_first_party else None,
-                    "explicit_funeral_director_service": bool(verified_first_party and extracted and extracted.get("funeral_signals")),
-                    "website_url": verification.get("final_url") if verified_url else None,
-                    "website_discovery_source": verification.get("discovery_source") if verification else None,
-                    "website_search_query": verification.get("search_query") if verification else None,
-                    "website_search_error": verification.get("search_error") if verification else None,
-                    "website_discovery_attempts": verification.get("attempts", []) if verification else [],
+                    "discovery_url_class": "third_party_lead" if discovery_url and _is_non_first_party_url(discovery_url) else "overture_website",
+                    "website_url": verified_url if verified_first_party else None,
+                    "verification_status": (verification or {}).get("status", "not_checked"),
+                    "verification_detail": (verification or {}).get("detail"),
+                    "robots_allowed": (verification or {}).get("robots_allowed"),
+                    "page_title": (verification or {}).get("page_title"),
+                    "content_sha256": (verification or {}).get("content_sha256"),
                     "extracted_identity_evidence": ({k: extracted.get(k) for k in (
                         "name", "street", "town", "postcode", "telephone", "email", "website",
                         "source_type", "country", "confidence", "funeral_signals", "has_complete_branch_address")}
                         if extracted else None),
-                    "complete_branch_address": bool(verified_first_party and extracted and extracted.get("has_complete_branch_address")),
-                    "postcode": extracted.get("postcode") if verified_first_party and extracted else None,
-                    "telephone": extracted.get("telephone") if verified_first_party and extracted else None,
-                    "confidence": extracted.get("confidence", 0) if verified_first_party and extracted else 0,
-                    "conflicting_identity_or_branch_evidence": bool(verification and verification.get("discovery_source") == "identity_or_branch_mismatch"),
-                    "page_title": verification.get("page_title") if verification else None,
-                    "content_sha256": verification.get("content_sha256") if verification else None,
-                    "verification_status": verification.get("status") if verification else "website_missing",
-                    "verification_detail": verification.get("detail") if verification else "No official HTTPS website supplied by Overture.",
+                    "conflicting_identity_or_branch_evidence": website_conflict,
+                    "conflict_codes": ["official_site_identity_or_branch_address_mismatch"] if website_conflict else [],
                     "ons_boundary_code": (authority_codes[0] if len(authority_codes) == 1 else None)
                         if geography_scope == "england" else ONS_BOUNDARY_CODE if boundary else None,
                     "ons_boundary_codes": authority_codes if geography_scope == "england" else ([ONS_BOUNDARY_CODE] if boundary else []),
                     "geography_scope": geography_scope,
                     "point_in_scope": point,
                 }
-                if verified_first_party and extracted:
-                    evidence["telephone_match"] = normalise_phone(extracted.get("telephone")) == normalise_phone(raw.get("phone"))
-                    evidence["postcode_match"] = normalise_postcode(extracted.get("postcode")) == normalise_postcode(raw.get("postcode"))
                 duplicate = (str(raw.get("possible_duplicate", "")).lower() in {"true", "1", "yes"}
                     or _overture_duplicate_conflict(db, candidate))
                 existing_conflict, parent_provider = _existing_provider_match(db, row)
@@ -851,28 +849,24 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                         assessment["outcome"] = outcome
                         assessment["reasons"] = ";".join(filter(None, [assessment.get("reasons", ""), "existing_provider_or_branch_conflict"]))
                     else:
-                        verified_site = urllib.parse.urlsplit(evidence["website_url"])
-                        provider_website = urllib.parse.urlunsplit(("https", verified_site.netloc, "/", "", ""))
+                        provider_website = row.get("website")
                         provider = parent_provider
                         created_provider = provider is None
                         if created_provider:
                             provider = Provider(
-                                trading_name=extracted["name"], display_name=extracted["name"],
+                                trading_name=row["name"], display_name=row["name"],
                                 website=provider_website, provider_type="funeral_director",
                                 status="published", verification_status="approved", quality_status="confirmed",
-                                notes="Automatically approved from Overture discovery and independently verified first-party branch evidence under " + assessment["ruleset_version"],
+                                notes="Automatically approved from Overture Places location data under " + assessment["ruleset_version"],
                             )
                             db.add(provider)
                         branch = Branch(
-                            branch_name=extracted["name"], address_line_1=extracted["street"],
-                            town_city=extracted["town"], county=None,
-                            postcode=extracted["postcode"], telephone=extracted["telephone"],
-                            email=extracted.get("email"), website=provider_website,
-                            # Overture point coordinates are used for the official
-                            # boundary check only; do not publish them as a verified
-                            # branch pin without independent geocoding.
-                            latitude=None,
-                            longitude=None,
+                            branch_name=row["name"], address_line_1=row["address_line_1"],
+                            town_city=row["town_city"], county=None,
+                            postcode=row["postcode"], telephone=(str(row.get("phone"))[:40] if row.get("phone") else None),
+                            email=None, website=provider_website,
+                            latitude=_float_or_none(raw.get("latitude")),
+                            longitude=_float_or_none(raw.get("longitude")),
                             status="published", services=[],
                         )
                         provider.branches.append(branch)
@@ -888,26 +882,28 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                                 source_obs.provider_id = provider.id
                                 source_obs.branch_id = branch.id
                                 source_obs.review_status = "accepted"
-                        first_party_obs = SourceObservation(
-                            provider_id=provider.id, branch_id=branch.id,
-                            source_type="provider_owned_website_structured_data",
-                            source_name="Provider-owned website (independent first-party evidence)",
-                            source_url=evidence["website_url"], confidence=float(evidence["confidence"]),
-                            observed_data={k: extracted.get(k) for k in (
-                                "name", "street", "town", "postcode", "telephone", "email", "website",
-                                "source_type", "country", "confidence", "funeral_signals", "has_complete_branch_address")},
-                            review_status="accepted",
-                            notes="Accepted after robots permission, reachability, explicit funeral-service and branch identity checks. Page body was discarded.",
-                        )
-                        db.add(first_party_obs)
-                        db.flush()
+                        first_party_obs = None
+                        if verified_first_party and extracted:
+                            first_party_obs = SourceObservation(
+                                provider_id=provider.id, branch_id=branch.id,
+                                source_type="provider_owned_website_structured_data",
+                                source_name="Provider-owned website (optional corroborating evidence)",
+                                source_url=evidence["website_url"],
+                                confidence=_float_or_none(extracted.get("confidence")),
+                                observed_data={k: extracted.get(k) for k in (
+                                    "name", "street", "town", "postcode", "telephone", "email", "website",
+                                    "source_type", "country", "confidence", "funeral_signals", "has_complete_branch_address")},
+                                review_status="accepted",
+                                notes="Optional corroborating evidence. Overture remains the published source for the branch record.",
+                            )
+                            db.add(first_party_obs)
+                            db.flush()
                         db.add(AuditEvent(entity_type="provider", entity_id=provider.id,
                             action="auto_approved_published" if created_provider else "auto_approved_branch_added", detail={
                                 "overture_candidate_id": candidate.id, "gers_id": candidate.gers_id,
                                 "branch_id": branch.id, "overture_observation_id": candidate.source_observation_id,
-                                "first_party_observation_id": first_party_obs.id,
-                                "confidence": assessment.get("confidence"),
-                                "minimum_confidence": settings.auto_approval_min_confidence,
+                                "first_party_observation_id": first_party_obs.id if first_party_obs else None,
+                                "overture_source_confidence": assessment.get("source_confidence"),
                                 "ruleset_version": assessment.get("ruleset_version"),
                                 "source_licences": assessment.get("source_licences"),
                                 "ons_boundary_code": evidence.get("ons_boundary_code"),
