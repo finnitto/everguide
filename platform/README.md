@@ -40,34 +40,32 @@ applied to production customer data.
 
 ## Validation status (17 November 2026)
 
-The latest successful implementation checkpoint is GitHub Actions
-[run #166](https://github.com/finnitto/everguide/actions/runs/44153667313)
-on branch commit `32b1ddef7e94e9493371081e6fe57fd1ac077fa8`. It passed:
+The current implementation branch has passed the full validation workflow with
+**179 API tests**, Python compilation, frontend lint, TypeScript and production
+frontend build. CI builds a deterministic release archive from the maintained
+`platform/` tree, verifies required files/ZIP integrity/exclusions, and uploads
+the ZIP, SHA-256 sidecar and package manifest as a 14-day Actions artifact.
 
-- **179 API tests**, Python compilation, frontend lint, TypeScript and the
-  production frontend build.
-- Deterministic release archive generation, ZIP integrity/required-file checks,
-  repeat-build checksum tests and upload of the ZIP plus checksum/package
-  manifest as a 14-day Actions artifact.
-- Isolated Docker integration with reviewer credentials forwarded, automatic
-  approval/feed/processing/scheduling disabled, admin HTTP 200 and idle worker/
-  empty Beat checks.
-- Disposable PostgreSQL migration rehearsal: downgrade
-  `0023_stage3_evidence` to `0022_branch_overture_provenance`, upgrade back to
-  `0023_stage3_evidence`, then verify the five evidence tables and
-  `providers.business_form`.
+The validated `everguide-v2.8.0.zip` contains 155 files and is 382,181 bytes.
+Its SHA-256 is recorded in `everguide-v2.8.0.zip.sha256`; the accompanying
+`everguide-v2.8.0.package-manifest.json` records the source commit, digest,
+size, file count and exclusion policy. The corrected archive excludes
+`stage1_api_patch.py` and `stage1_task_patch.py` as well as environment
+secrets, package-manager/cloud/SSH credentials, private keys, local data,
+databases, dependencies, caches and build output. The `.env.example` template
+is retained.
 
-Manual inspection of that first package found two development patch helper
-scripts (`stage1_api_patch.py` and `stage1_task_patch.py`) that should not ship.
-The packager now excludes both and has a regression test; the corrected archive
-is awaiting a fresh workflow run. **Do not distribute the artifact from run
-#166.** The corrected artifact link/hash will be recorded after CI passes.
+The disposable Docker workflow also verified the migration chain by upgrading
+to `0023_stage3_evidence`, downgrading to `0022_branch_overture_provenance`,
+then upgrading back to `0023_stage3_evidence` and checking the five evidence
+tables plus `providers.business_form`. It verifies reviewer credentials,
+disabled automatic approval/feed/processing/scheduling, admin HTTP 200, idle
+worker and empty Beat schedule.
 
-All Docker migration and worker checks run against an isolated disposable
-PostgreSQL/Redis Compose project. No persistent local or production database was
-migrated, no live Overture feed was processed, no candidate was published and
-no production deployment was performed. CI success is not release or operational
-sign-off.
+These checks use a separately named disposable Compose project. No persistent
+local or production database was migrated, no live Overture feed was processed,
+no candidate was published and no production deployment was performed. CI
+success and the release artifact are not production or operational sign-off.
 
 See [docs/VALIDATION.md](docs/VALIDATION.md) for quick/full validation and
 package-audit instructions, and [docs/FIVE-STAGE-ACCEPTANCE-PLAN.md](docs/FIVE-STAGE-ACCEPTANCE-PLAN.md)
