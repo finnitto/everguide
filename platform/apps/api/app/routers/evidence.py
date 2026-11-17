@@ -421,7 +421,18 @@ def create_revalidation_request(payload: RevalidationRequestIn,
         max_attempts=4,
     )
     db.add(row)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        existing = db.query(EvidenceRevalidationRequest).filter(
+            EvidenceRevalidationRequest.idempotency_key == payload.idempotency_key
+        ).first()
+        if existing and existing.domain == payload.domain and existing.evidence_id == payload.evidence_id and existing.reason == payload.reason:
+            return _request_dict(existing)
+        if existing:
+            raise HTTPException(409, "Idempotency key was already used for a different request payload")
+        raise
     db.add(AuditEvent(
         entity_type="evidence_revalidation_request",
         entity_id=row.id,
