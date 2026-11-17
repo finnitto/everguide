@@ -31,6 +31,7 @@ def _request_page(api_key: str, start_index: int, sic_codes: list[str]):
 
 @celery_app.task(name="everguide.companies_house.import_sic_companies", bind=True)
 def import_companies_house_sic(self, run_id: int):
+    return {"status": "disabled", "reason": "overture_first_source_policy", "run_id": run_id}
     db = SessionLocal()
     run = db.get(CompaniesHouseRun, run_id)
     if not run:
@@ -162,6 +163,7 @@ def _get_company_resource(api_key: str, path: str):
 @celery_app.task(name="everguide.companies_house.enrich_profiles", bind=True)
 def enrich_company_profiles(self, run_id: int):
     """Enrich active legal entities using the official company profile resource."""
+    return {"status": "disabled", "reason": "overture_first_source_policy", "run_id": run_id}
     db = SessionLocal()
     run = db.get(CompaniesHouseRun, run_id)
     if not run:

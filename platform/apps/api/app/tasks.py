@@ -79,6 +79,7 @@ def _places_search(api_key, location):
 
 @celery_app.task(name="everguide.discovery.run", bind=True)
 def run_provider_discovery(self, run_id: int):
+    return {"status": "disabled", "reason": "overture_first_source_policy", "run_id": run_id}
     db = SessionLocal()
     run = db.get(DiscoveryRun, run_id)
     if not run:
@@ -205,6 +206,7 @@ def check_approved_sources():
 @celery_app.task(name="everguide.enrichment.discover_provider_websites")
 def discover_provider_websites():
     """Search independently for provider-owned website candidates by England region."""
+    return {"status": "disabled", "reason": "overture_first_source_policy"}
     from urllib.parse import urlparse
     from app.models import WebsiteDiscoveryResult
     from app.search_providers import search_web, SearchProviderError
@@ -250,12 +252,14 @@ def discover_provider_websites():
 @celery_app.task(name="everguide.automation.weekly_discovery_cycle")
 def weekly_discovery_cycle():
     """Run regional web discovery, then queue one bounded verification batch."""
+    return {"status": "disabled", "reason": "overture_first_source_policy"}
     from celery import chain
     return chain(discover_provider_websites.s(), enqueue_scheduled_verification.s()).apply_async().id
 
 
 @celery_app.task(name="everguide.automation.enqueue_scheduled_verification")
 def enqueue_scheduled_verification(discovery_result):
+    return {"status": "disabled", "reason": "overture_first_source_policy"}
     from app.models import WebsiteVerificationRun
     db = SessionLocal()
     try:
@@ -277,6 +281,7 @@ def enqueue_scheduled_verification(discovery_result):
 @celery_app.task(name="everguide.website.verify_candidates")
 def verify_website_candidates(limit=50, run_id=None):
     """Run conservative robots-aware technical checks on a bounded candidate batch."""
+    return {"status": "disabled", "reason": "overture_first_source_policy", "run_id": run_id}
     from app.models import WebsiteDiscoveryResult, WebsiteVerification, Provider, Branch, SourceObservation, AuditEvent
     from app.website_checks import verify_candidate
     from app.routers.website_discovery import _classify
@@ -462,6 +467,8 @@ def discover_company_websites(run_id: int):
     is automatically approved and published; ambiguous cases enter the exception
     queue. A provider/search outage pauses the run without corrupting candidates.
     """
+    return {"status": "disabled", "reason": "overture_first_source_policy", "run_id": run_id}
+
     import time
     import ipaddress
     from urllib.parse import urlsplit

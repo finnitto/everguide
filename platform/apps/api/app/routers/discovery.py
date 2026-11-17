@@ -32,24 +32,8 @@ def discovery_status():
     }
 
 @router.post("/runs", status_code=202)
-def start_discovery(db: Session = Depends(get_db)):
-    if not settings.google_places_api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="Google Places API key is not configured. Add GOOGLE_PLACES_API_KEY to your local .env file and restart Everguide."
-        )
-    active = db.query(DiscoveryRun).filter(DiscoveryRun.status.in_(["queued", "running"])).first()
-    if active:
-        return {"message": "A discovery run is already queued or running.", **run_dict(active)}
-    run = DiscoveryRun(status="queued", scope="england", source="google_places",
-                       created_at=datetime.now(timezone.utc))
-    db.add(run)
-    db.commit()
-    db.refresh(run)
-    task = run_provider_discovery.delay(run.id)
-    run.task_id = task.id
-    db.commit()
-    return run_dict(run)
+def start_discovery():
+    raise HTTPException(status_code=410, detail="Google Places discovery is disabled. Overture is the sole source of initial discovery candidates.")
 
 @router.get("/runs")
 def list_runs(limit: int = 20, db: Session = Depends(get_db)):

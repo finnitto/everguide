@@ -1,0 +1,227 @@
+"""Evidence-led Overture candidate assessment for automated Everguide publication.
+
+Overture is a discovery source. Its place-existence confidence is never treated
+as proof of service type, branch identity, address accuracy or trading status.
+This module is deterministic and side-effect free; publication is permitted
+only when independent first-party verification and source-rights checks pass.
+"""
+from __future__ import annotations
+
+import re
+from difflib import SequenceMatcher
+from urllib.parse import urlsplit
+
+from app.approval_policy import evaluate_common_evidence
+from app.candidate_quality import (
+    THURROCK_OUTWARD_CODES,
+    classify_service,
+    is_valid_uk_postcode,
+    normalise_phone,
+    normalise_postcode,
+    website_domain,
+)
+
+RULESET_VERSION = "overture-auto-approval-v1.3"
+# Source licences are recorded, not inferred from the Overture umbrella licence.
+KNOWN_LICENCES = {
+    "CDLA-Permissive-2.0", "Apache-2.0", "CC0-1.0", "CC0",
+}
+
+
+def _https_url(value: object) -> bool:
+    raw = str(value or "").strip()
+    if not raw:
+        return False
+    try:
+        parsed = urlsplit(raw if "://" in raw else "https://" + raw)
+        return parsed.scheme.lower() == "https" and bool(parsed.hostname) and not parsed.username and not parsed.password
+    except ValueError:
+        return False
+
+
+def _source_licences(sources: object) -> tuple[bool, list[str]]:
+    """Return whether every contributor licence is known and the licences found."""
+    if isinstance(sources, str):
+        import json
+        try:
+            sources = json.loads(sources or "[]")
+        except (TypeError, ValueError):
+            return False, []
+    if not isinstance(sources, list) or not sources:
+        return False, []
+    if any(not isinstance(item, dict) or not str(item.get("license") or "").strip() for item in sources):
+        return False, sorted({str(item.get("license") or "").strip() for item in sources if isinstance(item, dict) and item.get("license")})
+    licences = sorted({str(item.get("license") or "").strip() for item in sources})
+    valid = bool(licences) and all(item in KNOWN_LICENCES for item in licences)
+    return valid, licences
+
+
+def assess_overture_candidate(
+    row: dict,
+    *,
+    first_party_evidence: dict | None = None,
+    point_in_thurrock: bool | None = None,
+    point_in_scope: bool | None = None,
+    point_in_england: bool | None = None,
+    geography_scope: str = "thurrock",
+    duplicate_conflict: bool = False,
+    existing_provider_conflict: bool = False,
+    auto_approval_enabled: bool = True,
+    minimum_confidence: float = 0.94,
+) -> dict:
+    """Assess one Overture row; no DB writes or external requests are performed."""
+    evidence = first_party_evidence or {}
+    reasons: list[str] = []
+    service_class = classify_service(
+        name=row.get("name", ""),
+        basic_category=row.get("basic_category", ""),
+        taxonomy_primary=row.get("taxonomy_primary", ""),
+        website=row.get("website", ""),
+        description=row.get("description", ""),
+    )
+    if service_class != "funeral_director_candidate":
+        return _result(row, "excluded", [f"not_funeral_director:{service_class}"], service_class, [], None)
+
+    postcode = str(row.get("postcode") or "").strip().upper()
+    scope = str(geography_scope or "thurrock").strip().lower()
+    if scope not in {"thurrock", "basildon", "havering", "england"}:
+        reasons.append("unsupported_geographic_scope")
+    # Authority membership is determined by the official ONS polygon, not a
+    # postcode outward-code approximation. Thurrock retains its legacy postcode
+    # sanity check during the initial development phase.
+    outward = re.match(r"^([A-Z]{1,2}\d{1,2}[A-Z]?)", normalise_postcode(postcode))
+    if not is_valid_uk_postcode(postcode):
+        reasons.append("invalid_or_missing_uk_postcode")
+    if scope == "england":
+        if point_in_england is False:
+            reasons.append("point_outside_official_england_boundary")
+        elif point_in_england is not True:
+            reasons.append("official_england_boundary_not_confirmed")
+    else:
+        if scope == "thurrock" and (not outward or outward.group(1) not in THURROCK_OUTWARD_CODES):
+            reasons.append("postcode_outside_thurrock_area")
+        scope_point = point_in_scope if point_in_scope is not None else point_in_thurrock
+        if scope_point is False:
+            reasons.append(f"point_outside_official_{scope}_boundary")
+        elif scope_point is not True:
+            reasons.append(f"official_{scope}_boundary_not_confirmed")
+    if duplicate_conflict or str(row.get("possible_duplicate", "")).lower() in {"true", "1", "yes"}:
+        reasons.append("possible_same_name_postcode_match")
+    if existing_provider_conflict:
+        reasons.append("existing_provider_or_branch_conflict")
+
+    source_ok, licences = _source_licences(row.get("sources_json", []))
+    if not source_ok:
+        reasons.append("source_level_licence_missing_or_unrecognised")
+
+    # Overture score is provenance only. It is intentionally not a pass criterion.
+    if not row.get("name") or len(str(row.get("name")).strip()) < 3:
+        reasons.append("provider_name_missing")
+    if not row.get("address"):
+        reasons.append("overture_address_missing")
+    if not normalise_phone(row.get("phone")):
+        reasons.append("overture_phone_missing")
+    if not _https_url(row.get("website")):
+        reasons.append("official_https_website_not_available")
+
+    # Independent evidence required for automatic publication.
+    if evidence.get("source_type") != "first_party_website":
+        reasons.append("independent_first_party_evidence_missing")
+    if evidence.get("explicit_funeral_director_service") is not True:
+        reasons.append("first_party_funeral_director_service_not_confirmed")
+    candidate_domain = website_domain(row.get("website"))
+    evidence_url = evidence.get("website_url") or evidence.get("final_url")
+    evidence_domain = website_domain(evidence_url)
+    if evidence_url and (not candidate_domain or not evidence_domain or not (
+        candidate_domain == evidence_domain
+        or candidate_domain.endswith("." + evidence_domain)
+        or evidence_domain.endswith("." + candidate_domain)
+    )):
+        reasons.append("first_party_website_domain_mismatch")
+    if evidence.get("business_name"):
+        candidate_raw = str(row.get("name") or "").lower()
+        evidence_raw = str(evidence.get("business_name") or "").lower()
+        candidate_name = re.sub(r"[^a-z0-9]", "", candidate_raw)
+        evidence_name = re.sub(r"[^a-z0-9]", "", evidence_raw)
+        stop = {"the", "and", "funeral", "funerals", "director", "directors", "service", "services", "limited", "ltd", "plc"}
+        candidate_tokens = {token for token in re.findall(r"[a-z0-9]+", candidate_raw) if token not in stop}
+        evidence_tokens = {token for token in re.findall(r"[a-z0-9]+", evidence_raw) if token not in stop}
+        token_match = (len(candidate_tokens & evidence_tokens) / max(1, min(len(candidate_tokens), len(evidence_tokens)))) >= 0.8
+        sequence_match = bool(candidate_name and evidence_name and SequenceMatcher(None, candidate_name, evidence_name).ratio() >= 0.72)
+        if not candidate_name or not evidence_name or not (token_match or sequence_match):
+            reasons.append("first_party_identity_name_mismatch")
+    if evidence.get("postcode") and normalise_postcode(evidence.get("postcode")) != normalise_postcode(postcode):
+        reasons.append("first_party_postcode_does_not_match_overture")
+    overture_phone = normalise_phone(row.get("phone"))
+    evidence_phone = normalise_phone(evidence.get("telephone"))
+    if evidence.get("telephone") and (not overture_phone or not evidence_phone or overture_phone != evidence_phone):
+        reasons.append("independent_telephone_match_not_confirmed")
+
+    common = evaluate_common_evidence(
+        access_verified=(evidence.get("reachable") is True and evidence.get("source_type") == "first_party_website"),
+        robots_allowed=evidence.get("robots_allowed") is True,
+        complete_branch_address=evidence.get("complete_branch_address") is True,
+        postcode=evidence.get("postcode") or postcode,
+        telephone=evidence.get("telephone"),
+        confidence=evidence.get("confidence"),
+        minimum_confidence=minimum_confidence,
+        enabled=auto_approval_enabled,
+    )
+    # The shared policy's disabled flag must be carried into this adapter's
+    # decision reasons; otherwise a fully evidenced candidate could appear
+    # eligible even while automatic approval is disabled.
+    if "automatic_approval_disabled" in common["reasons"]:
+        reasons.append("automatic_approval_disabled")
+    if "first_party_website_access_not_verified" in common["reasons"]:
+        reasons.append("first_party_website_access_not_verified")
+    if "robots_permission_not_confirmed" in common["reasons"]:
+        reasons.append("first_party_website_access_not_verified")
+    if "complete_branch_address_not_confirmed" in common["reasons"]:
+        reasons.append("first_party_complete_branch_address_not_confirmed")
+    if "valid_uk_postcode_required" in common["reasons"]:
+        reasons.append("invalid_or_missing_uk_postcode")
+    if "telephone_required" in common["reasons"] or not evidence.get("telephone"):
+        reasons.append("independent_telephone_match_not_confirmed")
+    try:
+        confidence = float(evidence.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    if "confidence_below_threshold" in common["reasons"]:
+        reasons.append("first_party_evidence_confidence_below_threshold")
+    if evidence.get("conflicting_identity_or_branch_evidence") is True:
+        reasons.append("conflicting_identity_or_branch_evidence")
+
+    reasons = list(dict.fromkeys(reasons))
+    if not reasons:
+        outcome = "auto_approved_eligible"
+    elif any(reason in reasons for reason in (
+        "postcode_outside_thurrock_area", "possible_same_name_postcode_match",
+        "existing_provider_or_branch_conflict", "first_party_website_domain_mismatch",
+        "first_party_postcode_does_not_match_overture", "conflicting_identity_or_branch_evidence",
+        f"point_outside_official_{scope}_boundary", "point_outside_official_england_boundary",
+        "source_level_licence_missing_or_unrecognised",
+        "first_party_identity_name_mismatch", "unsupported_geographic_scope",
+    )):
+        outcome = "exception_review"
+    else:
+        outcome = "awaiting_enrichment"
+    result = _result(row, outcome, reasons, service_class, licences, confidence)
+    result["shared_policy_version"] = common["policy_version"]
+    return result
+
+
+def _result(row, outcome, reasons, service_class, licences, confidence):
+    return {
+        "source": "Overture Places",
+        "gers_id": row.get("gers_id", ""),
+        "candidate_name": row.get("name", ""),
+        "postcode": row.get("postcode", ""),
+        "source_confidence": row.get("confidence", ""),
+        "first_party_confidence": confidence,
+        "service_class": service_class,
+        "outcome": outcome,
+        "reasons": ";".join(reasons),
+        "source_licences": ";".join(licences),
+        "ruleset_version": RULESET_VERSION,
+        "shared_policy_version": "shared-provider-approval-v1.0",
+    }

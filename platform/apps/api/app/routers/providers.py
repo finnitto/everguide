@@ -33,12 +33,13 @@ def list_providers(q: str | None = None, status: str | None = None, limit: int =
     rows=query.order_by(Provider.trading_name).offset(offset).limit(limit).all()
     return {"items":[provider_dict(p) for p in rows],"count":query.count()}
 
-@router.post("/providers", status_code=201)
+@router.post("/providers", status_code=410)
 def create_provider(payload: ProviderCreate, db: Session = Depends(get_db)):
-    p=Provider(trading_name=payload.trading_name.strip(),registered_name=payload.registered_name,website=payload.website,provider_type=payload.provider_type,notes=payload.notes)
-    for item in payload.branches: p.branches.append(Branch(**item.model_dump()))
-    db.add(p); db.flush(); audit(db,"provider",p.id,"created",{"trading_name":p.trading_name,"branch_count":len(p.branches)}); db.commit(); db.refresh(p)
-    return provider_dict(p)
+    """Retired: providers may only be created by the Overture publication service."""
+    raise HTTPException(
+        status_code=410,
+        detail="Direct provider creation is disabled. Providers must originate from an eligible Overture candidate.",
+    )
 
 @router.get("/providers/{provider_id}")
 def get_provider(provider_id: int, db: Session = Depends(get_db)):
@@ -55,16 +56,22 @@ def update_provider(provider_id: int, payload: ProviderUpdate, db: Session = Dep
     audit(db,"provider",p.id,"updated",changes); db.commit(); db.refresh(p)
     return provider_dict(p)
 
-@router.post("/providers/{provider_id}/branches", status_code=201)
+@router.post("/providers/{provider_id}/branches", status_code=410)
 def add_branch(provider_id: int, payload: BranchInput, db: Session = Depends(get_db)):
-    p=db.get(Provider,provider_id)
-    if not p: raise HTTPException(404,"Provider not found")
-    b=Branch(provider_id=provider_id,**payload.model_dump()); db.add(b); db.flush(); audit(db,"branch",b.id,"created",{"provider_id":provider_id}); db.commit(); db.refresh(b)
-    return branch_dict(b)
+    """Retired: branches may only be created by the Overture publication service."""
+    raise HTTPException(
+        status_code=410,
+        detail="Direct branch creation is disabled. Branches require an eligible Overture candidate and verified branch evidence.",
+    )
 
 @router.patch("/providers/{provider_id}/status")
 def set_provider_status(provider_id: int, status: str, db: Session = Depends(get_db)):
     if status not in ALLOWED_PROVIDER_STATUSES: raise HTTPException(400,"Invalid provider status")
+    if status == "published":
+        raise HTTPException(
+            status_code=409,
+            detail="Direct publication is disabled. Publication is controlled exclusively by the Overture approval service.",
+        )
     p=db.get(Provider,provider_id)
     if not p: raise HTTPException(404,"Provider not found")
     p.status=status

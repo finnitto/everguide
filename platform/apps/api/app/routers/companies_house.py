@@ -36,16 +36,8 @@ def runs(db: Session = Depends(get_db)):
     return {"items": [_run_dict(x) for x in db.query(CompaniesHouseRun).order_by(CompaniesHouseRun.id.desc()).limit(20).all()]}
 
 @router.post("/runs")
-def start_import(db: Session = Depends(get_db)):
-    if not settings.companies_house_api_key:
-        raise HTTPException(status_code=400, detail="Companies House API key is not configured. Add COMPANIES_HOUSE_API_KEY to .env and restart Docker services.")
-    active = db.query(CompaniesHouseRun).filter(CompaniesHouseRun.status.in_(["queued", "running"])).first()
-    if active: return {"message":"A Companies House import is already queued or running.","run":_run_dict(active)}
-    sic_codes = [x.strip() for x in settings.companies_house_sic_codes.split(",") if x.strip()]
-    run = CompaniesHouseRun(status="queued", sic_codes=sic_codes, created_at=datetime.now(timezone.utc))
-    db.add(run); db.commit(); db.refresh(run)
-    task = import_companies_house_sic.delay(run.id)
-    return {"message":"Companies House SIC-code import queued. Existing provider directory remains empty; candidates are not published.","run":_run_dict(run),"task_id":task.id}
+def start_import():
+    raise HTTPException(status_code=410, detail="Independent Companies House candidate discovery is disabled. Overture is the sole source of initial discovery candidates.")
 
 @router.get("/candidates")
 def candidates(limit: int = 100, offset: int = 0, db: Session = Depends(get_db)):
@@ -57,19 +49,8 @@ def candidates(limit: int = 100, offset: int = 0, db: Session = Depends(get_db))
 
 
 @router.post("/profiles/enrich")
-def start_profile_enrichment(db: Session = Depends(get_db)):
-    if not settings.companies_house_api_key:
-        raise HTTPException(status_code=400, detail="Companies House API key is not configured.")
-    active = db.query(CompaniesHouseRun).filter(CompaniesHouseRun.status.in_(["queued", "running", "enriching"])).first()
-    if active:
-        return {"message": "A Companies House job is already queued or running.", "run": _run_dict(active)}
-    remaining = db.query(func.count(CompaniesHouseCandidate.id)).filter(CompaniesHouseCandidate.company_status == "active", CompaniesHouseCandidate.profile_status.in_(["not_requested", "failed"])).scalar() or 0
-    if not remaining:
-        return {"message": "All active candidates already have a completed profile lookup.", "remaining": 0}
-    run = CompaniesHouseRun(status="queued", sic_codes=["company-profile-enrichment"], total_results=remaining, created_at=datetime.now(timezone.utc))
-    db.add(run); db.commit(); db.refresh(run)
-    task = enrich_company_profiles.delay(run.id)
-    return {"message": f"Queued profile enrichment for {remaining:,} active companies. No providers or branches will be created.", "run": _run_dict(run), "task_id": task.id}
+def start_profile_enrichment():
+    raise HTTPException(status_code=410, detail="Independent Companies House enrichment is disabled pending the Overture-led workflow.")
 
 @router.get("/profiles/summary")
 def profile_summary(db: Session = Depends(get_db)):

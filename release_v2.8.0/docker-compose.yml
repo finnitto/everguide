@@ -1,0 +1,170 @@
+name: everguide
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-everguide}
+      POSTGRES_USER: ${POSTGRES_USER:-everguide}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-this-local-password}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      APP_NAME: ${APP_NAME:-Everguide}
+      APP_VERSION: ${APP_VERSION:-2.8.0-rc.1}
+      COMPANIES_HOUSE_API_KEY: ${COMPANIES_HOUSE_API_KEY:-}
+      COMPANIES_HOUSE_SIC_CODES: ${COMPANIES_HOUSE_SIC_CODES:-96030}
+      GOOGLE_PLACES_API_KEY: ${GOOGLE_PLACES_API_KEY:-}
+      BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
+      SEARCH_PROVIDER: ${SEARCH_PROVIDER:-brave}
+      AUTO_APPROVE_PROVIDERS: ${AUTO_APPROVE_PROVIDERS:-false}
+      AUTO_APPROVAL_MIN_CONFIDENCE: ${AUTO_APPROVAL_MIN_CONFIDENCE:-0.94}
+      OVERTURE_AUTO_PROCESS: ${OVERTURE_AUTO_PROCESS:-true}
+      OVERTURE_FEED_ENABLED: ${OVERTURE_FEED_ENABLED:-true}
+      OVERTURE_SCHEDULED_TASKS_ENABLED: ${OVERTURE_SCHEDULED_TASKS_ENABLED:-false}
+      OVERTURE_FEED_DAILY_HOUR: ${OVERTURE_FEED_DAILY_HOUR:-4}
+      OVERTURE_FEED_DAILY_MINUTE: ${OVERTURE_FEED_DAILY_MINUTE:-30}
+      OVERTURE_FEED_BATCH_SIZE: ${OVERTURE_FEED_BATCH_SIZE:-500}
+      GEOGRAPHY_MODE: ${GEOGRAPHY_MODE:-local_authorities}
+      GEOGRAPHY_AUTHORITIES: ${GEOGRAPHY_AUTHORITIES:-thurrock}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-everguide}:${POSTGRES_PASSWORD:-change-this-local-password}@db:5432/${POSTGRES_DB:-everguide}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["/bin/sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+    restart: unless-stopped
+  worker:
+    user: "10001:10001"
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      COMPANIES_HOUSE_API_KEY: ${COMPANIES_HOUSE_API_KEY:-}
+      COMPANIES_HOUSE_SIC_CODES: ${COMPANIES_HOUSE_SIC_CODES:-96030}
+      GOOGLE_PLACES_API_KEY: ${GOOGLE_PLACES_API_KEY:-}
+      BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
+      SEARCH_PROVIDER: ${SEARCH_PROVIDER:-brave}
+      AUTO_APPROVE_PROVIDERS: ${AUTO_APPROVE_PROVIDERS:-false}
+      AUTO_APPROVAL_MIN_CONFIDENCE: ${AUTO_APPROVAL_MIN_CONFIDENCE:-0.94}
+      OVERTURE_AUTO_PROCESS: ${OVERTURE_AUTO_PROCESS:-true}
+      OVERTURE_FEED_ENABLED: ${OVERTURE_FEED_ENABLED:-true}
+      OVERTURE_SCHEDULED_TASKS_ENABLED: ${OVERTURE_SCHEDULED_TASKS_ENABLED:-false}
+      OVERTURE_FEED_DAILY_HOUR: ${OVERTURE_FEED_DAILY_HOUR:-4}
+      OVERTURE_FEED_DAILY_MINUTE: ${OVERTURE_FEED_DAILY_MINUTE:-30}
+      OVERTURE_FEED_BATCH_SIZE: ${OVERTURE_FEED_BATCH_SIZE:-500}
+      GEOGRAPHY_MODE: ${GEOGRAPHY_MODE:-local_authorities}
+      GEOGRAPHY_AUTHORITIES: ${GEOGRAPHY_AUTHORITIES:-thurrock}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-everguide}:${POSTGRES_PASSWORD:-change-this-local-password}@db:5432/${POSTGRES_DB:-everguide}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
+      ONS_BOUNDARY_CACHE_DIR: /var/lib/everguide/cache
+      ONS_BOUNDARY_CACHE_TTL_HOURS: ${ONS_BOUNDARY_CACHE_TTL_HOURS:-720}
+    volumes:
+      - ons_boundary_cache:/var/lib/everguide/cache
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--loglevel=INFO"]
+    restart: unless-stopped
+  beat:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-everguide}:${POSTGRES_PASSWORD:-change-this-local-password}@db:5432/${POSTGRES_DB:-everguide}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
+      COMPANIES_HOUSE_API_KEY: ${COMPANIES_HOUSE_API_KEY:-}
+      COMPANIES_HOUSE_SIC_CODES: ${COMPANIES_HOUSE_SIC_CODES:-96030}
+      GOOGLE_PLACES_API_KEY: ${GOOGLE_PLACES_API_KEY:-}
+      BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
+      SEARCH_PROVIDER: ${SEARCH_PROVIDER:-brave}
+      AUTO_APPROVE_PROVIDERS: ${AUTO_APPROVE_PROVIDERS:-false}
+      AUTO_APPROVAL_MIN_CONFIDENCE: ${AUTO_APPROVAL_MIN_CONFIDENCE:-0.94}
+      OVERTURE_AUTO_PROCESS: ${OVERTURE_AUTO_PROCESS:-true}
+      OVERTURE_FEED_ENABLED: ${OVERTURE_FEED_ENABLED:-true}
+      OVERTURE_SCHEDULED_TASKS_ENABLED: ${OVERTURE_SCHEDULED_TASKS_ENABLED:-false}
+      OVERTURE_FEED_DAILY_HOUR: ${OVERTURE_FEED_DAILY_HOUR:-4}
+      OVERTURE_FEED_DAILY_MINUTE: ${OVERTURE_FEED_DAILY_MINUTE:-30}
+      OVERTURE_FEED_BATCH_SIZE: ${OVERTURE_FEED_BATCH_SIZE:-500}
+      GEOGRAPHY_MODE: ${GEOGRAPHY_MODE:-local_authorities}
+      GEOGRAPHY_AUTHORITIES: ${GEOGRAPHY_AUTHORITIES:-thurrock}
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    command: ["celery", "-A", "app.celery_app:celery_app", "beat", "--loglevel=INFO"]
+    restart: unless-stopped
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+      args:
+        # Local Docker Desktop default. Override HTTP_PROXY/HTTPS_PROXY in the
+        # shell or .env for another build environment; set them empty to disable.
+        HTTP_PROXY: ${HTTP_PROXY:-http://http.docker.internal:3128}
+        HTTPS_PROXY: ${HTTPS_PROXY:-http://http.docker.internal:3128}
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/admin', {redirect: 'manual'}).then(r=>{console.log('HTTP',r.status);process.exit(r.status < 500 ? 0 : 1)}).catch(e=>{console.error(e);process.exit(1)})"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+    restart: unless-stopped
+volumes:
+  postgres_data:
+  redis_data:
+  ons_boundary_cache:

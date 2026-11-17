@@ -46,40 +46,12 @@ def runs(limit: int = 10, db: Session = Depends(get_db)):
     return {"items":[_run_dict(x) for x in rows]}
 
 @router.post("/runs", status_code=202)
-def start_run(db: Session = Depends(get_db)):
-    if settings.search_provider != "brave" or not settings.brave_search_api_key:
-        raise HTTPException(400, "Website discovery requires SEARCH_PROVIDER=brave and BRAVE_SEARCH_API_KEY in .env. The key is used server-side only.")
-    active = db.query(CompanyWebsiteDiscoveryRun).filter(CompanyWebsiteDiscoveryRun.status.in_(["queued","running"])).order_by(CompanyWebsiteDiscoveryRun.id.desc()).first()
-    if active:
-        return {"message":"A company website discovery run is already active.","run":_run_dict(active)}
-    eligible = db.query(func.count(CompaniesHouseCandidate.id)).filter(CompaniesHouseCandidate.company_status=="active",
-        CompaniesHouseCandidate.profile_status=="completed", CompaniesHouseCandidate.classification.in_(["likely_funeral_director","uncertain"])).scalar() or 0
-    remaining = db.query(func.count(CompaniesHouseCandidate.id)).filter(CompaniesHouseCandidate.company_status=="active",
-        CompaniesHouseCandidate.profile_status=="completed", CompaniesHouseCandidate.classification.in_(["likely_funeral_director","uncertain"]),
-        CompaniesHouseCandidate.website_discovery_status.in_(["not_requested","search_failed"])).scalar() or 0
-    if not remaining:
-        raise HTTPException(409, "There are no eligible unsearched Companies House candidates. Refresh status or review existing discovery results.")
-    run=CompanyWebsiteDiscoveryRun(status="queued",include_uncertain=True,batch_size=25,total_candidates=remaining,created_at=datetime.now(timezone.utc))
-    db.add(run); db.commit(); db.refresh(run)
-    try:
-        task=discover_company_websites.delay(run.id)
-        run.celery_task_id=task.id; db.commit()
-    except Exception as exc:
-        db.rollback(); failed=db.get(CompanyWebsiteDiscoveryRun,run.id)
-        if failed: failed.status="failed"; failed.error_message=str(exc)[:1000]; failed.completed_at=datetime.now(timezone.utc); db.commit()
-        raise HTTPException(503,"Could not queue company website discovery. Check worker and Redis services.")
-    return {"message":f"England-wide website discovery queued for up to {remaining:,} eligible companies in batches of 25. High-confidence first-party candidates will be approved and published automatically; ambiguous or incomplete candidates will enter the exception queue.","run":_run_dict(run),"task_id":task.id}
+def start_run():
+    raise HTTPException(status_code=410, detail="Independent company website discovery is disabled pending the Overture-led workflow.")
 
 @router.post("/runs/{run_id}/resume", status_code=202)
-def resume_run(run_id: int, db: Session = Depends(get_db)):
-    run=db.get(CompanyWebsiteDiscoveryRun,run_id)
-    if not run: raise HTTPException(404,"Discovery run not found.")
-    if run.status in ["queued","running"]: return {"message":"This discovery run is already active.","run":_run_dict(run)}
-    if run.status not in ["paused","failed"]: raise HTTPException(409,"Only paused or failed discovery runs can be resumed.")
-    if not settings.brave_search_api_key: raise HTTPException(400,"Configure BRAVE_SEARCH_API_KEY before resuming.")
-    run.status="queued"; run.error_message=None; run.completed_at=None; db.commit()
-    task=discover_company_websites.delay(run.id); run.celery_task_id=task.id; db.commit()
-    return {"message":"Discovery resumed from unsearched companies. Previously saved candidates are retained.","run":_run_dict(run),"task_id":task.id}
+def resume_run(run_id: int):
+    raise HTTPException(status_code=410, detail="Legacy company website discovery runs cannot be resumed.")
 
 @router.get("/candidates")
 def candidates(limit: int=50, offset: int=0, db: Session=Depends(get_db)):

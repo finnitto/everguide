@@ -1,0 +1,66 @@
+{
+  "product": "Everguide",
+  "version": "2.8.0-rc.1",
+  "release_status": "pre-release candidate",
+  "archive_layout": "complete project files at archive root for controlled overlay extraction",
+  "workloads_included": [
+    "api",
+    "web",
+    "worker",
+    "celery-beat-scheduler",
+    "database-migrations",
+    "docker-compose",
+    "scripts",
+    "tests",
+    "documentation"
+  ],
+  "database_migrations_added": [],
+  "production_database_accessed_during_build": false,
+  "secrets_excluded": [
+    ".env",
+    ".env.local",
+    ".env.development",
+    ".env.production",
+    "credential files"
+  ],
+  "local_data_excluded": [
+    "database volumes",
+    "candidate exports",
+    "local backups",
+    "logs",
+    "temporary patch scripts"
+  ],
+  "release_notes": "CHANGELOG.md is the single consolidated release history; no per-release RELEASE-NOTES files are included.",
+  "geography": {
+    "mode_default": "local_authorities",
+    "authorities_default": [
+      "thurrock"
+    ],
+    "registered_authorities": {
+      "thurrock": "E06000034",
+      "basildon": "E07000066",
+      "havering": "E09000016"
+    },
+    "boundary_source": "ONS December 2025 Local Authority Districts",
+    "england_wide_enabled_by_default": false,
+    "expanded_pilot_enabled_by_default": false
+  },
+  "automatic_approval": {
+    "enabled_by_default": false,
+    "minimum_first_party_confidence_default": 0.94,
+    "overture_confidence_used_as_approval_proof": false,
+    "production_database_or_candidates_modified": false
+  },
+  "validation": {
+    "geography_patch_reported_checks": [
+      "Python compile/AST",
+      "Docker Compose YAML parse",
+      "changed-file whitespace check",
+      "15 focused Overture approval tests"
+    ],
+    "full_api_suite": "not run for this package build",
+    "feed_and_pipeline_suite": "included but not fully run for this package build",
+    "frontend_build": "not run for this package build",
+    "docker_build": "not run for this package build"
+  }
+}

@@ -122,28 +122,11 @@ def status(db: Session = Depends(get_db)):
 
 @router.post("/runs", status_code=202)
 def start_run():
-    if settings.search_provider == "brave" and not settings.brave_search_api_key:
-        raise HTTPException(400, "The selected search provider is not configured. Check its credentials in .env and restart API and worker.")
-    task = discover_provider_websites.delay()
-    return {"status":"queued","task_id":task.id,"message":"Automatic England regional website search queued."}
+    raise HTTPException(status_code=410, detail="Independent regional website discovery is disabled. Overture is the sole source of initial discovery candidates.")
 
 @router.post("/verification-runs", status_code=202)
-def start_verification_run(db: Session = Depends(get_db)):
-    _recover_stale_verification_runs(db)
-    active = db.query(WebsiteVerificationRun).filter(WebsiteVerificationRun.status.in_(["queued", "running"])).order_by(WebsiteVerificationRun.id.desc()).first()
-    if active:
-        return {"status": active.status, "run_id": active.id, "task_id": active.celery_task_id,
-                "message": "A website verification batch is already queued or running. No duplicate batch was created."}
-    run = WebsiteVerificationRun(status="queued", requested_limit=250, total=0, checked=0, outcomes={})
-    db.add(run); db.commit(); db.refresh(run)
-    try:
-        task = verify_website_candidates.delay(limit=250, run_id=run.id)
-        run.celery_task_id = task.id; db.commit()
-    except Exception as exc:
-        run.status = "failed"; run.error_message = str(exc)[:1000]; run.completed_at = datetime.now(timezone.utc); db.commit()
-        raise HTTPException(503, "Could not queue website verification. Check the worker and Redis services.")
-    return {"status":"queued", "run_id":run.id, "task_id":task.id,
-            "message":"Automatic backlog processing has started. Everguide will process up to 250 candidates per batch and queue the next batch when work remains."}
+def start_verification_run():
+    raise HTTPException(status_code=410, detail="Legacy website candidate verification is disabled pending the Overture-led workflow.")
 
 @router.get("/verification-runs")
 def verification_runs(limit: int = 10, db: Session = Depends(get_db)):
