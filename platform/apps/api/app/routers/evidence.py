@@ -39,6 +39,13 @@ def _now():
     return datetime.now(timezone.utc)
 
 
+def _as_utc(value: datetime) -> datetime:
+    """Normalise DB timestamps; SQLite drops timezone metadata for tz-aware columns."""
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 class EvidenceCommonIn(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
@@ -268,7 +275,7 @@ def _decide_evidence(db: Session, model, evidence_id: int, payload: EvidenceDeci
         now = _now()
         for field_name in ("expires_at", "effective_to", "valid_to"):
             end_date = getattr(row, field_name, None)
-            if end_date is not None and end_date < now:
+            if end_date is not None and _as_utc(end_date) < _as_utc(now):
                 raise HTTPException(409, "Expired evidence cannot be approved; capture refreshed evidence first")
     row.review_status = payload.review_status
     row.reviewed_by = reviewer
@@ -521,7 +528,7 @@ def record_revalidation_attempt(request_id: int, payload: RevalidationAttemptIn,
     now = _now()
     if request.status not in {"requested", "retry_wait"}:
         raise HTTPException(409, "Revalidation request is not open for another attempt")
-    if request.next_attempt_at and request.next_attempt_at > now:
+    if request.next_attempt_at and _as_utc(request.next_attempt_at) > _as_utc(now):
         raise HTTPException(409, "The next bounded retry is not due yet")
     if request.attempt_count >= request.max_attempts:
         raise HTTPException(409, "The bounded attempt limit has been reached")
