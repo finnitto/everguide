@@ -26,6 +26,45 @@ def _candidate_row():
     }
 
 
+def test_website_postcode_conflict_requires_same_branch_address_and_verified_first_party_source():
+    raw = overture_tasks._normalised_assessment_row(_candidate_row())
+    mismatch = {
+        "name": "Test Funeral Directors",
+        "street": "1 High Street",
+        "town": "Tilbury",
+        "postcode": "RM18 7QX",
+        "has_complete_branch_address": True,
+    }
+    assert overture_tasks._first_party_website_conflicts(
+        raw, mismatch, verified_first_party=True
+    ) == ["official_site_branch_postcode_mismatch"]
+
+    # A different branch on the same provider website is not this branch's conflict.
+    other_branch = {**mismatch, "street": "2 Station Road"}
+    assert overture_tasks._first_party_website_conflicts(
+        raw, other_branch, verified_first_party=True
+    ) == []
+
+    different_locality = {**mismatch, "town": "Grays"}
+    assert overture_tasks._first_party_website_conflicts(
+        raw, different_locality, verified_first_party=True
+    ) == []
+
+    # Inaccessible/robots-blocked pages cannot provide official conflict evidence.
+    closed = {**mismatch, "branch_status": "closed"}
+    assert overture_tasks._first_party_website_conflicts(
+        raw, closed, verified_first_party=False
+    ) == []
+
+
+def test_explicit_closure_is_only_a_conflict_from_verified_first_party_evidence():
+    raw = overture_tasks._normalised_assessment_row(_candidate_row())
+    closed = {"branch_status": "permanently closed"}
+    assert overture_tasks._first_party_website_conflicts(
+        raw, closed, verified_first_party=True
+    ) == ["official_site_branch_closed"]
+
+
 def test_import_persists_overture_provenance_and_is_idempotent(monkeypatch):
     engine, factory = _session_factory()
     monkeypatch.setattr(overture_tasks, "SessionLocal", factory)
