@@ -23,6 +23,7 @@ htmlcov/
 data/
 uploads/
 backups/
+releases/
 *.sqlite
 *.db
 *.zip
