@@ -54,13 +54,13 @@
   },
   "tests": {
     "new_regression_tests_added": 13,
-    "python_compileall": "Latest successful pre-Stage-3 run #63 passed Python compile; the Stage 3 additions are pending current-branch validation.",
+    "python_compileall": "Run #104 passed Python compile; the subsequent evidence timestamp canonicalisation commit is awaiting validation.",
     "targeted_pytest": "Covered by full API suite; 151 passed.",
-    "full_api_pytest": "Latest successful pre-Stage-3 run #63 passed 160 tests. Ten Stage 3 evidence tests were added afterwards and are pending current-branch CI.",
+    "full_api_pytest": "Latest successful run #104 passed 171 API tests (including nine Stage 3 evidence tests and one reviewer audit-attribution regression). The most recent UTC canonicalisation follow-up is awaiting a fresh validation run.",
     "production_database_accessed_during_build": false,
     "frontend_build": "Latest evidenced GitHub Actions run #38 passed the production frontend build.",
     "docker_build": "Passed as part of successful pre-Stage-3 isolated Docker integration in run #63; the migration 0023 upgrade is pending.",
-    "isolated_docker_integration": "Latest successful pre-Stage-3 run #63 passed isolated Docker integration through migration 0022_branch_overture_provenance, checking API readiness/version, reviewer credential forwarding, disabled safety controls, admin HTTP 200, worker liveness/idle state and empty Beat schedule. Migration 0023 and its disposable upgrade validation are pending.",
+    "isolated_docker_integration": "Run #102 and #104 passed isolated Docker integration through migration 0023_stage3_evidence, including API readiness/version, reviewer credential forwarding, disabled safety controls, admin HTTP 200, worker liveness/idle state and empty Beat schedule. The latest UTC canonicalisation follow-up is awaiting a fresh validation run.",
     "validation_run": "https://github.com/finnitto/everguide/actions/runs/44128256045"
   },
   "approval_policy": {
