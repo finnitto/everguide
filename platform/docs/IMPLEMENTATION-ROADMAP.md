@@ -64,7 +64,7 @@
 - [x] Add synthetic regression tests for archive reproducibility, ZIP integrity, required files and secret/local-data exclusions.
 - [x] Add CI artifact upload for the ZIP and both sidecars, with 14-day retention.
 - [x] Add disposable PostgreSQL downgrade from migration 0023 to 0022 and forward-upgrade to 0023, verifying the new evidence tables/column.
-- [ ] Re-run CI after the final package correction excluding `stage1_api_patch.py` and `stage1_task_patch.py`; distribute only the corrected artifact.
+- [x] Corrected package excludes `stage1_api_patch.py` and `stage1_task_patch.py`; reproducibility, integrity, secret/local-data exclusion and artifact upload passed GitHub Actions run #183.
 - [ ] Complete target-host backup/restore, rollback/forward-fix and replacement checklist before any persistent workload change.
 
 ## Five-stage implementation acceptance
