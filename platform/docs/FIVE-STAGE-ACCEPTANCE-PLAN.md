@@ -82,17 +82,18 @@ This stage must keep distinct evidence domains separate:
 - Explicit evidence freshness, expiry, bounded retries, source rights, exception handling and audit history.
 
 ### Exit criteria
-- [ ] Signed data dictionary and source policy for each evidence domain.
-- [ ] Separate models/statuses for pricing, membership and regulatory evidence; no conflation with provider identity or publication approval.
-- [ ] Every evidence item records source, retrieved/checked time, evidence payload/digest, status, reviewer/automation actor and any effective/expiry dates.
-- [ ] Revalidation is idempotent, bounded and resumable; transient failures do not become negative verification decisions.
-- [ ] Branch evidence is linked to the correct branch, not merely the provider parent.
-- [ ] Sole trader/partnership and multi-branch cases are tested.
-- [ ] Human approval and publication boundaries are explicit; no new automatic publishing behavior without a separately accepted policy.
-- [ ] Test fixtures cover stale, missing, conflicting, expired and unavailable evidence.
+- [ ] Signed data dictionary and source policy for each evidence domain (draft data dictionary added; source-specific policy/legal review remains outstanding).
+- [x] Separate models/statuses for pricing, membership and regulatory evidence; no conflation with provider identity or publication approval.
+- [x] Evidence records capture source URL/name, rights basis, optional approved source-permission reference, retrieval time, evidence payload/digest, reviewer decision and effective/expiry dates.
+- [x] Reviewer-created revalidation requests are idempotent, persisted, resumable and bounded to four attempts; transient failure remains a revalidation outcome and never changes the evidence's reported or review status.
+- [x] Branch evidence is linked to a branch belonging to the selected provider; provider-wide evidence remains explicitly provider-scoped.
+- [x] Sole trader/partnership representation is supported without requiring a Companies House link; multi-branch coverage has branch-scope tests.
+- [x] Human evidence approval is separate from provider identity approval/publication; all new evidence is pending review by default.
+- [ ] Automated source-specific retrieval, freshness scheduling, source rights configuration and exception handling are not implemented; they require accepted source policy and connector design.
+- [ ] Test fixtures cover stale, missing, conflicting, expired and unavailable source evidence across the complete automated revalidation path.
 
 ### Current assessment
-Not signed off. Some legacy enrichment components exist, but the current Overture-first workflow and five-stage evidence model need a consolidated implementation and data-contract review before treating this stage as complete.
+Partially implemented and CI-pending. Additive migration 0023 and reviewer-only APIs now capture discrete pricing, membership and regulator evidence, support sole-trader/partnership business forms without fabricated Companies House links, and provide idempotent bounded reviewer-recorded revalidation attempts. No external source is fetched by these APIs, no membership/FCA status is inferred, and approval of an evidence item does not approve or publish a provider. Source-specific automation, source-policy/legal review and broader freshness/exception tests remain open.
 
 ## Stage 4 — Operational resilience, security and maintenance
 
