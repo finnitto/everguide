@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/v1", tags=["directory"])
 ALLOWED_PROVIDER_STATUSES = {"draft", "needs_review", "approved", "published", "suspended", "rejected"}
 ALLOWED_BRANCH_STATUSES = {"draft", "published", "suspended"}
 
-def audit(db, entity_type, entity_id, action, detail=None, actor="local-admin"):
+def audit(db, entity_type, entity_id, action, detail=None, *, actor: str):
     db.add(AuditEvent(entity_type=entity_type, entity_id=entity_id, action=action, detail=detail or {}, actor=actor))
 
 def provider_dict(p):
@@ -54,7 +54,7 @@ def update_provider(provider_id: int, payload: ProviderUpdate, reviewer: str = D
     if not p: raise HTTPException(404,"Provider not found")
     changes=payload.model_dump(exclude_unset=True)
     for k,v in changes.items(): setattr(p,k,v)
-    audit(db,"provider",p.id,"updated",changes); db.commit(); db.refresh(p)
+    audit(db,"provider",p.id,"updated",changes, actor=reviewer); db.commit(); db.refresh(p)
     return provider_dict(p)
 
 @router.post("/providers/{provider_id}/branches", status_code=410)
@@ -80,7 +80,7 @@ def set_provider_status(provider_id: int, status: str, reviewer: str = Depends(r
         p.verification_status="approved"
         for branch in p.branches:
             if branch.status == "draft": branch.status = "published"
-    audit(db,"provider",p.id,"status_changed",{"status":status}); db.commit(); return {"id":p.id,"status":p.status}
+    audit(db,"provider",p.id,"status_changed",{"status":status}, actor=reviewer); db.commit(); return {"id":p.id,"status":p.status}
 
 @router.post("/observations", status_code=201)
 def create_observation(
@@ -131,7 +131,7 @@ def decide_observation(observation_id: int, payload: ObservationDecision, review
     audit(db, "observation", o.id, "reviewed", {
         "review_status": o.review_status, "provider_id": o.provider_id,
         "branch_id": o.branch_id
-    })
+    }, actor=reviewer)
     db.commit()
     db.refresh(o)
     return observation_dict(o)
