@@ -3,7 +3,8 @@
   "version": "2.8.0",
   "archive_layout": "project files at archive root for direct overlay extraction",
   "database_migrations_added": [
-    "0021_overture_company_links"
+    "0021_overture_company_links",
+    "0022_branch_overture_provenance"
   ],
   "migration_revision_fix": "0020_overture_feed (18 characters), within PostgreSQL default alembic_version.version_num VARCHAR(32)",
   "production_database_accessed_during_build": false,
@@ -16,15 +17,21 @@
   "postgres_data_excluded": true,
   "automatic_approval": {
     "enabled_by_default": false,
-    "minimum_first_party_confidence_default": 0.94,
     "overture_confidence_used_as_approval_proof": false,
-    "requires_first_party_website_and_robots_permission": true,
     "requires_source_level_licence": true,
     "requires_official_ons_england_boundary": true,
     "creates_provider_and_branch_atomically": true,
     "existing_provider_branch_fields_overwritten": false,
     "exception_only_for_unresolved_conflicts": true,
-    "default_safety_note": "Disabled by default; existing explicit .env setting is respected."
+    "default_safety_note": "Automatic provider/branch publication remains disabled by default and is blocked at the final write boundary unless explicitly enabled.",
+    "ruleset_version": "overture-first-approval-v2.0",
+    "approval_source_of_truth": "Overture Places; Companies House and official funeral-director websites are optional corroboration and material-conflict signals, not approval prerequisites.",
+    "optional_fields": [
+      "website",
+      "telephone",
+      "Companies House link"
+    ],
+    "company_link_requirement": "A reviewer-verified link is required only to use a Companies House record as a conflict signal; direct Overture-first publication does not require a Companies House link."
   },
   "overture_pipeline": {
     "database_ingestion_and_publication_integrated": true,
@@ -40,16 +47,20 @@
     "enrichment_retries": "Initial assessment plus at most three scheduled retries after 2, 7 and 21 days; excludes exceptions and exclusions",
     "stale_run_recovery": "Daily recovery after 24 hours: release stale candidate claims, resume pending work, close empty orphaned runs with audit events; never deletes history",
     "automatic_processing_default": false,
-    "scheduled_tasks_default": false
+    "scheduled_tasks_default": false,
+    "approval_ruleset": "overture-first-approval-v2.0",
+    "publication_fields": "Provider and branch name/address/postcode/coordinates come from normalized Overture fields; corroborating sources do not silently replace them."
   },
   "tests": {
     "new_regression_tests_added": 3,
     "python_compileall": "passed",
     "targeted_pytest": "Covered by full API suite; 151 passed.",
-    "full_api_pytest": "151 passed, 1 Starlette/AnyIO deprecation warning before final manual-import retirement regression; final suite rerun required.",
+    "full_api_pytest": "Latest evidenced GitHub Actions run #38 passed the complete API test suite within quick validation.",
     "production_database_accessed_during_build": false,
-    "frontend_build": "not run",
-    "docker_build": "not run"
+    "frontend_build": "Latest evidenced GitHub Actions run #38 passed the production frontend build.",
+    "docker_build": "not run",
+    "isolated_docker_integration": "Latest evidenced GitHub Actions run #38 passed isolated Docker integration, reaching migration 0022_branch_overture_provenance and checking API readiness/version, admin HTTP 200, worker liveness/idle state and empty Beat schedule.",
+    "validation_run": "https://github.com/finnitto/everguide/actions/runs/44118434200"
   },
   "approval_policy": {
     "shared_policy_version": "shared-provider-approval-v1.0",
@@ -93,5 +104,6 @@
     "legacy_discovery": "Independent Google Places, Companies House and company-website discovery entry points and legacy worker tasks are disabled.",
     "public_endpoint": "/api/v1/directory/search remains public; internal directory and candidate/admin endpoints require reviewer authentication."
   },
-  "stage1_status": "Implementation and API test suite complete; release readiness remains subject to frontend, container, migration dry-run and package validation in Stage 5. No production deployment or database migration performed."
+  "stage1_status": "Implementation and CI validated at reviewed branch HEAD 0958c66a2ec6b6b387accde2b802f84ec927faf1; formal product/security acceptance and release-wide sign-off remain outstanding.",
+  "stage5_status": "CI validates the current source in a disposable stack. Current release archive regeneration, reproducibility, contents/exclusion inspection, checksum evidence and target-database migration rehearsal/rollback evidence remain outstanding."
 }
