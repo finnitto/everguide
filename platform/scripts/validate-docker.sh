@@ -3,22 +3,32 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
-PROJECT="everguide-validation-$$"
-ENV_FILE="$ROOT_DIR/.env.validation.$$"
+PROJECT="everguide-validation-$"
+ENV_FILE="$ROOT_DIR/.env.validation.$"
 
 command -v docker >/dev/null 2>&1 || { echo "Docker is required." >&2; exit 1; }
 docker compose version >/dev/null
 
-# Use a private, disposable environment. Explicitly blank external service
-# credentials so host-shell exports and the developer's .env cannot leak in.
+# Capture an optional local build proxy, then explicitly control every
+# Compose interpolation variable so host exports and the developer's .env
+# cannot inject credentials or point this stack at the normal database.
+if [[ "${CI:-}" == "true" ]]; then
+  BUILD_HTTP_PROXY="${VALIDATION_HTTP_PROXY:-}"
+  BUILD_HTTPS_PROXY="${VALIDATION_HTTPS_PROXY:-}"
+else
+  BUILD_HTTP_PROXY="${VALIDATION_HTTP_PROXY:-${HTTP_PROXY:-http://http.docker.internal:3128}}"
+  BUILD_HTTPS_PROXY="${VALIDATION_HTTPS_PROXY:-${HTTPS_PROXY:-http://http.docker.internal:3128}}"
+fi
+
 DB_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(24))')"
+APP_VERSION="$(tr -d '\\r\\n' < "$ROOT_DIR/VERSION")"
 API_PORT="$(python -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 WEB_PORT="$(python -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 
 cat > "$ENV_FILE" <<EOF
 APP_ENV=test
 APP_NAME=Everguide
-APP_VERSION=2.8.0
+APP_VERSION=$APP_VERSION
 POSTGRES_DB=everguide_validation
 POSTGRES_USER=everguide_validation
 POSTGRES_PASSWORD=$DB_PASSWORD
@@ -42,21 +52,33 @@ ONS_BOUNDARY_CACHE_TTL_HOURS=720
 EOF
 chmod 600 "$ENV_FILE" 2>/dev/null || true
 
+export APP_ENV=test APP_NAME=Everguide APP_VERSION
+export POSTGRES_DB=everguide_validation POSTGRES_USER=everguide_validation POSTGRES_PASSWORD="$DB_PASSWORD"
+export API_PORT WEB_PORT NEXT_PUBLIC_API_BASE_URL="http://localhost:$API_PORT"
+export COMPANIES_HOUSE_API_KEY= GOOGLE_PLACES_API_KEY= BRAVE_SEARCH_API_KEY=
+export SEARCH_PROVIDER=brave AUTO_APPROVE_PROVIDERS=false AUTO_APPROVAL_MIN_CONFIDENCE=0.94
+export OVERTURE_AUTO_PROCESS=false OVERTURE_FEED_ENABLED=false OVERTURE_SCHEDULED_TASKS_ENABLED=false
+export OVERTURE_FEED_DAILY_HOUR=4 OVERTURE_FEED_DAILY_MINUTE=30 OVERTURE_FEED_BATCH_SIZE=50
+export IDENTITY_REVIEW_CREDENTIALS='{}' ONS_BOUNDARY_CACHE_TTL_HOURS=720
+export HTTP_PROXY="$BUILD_HTTP_PROXY" HTTPS_PROXY="$BUILD_HTTPS_PROXY"
+
 dc() {
   docker compose --project-name "$PROJECT" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
 }
 
 cleanup() {
   status=$?
+  trap - EXIT ERR
   dc down --volumes --remove-orphans >/dev/null 2>&1 || true
   rm -f "$ENV_FILE"
   exit "$status"
 }
 on_error() {
   status=$?
+  trap - ERR
   echo "Docker validation failed; collecting disposable environment logs." >&2
   dc logs --no-color --tail=120 >&2 || true
-  return "$status"
+  exit "$status"
 }
 trap cleanup EXIT
 trap on_error ERR
