@@ -20,11 +20,11 @@ def provider_dict(p):
 def branch_dict(b):
     return {"id":b.id,"provider_id":b.provider_id,"branch_name":b.branch_name,"address_line_1":b.address_line_1,"address_line_2":b.address_line_2,"town_city":b.town_city,"county":b.county,"postcode":b.postcode,"telephone":b.telephone,"email":b.email,"website":b.website,"latitude":b.latitude,"longitude":b.longitude,"services":b.services or [],"status":b.status}
 
-@router.get("/dashboard")
+@router.get("/dashboard", dependencies=[Depends(require_identity_reviewer)])
 def dashboard(db: Session = Depends(get_db)):
     return {"providers":db.query(Provider).count(),"branches":db.query(Branch).count(),"published":db.query(Provider).filter(Provider.status=="published").count(),"needs_review":db.query(Provider).filter(Provider.status=="needs_review").count(),"draft":db.query(Provider).filter(Provider.status=="draft").count(),"observations_pending":db.query(SourceObservation).filter(SourceObservation.review_status=="pending").count()}
 
-@router.get("/providers")
+@router.get("/providers", dependencies=[Depends(require_identity_reviewer)])
 def list_providers(q: str | None = None, status: str | None = None, limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0), db: Session = Depends(get_db)):
     query = db.query(Provider).options(joinedload(Provider.branches))
     if q:
@@ -42,7 +42,7 @@ def create_provider(payload: ProviderCreate, db: Session = Depends(get_db)):
         detail="Direct provider creation is disabled. Providers must originate from an eligible Overture candidate.",
     )
 
-@router.get("/providers/{provider_id}")
+@router.get("/providers/{provider_id}", dependencies=[Depends(require_identity_reviewer)])
 def get_provider(provider_id: int, db: Session = Depends(get_db)):
     p=db.query(Provider).options(joinedload(Provider.branches)).filter(Provider.id==provider_id).first()
     if not p: raise HTTPException(404,"Provider not found")
@@ -92,7 +92,7 @@ def create_observation(payload: ObservationCreate, db: Session = Depends(get_db)
 def observation_dict(o):
     return {"id":o.id,"provider_id":o.provider_id,"branch_id":o.branch_id,"source_type":o.source_type,"source_name":o.source_name,"source_url":o.source_url,"retrieved_at":o.retrieved_at,"confidence":o.confidence,"observed_data":o.observed_data,"review_status":o.review_status,"notes":o.notes}
 
-@router.get("/observations")
+@router.get("/observations", dependencies=[Depends(require_identity_reviewer)])
 def list_observations(review_status: str | None = None, db: Session = Depends(get_db)):
     q=db.query(SourceObservation)
     if review_status: q=q.filter(SourceObservation.review_status==review_status)
@@ -133,7 +133,7 @@ def decide_observation(observation_id: int, payload: ObservationDecision, review
     return observation_dict(o)
 
 
-@router.get("/matching/summary")
+@router.get("/matching/summary", dependencies=[Depends(require_identity_reviewer)])
 def matching_summary(db: Session = Depends(get_db)):
     observations = db.query(SourceObservation).filter(SourceObservation.review_status == "pending").all()
     providers = db.query(Provider).options(joinedload(Provider.branches)).all()
@@ -163,7 +163,7 @@ def matching_summary(db: Session = Depends(get_db)):
             "duplicate_observations": sum(len(ids) for ids in duplicate_groups)}
 
 
-@router.get("/matching/queue")
+@router.get("/matching/queue", dependencies=[Depends(require_identity_reviewer)])
 def matching_queue(limit: int = Query(100, ge=1, le=250), offset: int = Query(0, ge=0),
                    db: Session = Depends(get_db)):
     total = db.query(SourceObservation).filter(SourceObservation.review_status == "pending").count()
