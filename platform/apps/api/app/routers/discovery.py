@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
+from app.identity_review_auth import require_identity_reviewer
 from app.models import DiscoveryRun, SourceObservation
 from app.tasks import run_provider_discovery
 
@@ -21,7 +22,7 @@ def run_dict(run):
         "created_at": run.created_at,
     }
 
-@router.get("/status")
+@router.get("/status", dependencies=[Depends(require_identity_reviewer)])
 def discovery_status():
     return {
         "provider": "Google Places API (New)",
@@ -35,12 +36,12 @@ def discovery_status():
 def start_discovery():
     raise HTTPException(status_code=410, detail="Google Places discovery is disabled. Overture is the sole source of initial discovery candidates.")
 
-@router.get("/runs")
+@router.get("/runs", dependencies=[Depends(require_identity_reviewer)])
 def list_runs(limit: int = 20, db: Session = Depends(get_db)):
     rows = db.query(DiscoveryRun).order_by(DiscoveryRun.created_at.desc()).limit(min(max(limit, 1), 100)).all()
     return {"items": [run_dict(row) for row in rows]}
 
-@router.get("/observations")
+@router.get("/observations", dependencies=[Depends(require_identity_reviewer)])
 def discovery_observations(review_status: str | None = "pending", limit: int = 100, db: Session = Depends(get_db)):
     query = db.query(SourceObservation).filter(SourceObservation.source_type == "google_places")
     if review_status:
