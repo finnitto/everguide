@@ -53,9 +53,9 @@
 ## Stage 4 reviewer-access hardening
 
 - [x] Apply reviewer authentication at every internal admin router boundary; keep only the public directory search and health/root endpoints unauthenticated.
-- [x] Add route-graph regression coverage, unauthenticated mutation/read checks, valid/invalid/revoked-token checks and public-route checks (CI validation pending on this revision).
+- [x] Add route-graph regression coverage, unauthenticated mutation/read checks, valid/invalid/revoked-token checks and public-route checks; passed in GitHub Actions run #147.
 - [x] Attribute provider/observation audit events to the authenticated reviewer.
-- [x] Document credential provisioning, rotation, revocation and incident handling in [REVIEWER-CREDENTIAL-OPERATIONS.md](REVIEWER-CREDENTIAL-OPERATIONS.md).
+- [x] Document credential provisioning, rotation, revocation and incident handling in [REVIEWER-CREDENTIAL-OPERATIONS.md](REVIEWER-CREDENTIAL-OPERATIONS.md); the admin page now uses an in-memory token prompt.
 - [ ] Agree and implement role-based permissions and least privilege; test secret lifecycle in the target environment; prove backup/restore, failure recovery, monitoring, retention and runbooks.
 
 ## Five-stage implementation acceptance
