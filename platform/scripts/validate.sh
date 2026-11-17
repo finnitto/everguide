@@ -76,6 +76,10 @@ if [[ "$MODE" == "full" ]]; then
   log CHECK "Isolated Docker integration validation"
   bash "$ROOT_DIR/scripts/validate-docker.sh"
   log PASS "Isolated Docker integration validation"
+
+  log CHECK "Deterministic release archive and exclusion audit"
+  python "$ROOT_DIR/scripts/package_release.py"
+  log PASS "Release archive integrity, required-file and exclusion checks"
 fi
 
 log PASS "Everguide $MODE validation completed"
