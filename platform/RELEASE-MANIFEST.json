@@ -4,7 +4,8 @@
   "archive_layout": "project files at archive root for direct overlay extraction",
   "database_migrations_added": [
     "0021_overture_company_links",
-    "0022_branch_overture_provenance"
+    "0022_branch_overture_provenance",
+    "0023_stage3_evidence"
   ],
   "migration_revision_fix": "0020_overture_feed (18 characters), within PostgreSQL default alembic_version.version_num VARCHAR(32)",
   "production_database_accessed_during_build": false,
@@ -121,7 +122,7 @@
     "regression_tests": "platform/apps/api/tests/test_stage1_admin_auth.py includes unauthenticated observation-write coverage; the unmounted enrichment routes are not incorrectly asserted as live."
   },
   "stage2_status": "Overture-first ruleset v2.0 is implemented. Conflict detection now requires verified first-party evidence and same-branch street/locality alignment for website postcode conflicts. Remaining acceptance includes synthetic edge-case coverage and non-mutating analysis of a safe candidate snapshot; no live processing/publication.",
-  "stage3_status": "Not signed off. Scope includes optional enrichment, independent pricing evidence, NAFD/SAIF/FCA status checks, sole-trader/partnership representation, multi-branch discovery/revalidation, and separate approval/freshness controls.",
+  "stage3_status": "Partially implemented. Migration 0023 adds separate pricing, membership and regulatory evidence domains, provider/branch scope, audited business-form representation and a bounded idempotent reviewer-recorded revalidation ledger. Source-specific rights/policy, automated retrieval and refresh, full freshness/exception tests and product acceptance remain open. See docs/STAGE3-EVIDENCE-DATA-DICTIONARY.md.",
   "stage4_status": "Partially implemented. Reviewer-authenticated access and audit attribution are in place; the one active route gap found in review has been closed with a regression test. Two handlers in an unmounted legacy enrichment router have defence-in-depth auth. Role separation, credential lifecycle, backup/restore proof, observability, retention and runbooks remain open.",
   "implementation_plan": "docs/FIVE-STAGE-ACCEPTANCE-PLAN.md"
 }
