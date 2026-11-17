@@ -7,7 +7,7 @@ from app.identity_review_auth import require_identity_reviewer
 from app.models import DiscoveryRun, SourceObservation
 from app.tasks import run_provider_discovery
 
-router = APIRouter(prefix="/api/v1/discovery", tags=["automated discovery"])
+router = APIRouter(prefix="/api/v1/discovery", tags=["automated discovery"], dependencies=[Depends(require_identity_reviewer)])
 
 def run_dict(run):
     return {
