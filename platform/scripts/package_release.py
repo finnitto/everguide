@@ -23,16 +23,18 @@ EXCLUDED_DIRS = {
     ".pytest_cache", ".mypy_cache", ".ruff_cache", "dist", "build",
     "coverage", "htmlcov", "data", "uploads", "backups", "releases",
     "postgres_data", "pgdata", "postgres", "quality_review", "test-output",
-    "test-results", "logs", "tmp", "temp",
+    "test-results", "logs", "tmp", "temp", ".ssh", ".aws", ".azure",
+    ".gnupg", "private_keys", "certificates", "certs", "secrets",
 }
 EXCLUDED_FILES = {
-    ".env", ".DS_Store", "Thumbs.db", "id_rsa", "id_ed25519",
-    "credentials.json", "secrets.json",
+    ".env", ".npmrc", ".pypirc", ".netrc", "auth.json", "credentials",
+    "credentials.json", "secrets.json", "id_rsa", "id_ed25519",
+    "known_hosts", ".DS_Store", "Thumbs.db",
 }
 EXCLUDED_SUFFIXES = {
     ".pyc", ".pyo", ".log", ".sqlite", ".sqlite3", ".db", ".bak",
     ".backup", ".dump", ".tmp", ".parquet", ".gpkg", ".pem", ".key",
-    ".p12", ".pfx", ".jks", ".zip", ".tar", ".gz",
+    ".p12", ".pfx", ".jks", ".zip", ".tar", ".gz", ".env",
 }
 REQUIRED_FILES = (
     "VERSION",
