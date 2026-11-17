@@ -10,6 +10,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -121,7 +122,6 @@ class RevalidationRequestIn(BaseModel):
 class RevalidationAttemptIn(BaseModel):
     idempotency_key: str = Field(min_length=8, max_length=128)
     outcome: Literal["success", "transient_failure", "permanent_failure"]
-    checked_at: datetime | None = None
     source_url: HttpUrl | None = None
     evidence_sha256: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{64}$")
     failure_class: str | None = Field(default=None, max_length=60)
@@ -520,7 +520,7 @@ def record_revalidation_attempt(request_id: int, payload: RevalidationAttemptIn,
         source_url=str(payload.source_url) if payload.source_url else None,
         evidence_sha256=payload.evidence_sha256.lower() if payload.evidence_sha256 else None,
         detail=payload.detail,
-        checked_at=payload.checked_at or now,
+        checked_at=now,
         actor=reviewer,
     )
     db.add(attempt)
@@ -535,7 +535,7 @@ def record_revalidation_attempt(request_id: int, payload: RevalidationAttemptIn,
         evidence_model = EVIDENCE_MODELS[request.domain]
         evidence_row = db.get(evidence_model, request.evidence_id)
         if evidence_row:
-            evidence_row.last_checked_at = payload.checked_at or now
+            evidence_row.last_checked_at = now
     elif payload.outcome == "permanent_failure":
         request.status = "failed"
         request.completed_at = now
