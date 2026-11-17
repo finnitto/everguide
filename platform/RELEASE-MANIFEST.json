@@ -63,30 +63,34 @@
     "validation_run": "https://github.com/finnitto/everguide/actions/runs/44118434200"
   },
   "approval_policy": {
-    "shared_policy_version": "shared-provider-approval-v1.0",
-    "provider_adapter_ruleset": "provider-auto-approval-v1.2",
-    "overture_adapter_ruleset": "overture-auto-approval-v1.1",
-    "common_gates": [
-      "approval_enabled",
-      "first_party_website_access",
-      "robots_permission",
-      "complete_branch_address",
-      "valid_uk_postcode",
-      "telephone",
-      "minimum_confidence"
+    "shared_policy_version": "shared-provider approval policy is not authoritative for the Overture adapter",
+    "provider_adapter_ruleset": "provider-auto-approval-v1.2 (legacy non-Overture pathway; independent initial discovery is retired)",
+    "overture_adapter_ruleset": "overture-first-approval-v2.0",
+    "overture_required_gates": [
+      "stable GERS identity and Overture source/release/contributor provenance",
+      "accepted contributor-level source licence",
+      "deterministic funeral-director service classification",
+      "complete structured Overture street/locality and valid UK postcode",
+      "official ONS England point-in-polygon confirmation",
+      "duplicate and existing-provider/branch collision checks"
     ],
-    "source_specific_gates_retained": [
-      "provider_schema_org_funeralhome",
-      "company_name_relationship",
-      "domain_and_collision_checks",
-      "overture_service_classification",
-      "source_level_licence",
-      "official_geography_boundary"
+    "overture_material_conflicts": [
+      "dissolved or legal-identity contradiction from an explicitly reviewer-verified Overture-to-Companies House link",
+      "explicit closed-branch evidence from a reachable, robots-permitted official provider website",
+      "different structured branch postcode from a reachable, robots-permitted official provider website only when street and locality identify the same Overture branch"
     ],
-    "provider_and_companies_house_geography": "fail_closed_until_point_in_england_is_explicitly_confirmed",
-    "overture_geography": "existing_official_England_boundary_gate_retained",
-    "confidence_default": 0.94,
-    "note": "The 0.94 threshold is a configured gate, not a measured 94 percent accuracy claim."
+    "not_overture_approval_gates": [
+      "Companies House link or corroboration",
+      "official provider website presence or reachability",
+      "robots.txt permission as a prerequisite when no website evidence is available",
+      "telephone number",
+      "first-party confidence threshold",
+      "registered-office address match",
+      "legal-name/trading-name equality"
+    ],
+    "provider_and_companies_house_geography": "fail closed until the point in England is explicitly confirmed",
+    "overture_geography": "official ONS England point-in-polygon confirmation; missing or unavailable geometry fails closed",
+    "note": "Overture confidence is not a probability or proof of identity. Missing secondary corroboration alone is not a conflict or reason to block an otherwise valid Overture record."
   },
   "website_evidence": {
     "source_provenance": "Each attempted URL records discovery source and search query where applicable.",
@@ -104,6 +108,19 @@
     "legacy_discovery": "Independent Google Places, Companies House and company-website discovery entry points and legacy worker tasks are disabled.",
     "public_endpoint": "/api/v1/directory/search remains public; internal directory and candidate/admin endpoints require reviewer authentication."
   },
-  "stage1_status": "Implementation and CI validated at reviewed branch HEAD 0958c66a2ec6b6b387accde2b802f84ec927faf1; formal product/security acceptance and release-wide sign-off remain outstanding.",
-  "stage5_status": "CI validates the current source in a disposable stack. Current release archive regeneration, reproducibility, contents/exclusion inspection, checksum evidence and target-database migration rehearsal/rollback evidence remain outstanding."
+  "stage1_status": "Core Overture-only discovery, GERS/provenance, reviewer-authenticated CH links, retirement of bypass creation/discovery paths, and Overture-first approval safeguards are implemented. Final acceptance follows the current branch CI and endpoint/security sweep.",
+  "stage5_status": "Partially validated. CI previously passed frontend production build and isolated Docker migration/integration through 0022. Current security/conflict changes and release metadata require the latest branch workflow. Current root release_v2.8.0 snapshot is marked superseded; current archive regeneration, exclusion/integrity checks and migration rehearsal/rollback evidence remain outstanding.",
+  "security_review": {
+    "access_control": "Bearer reviewer authentication required for active administrative reads and mutations; public directory search and health endpoints remain intentionally public; disabled/retired endpoints return HTTP 410.",
+    "reviewed_gaps_fixed": [
+      "POST /api/v1/observations now requires a reviewer and uses authenticated reviewer identity as audit actor",
+      "GET /api/v1/enrichment/sources now requires reviewer authentication",
+      "GET /api/v1/enrichment/checks now requires reviewer authentication"
+    ],
+    "regression_tests": "platform/apps/api/tests/test_stage1_admin_auth.py covers the three formerly unprotected routes."
+  },
+  "stage2_status": "Overture-first ruleset v2.0 is implemented. Conflict detection now requires verified first-party evidence and same-branch street/locality alignment for website postcode conflicts. Remaining acceptance includes synthetic edge-case coverage and non-mutating analysis of a safe candidate snapshot; no live processing/publication.",
+  "stage3_status": "Not signed off. Scope includes optional enrichment, independent pricing evidence, NAFD/SAIF/FCA status checks, sole-trader/partnership representation, multi-branch discovery/revalidation, and separate approval/freshness controls.",
+  "stage4_status": "Partially implemented. Reviewer-authenticated access and audit attribution are in place; route gaps identified in review have been closed with regression tests. Remaining acceptance includes role separation, credential lifecycle/rotation, backup and restore proof, observability, retention, and resilience/recovery runbooks.",
+  "implementation_plan": "docs/FIVE-STAGE-ACCEPTANCE-PLAN.md"
 }
