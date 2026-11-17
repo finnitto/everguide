@@ -50,6 +50,14 @@
 - [x] Idempotent, bounded reviewer-recorded revalidation ledger; transient failure does not imply negative verification.
 - [ ] Source-specific permitted retrieval, automated refresh, agreed pricing taxonomy and signed policy remain open. See [Stage 3 evidence data dictionary](STAGE3-EVIDENCE-DATA-DICTIONARY.md).
 
+## Stage 4 reviewer-access hardening
+
+- [x] Apply reviewer authentication at every internal admin router boundary; keep only the public directory search and health/root endpoints unauthenticated.
+- [x] Add route-graph regression coverage, unauthenticated mutation/read checks, valid/invalid/revoked-token checks and public-route checks (CI validation pending on this revision).
+- [x] Attribute provider/observation audit events to the authenticated reviewer.
+- [x] Document credential provisioning, rotation, revocation and incident handling in [REVIEWER-CREDENTIAL-OPERATIONS.md](REVIEWER-CREDENTIAL-OPERATIONS.md).
+- [ ] Agree and implement role-based permissions and least privilege; test secret lifecycle in the target environment; prove backup/restore, failure recovery, monitoring, retention and runbooks.
+
 ## Five-stage implementation acceptance
 
 The current five-stage status, exit criteria, evidence requirements and operating
