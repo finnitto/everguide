@@ -6,17 +6,18 @@ Overture Places is Everguide's primary and authoritative source for discovering 
 
 Companies House and funeral-director websites are corroborating sources, not mandatory gateways. A missing company link, absent website, inaccessible website, robots restriction, missing telephone number or lack of corroborating evidence does not by itself prevent an otherwise valid Overture location from being approved. A legal registered-office address is not treated as a branch address. A trading name may legitimately differ from a legal company name.
 
-The Overture-first ruleset is `overture-first-approval-v2.0`. It does not use Overture's place-existence confidence as a probability of business identity, field accuracy or funeral-director service. It does not apply the shared first-party website threshold used by other discovery adapters.
+The Overture-first ruleset is `overture-first-approval-v2.1`. It does not use Overture's place-existence confidence as a probability of business identity, field accuracy or funeral-director service. It does not apply the shared first-party website threshold used by other discovery adapters.
 
 ## Deterministic Overture checks
 
 Before a candidate can be approved, the Overture record must:
 - Have a stable GERS ID and retained source/release provenance.
-- Pass the deterministic funeral-director classification; cemeteries, crematoria, celebrants, memorial masons, directories and unrelated services are excluded.
+- Pass the deterministic funeral-director classification; cemeteries and natural/woodland burial grounds, crematoria, celebrants, memorial masons, pet/animal services, funeral-plan-only providers, direct-cremation providers, directories and unrelated services are not classified as conventional funeral-director branches. Direct-cremation providers retain a distinct `direct_cremation_provider` service class for a separate future funeral-services category.
 - Have a valid UK postcode, structured street address and locality.
 - Have contributor source/licence metadata that is present and recognised.
 - Pass the active geography's official ONS point-in-polygon check. Missing coordinates, incomplete boundary data or unavailable official geometry fail closed.
-- Have no unresolved duplicate or existing-provider/branch collision.
+- Have no unresolved same-service-class duplicate or existing-provider/branch collision. A same-name/same-postcode peer only creates a funeral-director duplicate signal when that peer independently classifies as a funeral-director candidate; a cemetery, crematorium, pet service, funeral-plan provider or other service class cannot block a funeral-director candidate.
+- Use matching street, telephone and website-domain signals as supporting identity evidence. When one of those signals agrees but matching same-name/same-postcode candidates are more than 100 metres apart, the record is routed to an `overture_coordinate_conflict` review instead of being labelled only as an ordinary duplicate. The 100-metre threshold is a conservative review trigger, not proof that either coordinate is wrong. Where coordinates or corroborating identity signals are missing, ambiguous same-name/same-postcode cases remain held for review.
 
 An incomplete or invalid Overture address is not published. It remains awaiting enrichment or review; the system does not invent missing street/locality values. Telephone and website are optional fields and are not substituted for the Overture branch address.
 
@@ -26,7 +27,7 @@ A Companies House record is used as a conflict signal only when an authenticated
 
 A provider website is checked only when Overture supplies a plausible first-party URL. It is optional corroboration and is never the source of the published branch name or address. An inaccessible site, absent site, absent branch listing or robots restriction is not treated as proof that the Overture location is wrong. A structured official-site branch address that explicitly has a different postcode from the Overture location, or an explicit closed branch status, is sent to exception review. A trading-name difference alone is not treated as a conflict.
 
-The conflict checks are deliberately conservative. An unlinked Companies House record, a legal name difference, or a website's failure to mention a branch must not be converted into a negative assertion about the Overture location. Conflicting or ambiguous evidence is retained for human resolution; records are not silently merged or overwritten.
+The conflict checks are deliberately conservative. An unlinked Companies House record, a legal name difference, or a website's failure to mention a branch must not be converted into a negative assertion about the Overture location. Conflicting or ambiguous evidence is retained for human resolution; records are not silently merged or overwritten. Duplicate GERS records are never automatically merged, deleted or used to overwrite another record's coordinates. A coordinate conflict is preserved as a separate review reason.
 
 ## Outcomes
 
@@ -34,7 +35,7 @@ The conflict checks are deliberately conservative. An unlinked Companies House r
 |---|---|
 | `auto_approved_eligible` | Overture integrity, service, source-rights, duplicate and geography checks pass, with no detected material conflict. |
 | `awaiting_enrichment` | Overture data is incomplete, a boundary cannot be confirmed, or the publication safety switch is off. |
-| `exception_review` | A material identity/location conflict, duplicate collision, out-of-scope location or source-rights issue needs investigation. |
+| `exception_review` | A material identity/location conflict, same-service-class duplicate collision, coordinate inconsistency, out-of-scope location or source-rights issue needs investigation. |
 | `excluded` | Deterministic classification identifies an out-of-scope service. |
 
 When automatic approval is enabled, eligible Overture records are published from Overture fields. Provider/branch writes, source observations and audit events are committed atomically. Existing verified provider and branch data is never overwritten, merged or deleted by this pathway. The Overture source observation is linked to the resulting provider and branch. Optional website observations are stored separately and do not replace Overture provenance.

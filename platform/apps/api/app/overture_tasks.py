@@ -31,7 +31,10 @@ from app.models import (
     SourceObservation, OvertureCompanyLink, CompaniesHouseCandidate,
 )
 from app.overture_approval import assess_overture_candidate
-from app.candidate_quality import DIRECTORY_DOMAINS, normalise_identity_name, normalise_phone, normalise_postcode, website_domain
+from app.candidate_quality import (
+    DIRECTORY_DOMAINS, classify_service, normalise_identity_name, normalise_phone,
+    normalise_postcode, website_domain,
+)
 from app.website_checks import verify_candidate
 from app.search_providers import search_web, SearchProviderError
 
@@ -448,18 +451,116 @@ def _verified_companies_house_conflicts(db, candidate):
     return sorted(set(conflicts))
 
 
-def _overture_duplicate_conflict(db, candidate):
+OVERTURE_LOCATION_CONFLICT_DISTANCE_METRES = 100.0
+
+
+def _overture_candidate_service_class(candidate):
+    raw = dict(candidate.raw_data or {})
+    row = _normalised_assessment_row(raw)
+    return classify_service(
+        name=row.get("name") or candidate.candidate_name,
+        basic_category=row.get("basic_category"),
+        taxonomy_primary=row.get("taxonomy_primary"),
+        website="",
+        description=row.get("description", ""),
+    )
+
+
+def _overture_coordinate(raw):
+    try:
+        longitude = float(raw.get("longitude"))
+        latitude = float(raw.get("latitude"))
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(longitude) and math.isfinite(latitude)
+            and -180 <= longitude <= 180 and -90 <= latitude <= 90):
+        return None
+    return longitude, latitude
+
+
+def _overture_coordinate_distance_metres(first, second):
+    """Haversine distance between two (longitude, latitude) WGS84 points."""
+    if first is None or second is None:
+        return None
+    lon1, lat1 = map(math.radians, first)
+    lon2, lat2 = map(math.radians, second)
+    dlon, dlat = lon2 - lon1, lat2 - lat1
+    value = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+    )
+    return 2 * 6371008.8 * math.asin(min(1.0, math.sqrt(value)))
+
+
+def _overture_identity_collision_flags(db, candidate):
+    """Return (same-location duplicate, material coordinate conflict).
+
+    Only peers independently classified as funeral-director candidates can
+    create a funeral-director duplicate signal. Same name and postcode remain
+    a conservative collision key. Matching street, telephone or website
+    domain supports identity; if a supported match is more than 100 metres
+    away, it is recorded as a location conflict instead of an ordinary
+    duplicate. The threshold is a review trigger, not proof of bad coordinates.
+    """
     name_key = normalise_identity_name(candidate.candidate_name)
     postcode_key = normalise_postcode(candidate.postcode)
     if not name_key or not postcode_key:
-        return False
+        return False, False
+    if _overture_candidate_service_class(candidate) != "funeral_director_candidate":
+        return False, False
+
+    raw = dict(candidate.raw_data or {})
+    row = _normalised_assessment_row(raw)
+    current_street = normalise_identity_name(row.get("address_line_1") or row.get("address"))
+    current_phone = normalise_phone(row.get("phone") or raw.get("phone"))
+    current_domain = website_domain(row.get("website"))
+    current_coordinate = _overture_coordinate(raw)
+
     peers = db.query(OvertureCandidate).filter(
         OvertureCandidate.id != candidate.id,
         OvertureCandidate.postcode == candidate.postcode,
     ).all()
-    # This deliberately identifies only a possible same-name/same-postcode
-    # observation. It is not proof of a duplicate business or branch.
-    return any(normalise_identity_name(peer.candidate_name) == name_key for peer in peers)
+
+    duplicate_conflict = False
+    location_conflict = False
+    for peer in peers:
+        if normalise_identity_name(peer.candidate_name) != name_key:
+            continue
+        if _overture_candidate_service_class(peer) != "funeral_director_candidate":
+            continue
+
+        peer_raw = dict(peer.raw_data or {})
+        peer_row = _normalised_assessment_row(peer_raw)
+        peer_street = normalise_identity_name(peer_row.get("address_line_1") or peer_row.get("address"))
+        peer_phone = normalise_phone(peer_row.get("phone") or peer_raw.get("phone"))
+        peer_domain = website_domain(peer_row.get("website"))
+
+        supporting_identity_match = bool(
+            (current_street and peer_street and current_street == peer_street)
+            or (current_phone and peer_phone and current_phone == peer_phone)
+            or (current_domain and peer_domain and current_domain == peer_domain)
+        )
+        distance = _overture_coordinate_distance_metres(
+            current_coordinate, _overture_coordinate(peer_raw)
+        )
+        if (
+            distance is not None
+            and distance > OVERTURE_LOCATION_CONFLICT_DISTANCE_METRES
+            and supporting_identity_match
+        ):
+            location_conflict = True
+        else:
+            # Retain a conservative review hold when a same-name/postcode peer
+            # exists but there is insufficient evidence to classify it as a
+            # coordinate conflict.
+            duplicate_conflict = True
+
+    return duplicate_conflict, location_conflict
+
+
+def _overture_duplicate_conflict(db, candidate):
+    """Backward-compatible same-location duplicate flag."""
+    return _overture_identity_collision_flags(db, candidate)[0]
 
 
 def _normalised_assessment_row(raw):
@@ -876,14 +977,18 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                     "geography_scope": geography_scope,
                     "point_in_scope": point,
                 }
-                duplicate = (str(raw.get("possible_duplicate", "")).lower() in {"true", "1", "yes"}
-                    or _overture_duplicate_conflict(db, candidate))
+                duplicate_conflict, location_conflict = _overture_identity_collision_flags(db, candidate)
+                duplicate = (
+                    str(raw.get("possible_duplicate", "")).lower() in {"true", "1", "yes"}
+                    or duplicate_conflict
+                )
                 existing_conflict, parent_provider = _existing_provider_match(db, row)
                 assessment = assess_overture_candidate(
                     row, first_party_evidence=evidence, point_in_thurrock=point if geography_scope != "england" else None,
                     point_in_england=point if geography_scope == "england" else None,
                     geography_scope=geography_scope,
-                    duplicate_conflict=duplicate, existing_provider_conflict=existing_conflict,
+                    duplicate_conflict=duplicate, location_conflict=location_conflict,
+                    existing_provider_conflict=existing_conflict,
                     auto_approval_enabled=settings.auto_approve_providers,
                     minimum_confidence=settings.auto_approval_min_confidence,
                 )

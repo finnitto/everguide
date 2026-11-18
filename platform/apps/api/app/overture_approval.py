@@ -18,7 +18,7 @@ from app.candidate_quality import (
     normalise_postcode,
 )
 
-RULESET_VERSION = "overture-first-approval-v2.0"
+RULESET_VERSION = "overture-first-approval-v2.1"
 KNOWN_LICENCES = {"CDLA-Permissive-2.0", "Apache-2.0", "CC0-1.0", "CC0"}
 
 
@@ -45,6 +45,7 @@ def assess_overture_candidate(
     point_in_england: bool | None = None,
     geography_scope: str = "thurrock",
     duplicate_conflict: bool = False,
+    location_conflict: bool = False,
     existing_provider_conflict: bool = False,
     auto_approval_enabled: bool = True,
     minimum_confidence: float = 0.94,
@@ -88,6 +89,8 @@ def assess_overture_candidate(
 
     if duplicate_conflict or str(row.get("possible_duplicate", "")).lower() in {"true", "1", "yes"}:
         reasons.append("possible_same_name_postcode_match")
+    if location_conflict:
+        reasons.append("overture_coordinate_conflict")
     if existing_provider_conflict:
         reasons.append("existing_provider_or_branch_conflict")
 
@@ -121,6 +124,7 @@ def assess_overture_candidate(
     elif any(reason in reasons for reason in (
         "postcode_outside_thurrock_area",
         "possible_same_name_postcode_match",
+        "overture_coordinate_conflict",
         "existing_provider_or_branch_conflict",
         "point_outside_official_thurrock_boundary",
         "point_outside_official_england_boundary",

@@ -27,7 +27,8 @@ CATEGORY_TERMS = {
     ),
     "cemetery": (
         "cemetery", "cemeteries", "cemetary", "cemetaries",
-        "churchyard", "burial ground",
+        "churchyard", "burial ground", "natural burial", "woodland burial",
+        "green burial", "burial meadow",
     ),
     "crematorium": ("crematorium", "crematoria"),
     "celebrant": ("celebrant",),
@@ -109,20 +110,70 @@ def classify_service(
     website: object = "",
     description: object = "",
 ) -> str:
-    """Classify a candidate, giving explicit adjacent-service signals precedence."""
+    """Classify funeral-sector candidates, keeping adjacent services distinct.
+
+    Explicit pet, burial-ground, direct-cremation and funeral-plan signals take
+    precedence over broad Overture taxonomy labels such as funeral_service.
+    """
+    name_text = str(name or "").lower()
+    basic_raw = str(basic_category or "").lower()
+    taxonomy_raw = str(taxonomy_primary or "").lower()
+    category_text = f"{basic_raw} {taxonomy_raw}".replace("_", " ")
     domain = website_domain(website)
     fields = " ".join(
-        str(value or "")
-        for value in (name, basic_category, taxonomy_primary, domain, description)
-    ).lower()
+        (name_text, category_text, domain, str(description or "").lower())
+    )
+
+    pet_taxonomies = {
+        "animal_or_pet_service",
+        "pet_cemetery_and_crematorium_service",
+        "pet_funeral_service",
+        "pet_cremation_service",
+    }
+    pet_name_signal = bool(re.search(
+        r"\b(?:pet|animal)\s+(?:funeral|funerals|cremation|cremations|burial|burials|cemetery|cemeteries)\b",
+        name_text,
+    ))
+    if basic_raw in pet_taxonomies or taxonomy_raw in pet_taxonomies or pet_name_signal:
+        return "pet_service"
 
     if domain and any(domain == item or domain.endswith("." + item) for item in DIRECTORY_DOMAINS):
         return "directory_or_comparison"
 
-    # Explicit adjacent categories override broad taxonomy labels such as
-    # `family_service` or even a misleading `funeral_service` primary tag.
+    # Natural/woodland/green burial locations are burial-ground services, not
+    # funeral-director branches, even when Overture supplies funeral taxonomy.
+    if any(term in fields for term in CATEGORY_TERMS["cemetery"]):
+        return "cemetery"
+
+    # Direct-cremation businesses are retained under their own service class.
+    # A funeral director whose trading name explicitly identifies it as such
+    # remains a funeral-director candidate even if it also offers cremations.
+    name_has_funeral_director_signal = any(term in name_text for term in FUNERAL_TERMS)
+    compact_name = re.sub(r"[^a-z0-9]", "", name_text)
+    name_has_cremation_signal = bool(re.search(r"\bcremations?\b", name_text))
+    direct_cremation_signal = bool(
+        re.search(r"\bdirect\s+cremations?\b", name_text)
+        or "direct2grave" in compact_name
+        or "godirectcremation" in compact_name
+    )
+    if direct_cremation_signal or (
+        name_has_cremation_signal and not name_has_funeral_director_signal
+    ):
+        return "direct_cremation_provider"
+
+    # Funeral-plan-only providers are not classified as branch-based funeral
+    # directors. Businesses explicitly named as funeral directors remain in
+    # scope if they also offer plans.
+    plan_fields = f"{name_text} {category_text}"
+    funeral_plan_signal = any(term in plan_fields for term in (
+        "funeral plan", "funeral plans", "prepaid funeral",
+        "pre-paid funeral", "pre paid funeral", "prepaid plan",
+        "pre-paid plan",
+    ))
+    if funeral_plan_signal and not name_has_funeral_director_signal:
+        return "funeral_plan_provider"
+
     for classification in (
-        "cemetery",
         "crematorium",
         "celebrant",
         "memorial_or_masonry",
@@ -133,11 +184,9 @@ def classify_service(
         if any(term in fields for term in CATEGORY_TERMS[classification]):
             return classification
 
-    category_text = f"{basic_category} {taxonomy_primary}".lower()
     if any(term in fields for term in FUNERAL_TERMS) or "funeral" in category_text:
         return "funeral_director_candidate"
     return "uncertain"
-
 
 def exact_branch_fingerprint(
     *, name: object = "", postcode: object = "", phone: object = "", website: object = ""

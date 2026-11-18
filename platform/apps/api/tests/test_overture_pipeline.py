@@ -361,3 +361,90 @@ def test_processing_run_scope_is_filtered_before_batch_limit(monkeypatch):
     assert run.status == "completed"
     assert run.records_processed == 1
     db.close(); engine.dispose()
+
+
+
+def test_duplicate_detection_ignores_same_name_postcode_peer_in_another_service_class():
+    engine, factory = _session_factory()
+    db = factory()
+    funeral_raw = _candidate_row()
+    funeral = OvertureCandidate(
+        gers_id="gers-funeral-class", candidate_name=funeral_raw["name"],
+        postcode=funeral_raw["postcode"], raw_data=funeral_raw,
+    )
+    other_raw = _candidate_row()
+    other_raw["basic_category"] = "cemetery"
+    other_raw["taxonomy_primary"] = "cemetery"
+    other = OvertureCandidate(
+        gers_id="gers-cemetery-class", candidate_name=other_raw["name"],
+        postcode=other_raw["postcode"], raw_data=other_raw,
+    )
+    db.add_all([funeral, other]); db.flush()
+    assert overture_tasks._overture_identity_collision_flags(db, funeral) == (False, False)
+    db.close(); engine.dispose()
+
+
+def test_same_service_same_branch_collision_uses_supporting_signals_and_near_coordinates():
+    engine, factory = _session_factory()
+    db = factory()
+    first_raw = _candidate_row()
+    first_raw.update({"longitude": "-0.1", "latitude": "51.5"})
+    second_raw = _candidate_row()
+    second_raw.update({"longitude": "-0.1001", "latitude": "51.5001"})
+    first = OvertureCandidate(
+        gers_id="gers-near-a", candidate_name=first_raw["name"],
+        postcode=first_raw["postcode"], raw_data=first_raw,
+    )
+    second = OvertureCandidate(
+        gers_id="gers-near-b", candidate_name=second_raw["name"],
+        postcode=second_raw["postcode"], raw_data=second_raw,
+    )
+    db.add_all([first, second]); db.flush()
+    assert overture_tasks._overture_identity_collision_flags(db, first) == (True, False)
+    db.close(); engine.dispose()
+
+
+def test_same_identity_signals_with_material_coordinate_separation_are_location_conflict():
+    engine, factory = _session_factory()
+    db = factory()
+    first_raw = _candidate_row()
+    first_raw.update({"longitude": "-0.1", "latitude": "51.5"})
+    second_raw = _candidate_row()
+    second_raw.update({"longitude": "-0.11", "latitude": "51.51"})
+    first = OvertureCandidate(
+        gers_id="gers-far-a", candidate_name=first_raw["name"],
+        postcode=first_raw["postcode"], raw_data=first_raw,
+    )
+    second = OvertureCandidate(
+        gers_id="gers-far-b", candidate_name=second_raw["name"],
+        postcode=second_raw["postcode"], raw_data=second_raw,
+    )
+    db.add_all([first, second]); db.flush()
+    duplicate, location_conflict = overture_tasks._overture_identity_collision_flags(db, first)
+    assert duplicate is False
+    assert location_conflict is True
+    db.close(); engine.dispose()
+
+
+def test_name_postcode_match_without_supporting_signals_remains_conservative_review():
+    engine, factory = _session_factory()
+    db = factory()
+    first_raw = _candidate_row()
+    first_raw.update({"longitude": "-0.1", "latitude": "51.5"})
+    second_raw = _candidate_row()
+    second_raw.update({
+        "longitude": "-0.11", "latitude": "51.51",
+        "address": "99 Other Street", "address_line_1": "99 Other Street",
+        "phone": "", "website": "",
+    })
+    first = OvertureCandidate(
+        gers_id="gers-weak-a", candidate_name=first_raw["name"],
+        postcode=first_raw["postcode"], raw_data=first_raw,
+    )
+    second = OvertureCandidate(
+        gers_id="gers-weak-b", candidate_name=second_raw["name"],
+        postcode=second_raw["postcode"], raw_data=second_raw,
+    )
+    db.add_all([first, second]); db.flush()
+    assert overture_tasks._overture_identity_collision_flags(db, first) == (True, False)
+    db.close(); engine.dispose()

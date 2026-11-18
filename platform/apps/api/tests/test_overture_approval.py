@@ -21,7 +21,7 @@ def test_valid_overture_location_auto_approves_without_companies_house_or_websit
     result = assess_overture_candidate(row(website=""), point_in_thurrock=True)
     assert result["outcome"] == "auto_approved_eligible"
     assert result["reasons"] == ""
-    assert result["ruleset_version"] == RULESET_VERSION == "overture-first-approval-v2.0"
+    assert result["ruleset_version"] == RULESET_VERSION == "overture-first-approval-v2.1"
 
 
 def test_consistent_optional_website_evidence_does_not_change_overture_authority():
@@ -99,3 +99,33 @@ def test_incomplete_overture_branch_address_awaits_enrichment():
 def test_companies_house_registered_office_does_not_enter_branch_conflict_without_linked_evidence():
     result = assess_overture_candidate(row(), first_party_evidence={"companies_house_registered_office": "Different town"}, point_in_thurrock=True)
     assert result["outcome"] == "auto_approved_eligible"
+
+
+
+def test_adjacent_pet_burial_plan_and_direct_cremation_services_are_not_funeral_directors():
+    cases = (
+        ("In Our Hands Pet Funeral Services", "animal_or_pet_service", "animal_or_pet_service", "pet_service"),
+        ("Aylesbury Vale Natural Burial Meadow", "family_service", "funeral_service", "cemetery"),
+        ("Flexible Funeral Plans", "family_service", "funeral_service", "funeral_plan_provider"),
+        ("Simplicity Cremations", "family_service", "funeral_service", "direct_cremation_provider"),
+        ("Distinct Cremations", "family_service", "funeral_service", "direct_cremation_provider"),
+    )
+    for name, basic, taxonomy, expected_service in cases:
+        result = assess_overture_candidate(
+            row(name=name, basic_category=basic, taxonomy_primary=taxonomy),
+            point_in_england=True,
+            geography_scope="england",
+        )
+        assert result["service_class"] == expected_service
+        assert result["outcome"] == "excluded"
+
+
+def test_overture_coordinate_conflict_routes_to_exception_review():
+    result = assess_overture_candidate(
+        row(),
+        point_in_england=True,
+        geography_scope="england",
+        location_conflict=True,
+    )
+    assert result["outcome"] == "exception_review"
+    assert "overture_coordinate_conflict" in result["reasons"]
