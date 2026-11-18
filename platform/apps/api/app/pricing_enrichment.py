@@ -300,20 +300,20 @@ def _fetch_price_pages(website_url: str, max_pages: int = 6) -> list[dict]:
             snippet = text[start:end]
             if snippet not in contexts:
                 contexts.append(snippet)
-        if not contexts:
-            continue
-        ai_text = _normalise_space(" … ".join(contexts))[:4_000]
+        if contexts:
+            ai_text = _normalise_space(" … ".join(contexts))[:4_000]
+            pages.append({
+                "url": url,
+                "title": _normalise_space(" ".join(parser.title_parts))[:300],
+                "text": text,
+                "ai_text": ai_text,
+                "sha256": hashlib.sha256(body).hexdigest(),
+            })
+            total_chars += len(text)
 
-        pages.append({
-            "url": url,
-            "title": _normalise_space(" ".join(parser.title_parts))[:300],
-            "text": text,
-            "ai_text": ai_text,
-            "sha256": hashlib.sha256(body).hexdigest(),
-        })
-        total_chars += len(text)
-
-        if len(pages) == 1:
+        # The homepage can be only a navigation page. Follow its price-list
+        # links even when it contains no GBP amounts of its own.
+        if len(seen) == 1:
             for link in parser.links:
                 href = link["href"]
                 absolute = urllib.parse.urljoin(url, href)
