@@ -40,6 +40,36 @@ The conflict checks are deliberately conservative. An unlinked Companies House r
 
 When automatic approval is enabled, eligible Overture records are published from Overture fields. Provider/branch writes, source observations and audit events are committed atomically. Existing verified provider and branch data is never overwritten, merged or deleted by this pathway. The Overture source observation is linked to the resulting provider and branch. Optional website observations are stored separately and do not replace Overture provenance.
 
+## Post-approval price enrichment queue
+
+An Overture candidate is marked for price enrichment only after it is actually linked
+to an approved provider/location:
+- Automatic Overture publication queues the candidate with trigger
+  `automatic_approval`.
+- A reviewer changing a provider's status to `approved` queues every Overture
+  candidate already linked to that provider with trigger `manual_approval`.
+- The reviewer-only `POST /api/v1/overture/pricing-enrichment/queue-approved`
+  endpoint performs an idempotent backfill for previously approved or published
+  funeral-director providers. It only writes queue markers.
+- The reviewer-only `GET /api/v1/overture/pricing-enrichment/queue` endpoint lists
+  queue markers for the future retrieval worker.
+
+The marker is stored under `OvertureCandidate.first_party_evidence.pricing_enrichment`
+with status `queued`, trigger, requester, request time and attempt count. Repeated
+approval events and backfills do not create duplicate queue entries. Existing
+website verification metadata is retained. The candidate's approval/outcome and
+the provider's publication status are not changed by queueing.
+
+This is a hand-off, not a price scraper. Queueing does not fetch a provider website,
+make an external request, extract a price, create `PricingEvidence`, or approve
+pricing evidence. The price-retrieval worker is a separate implementation step.
+When implemented, automated retrieval must use HTTPS provider-owned sources and
+must be gated by an approved `SourcePermission` (`automated_check` or
+`approved`); robots.txt is only a technical crawl instruction, not permission
+or a rights basis. Any captured price evidence must remain pending reviewer
+approval. An `accepted_for_provider_setup` identity/branch review is not yet a
+provider approval and does not queue price enrichment.
+
 ## Development and validation safety
 
 Keep `AUTO_APPROVE_PROVIDERS=false` throughout implementation and isolated validation. The final write-boundary guard blocks publication even if an assessor mistakenly returns an eligible outcome. Tests may enable the setting only in isolated synthetic fixtures. No Overture import, candidate processing, scheduled feed, enrichment, approval or publication is to be run against operational data during development.
