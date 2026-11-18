@@ -23,16 +23,16 @@ Current engineering state, validation evidence and next operational gates are su
 - [x] Public search limited to published providers and branches
 - [x] API smoke tests for core directory workflows
 
-## Subsequent releases
-- Public directory search and profiles
-- Admin authentication and role-based access
-- England-wide discovery and candidate review
-- Provider enrichment and verification
-- Pricing discovery, extraction and approval
-- Scheduled revalidation and exception workflows
-- AWS deployment and infrastructure as code
+## Current architecture (supersedes the early-release backlog above)
+- [x] Public directory search and controlled provider/branch publication.
+- [x] Reviewer bearer authentication on internal APIs; full RBAC remains open.
+- [x] Overture-first England discovery, candidate provenance and identity review.
+- [x] Provider/branch approval safeguards and source-permission evidence.
+- [x] Stage 3 pricing, membership and regulatory evidence data foundation.
+- [x] AI-assisted price extraction, reviewer approval and distinct public disclosure (CI validated; live staging trial remains open).
+- [ ] Automated membership/regulatory source retrieval, scheduled revalidation and production operations remain future milestones.
 
-## v2.6.1 – Automation-first provider approval (implemented first pathway)
+## v2.6.1 – Historical first-party approval pathway (superseded as initial discovery model)
 - [x] Configurable automatic approval switch and confidence threshold.
 - [x] High-precision first-party website approval using explicit Schema.org `FuneralHome`, complete UK address, telephone, matching website domain, Companies House name relationship and duplicate checks.
 - [x] Automatic creation/publication of eligible provider and first branch, with accepted source observation and audit events.
@@ -69,9 +69,9 @@ Current engineering state, validation evidence and next operational gates are su
 - [x] Corrected package excludes `stage1_api_patch.py` and `stage1_task_patch.py`; reproducibility, integrity, secret/local-data exclusion and artifact upload passed GitHub Actions run #183.
 - [ ] Complete target-host backup/restore, rollback/forward-fix and replacement checklist before any persistent workload change.
 
-## Price enrichment and verification transparency — next milestone
+## Price enrichment and verification transparency — implemented; staging acceptance next
 
-**Implementation status:** In progress on `stage1-overture-identity-provenance`; new extraction/reviewer flow requires CI validation and a controlled staging trial.
+**Implementation status:** Implemented and CI validated on application/Compose commit `431094f0c323656681c241f09f75d3a98a8ed4b9` (GitHub Actions run #304: 202 API tests, frontend lint/type/production build, deterministic archive checks and isolated Docker migration validation). The handover-only follow-up is `b03cc4240fda973e4a58c7e5da30e357e48c3a0c`. Live staging browser acceptance and a real bounded extraction trial remain outstanding.
 
 - [x] Queue price enrichment after automatic Overture publication.
 - [x] Queue price enrichment after manual provider approval.
@@ -82,7 +82,7 @@ Current engineering state, validation evidence and next operational gates are su
 - [x] Store extracted amounts as pending `PricingEvidence` with source URL, quote, SHA-256, model and Overture candidate provenance.
 - [x] Distinguish `AI-extracted · Not verified` from `Verified by Everguide reviewer` in the API and public search display.
 - [x] Add reviewer approve/reject UI for price evidence and source permission approval.
-- [ ] Pass CI on the latest branch head, including extraction, provenance, source-permission and public-display tests plus isolated Docker validation.
+- [x] Pass CI for extraction, provenance, source-permission and public-display tests plus isolated Docker validation (run #304).
 - [ ] Run a controlled staging trial with a small known candidate set and privately configured API key.
 - [ ] Measure extraction precision, review corrections, page coverage and API cost; agree thresholds before expansion.
 - [ ] Add reviewer requeue/re-extraction controls, stale-price handling, history/change detection and scheduled revalidation.
