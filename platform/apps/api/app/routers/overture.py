@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.config import settings
 from app.models import OvertureCandidate, OvertureImportRun, Provider, AuditEvent
+from app.pricing_enrichment import queue_approved_overture_candidates_for_pricing
 from app.overture_tasks import process_overture_candidates
 from app.overture_feed import poll_latest_overture_release
 from app.identity_review_auth import require_identity_reviewer
@@ -72,6 +73,66 @@ def list_overture_imports(limit: int = 20, db: Session = Depends(get_db)):
     return {"items": [_run_dict(row) for row in rows]}
 
 
+@router.post("/pricing-enrichment/queue-approved")
+def queue_approved_candidates_for_pricing(
+    reviewer: str = Depends(require_identity_reviewer),
+    db: Session = Depends(get_db),
+):
+    """Idempotently mark already-approved, linked Overture candidates for price enrichment.
+
+    This endpoint only writes queue metadata. It does not fetch websites or prices.
+    """
+    result = queue_approved_overture_candidates_for_pricing(db, requested_by=reviewer)
+    db.add(AuditEvent(
+        entity_type="pricing_enrichment_queue",
+        entity_id=0,
+        action="approved_candidate_backfill_completed",
+        detail=result,
+        actor=reviewer,
+    ))
+    db.commit()
+    return {"status": "completed", **result,
+            "message": "Approved Overture candidates marked for price enrichment; no external sources were fetched."}
+
+
+@router.get("/pricing-enrichment/queue")
+def list_pricing_enrichment_queue(
+    status: str = "queued",
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+):
+    """List candidate queue markers. The price-retrieval worker is a separate stage."""
+    rows = (
+        db.query(OvertureCandidate)
+        .filter(OvertureCandidate.provider_id.is_not(None))
+        .order_by(OvertureCandidate.id.asc())
+        .all()
+    )
+    queued = []
+    for row in rows:
+        metadata = dict(row.first_party_evidence or {}).get("pricing_enrichment") or {}
+        if str(metadata.get("status") or "not_requested") != status:
+            continue
+        queued.append({
+            "candidate_id": row.id,
+            "gers_id": row.gers_id,
+            "candidate_name": row.candidate_name,
+            "postcode": row.postcode,
+            "provider_id": row.provider_id,
+            "branch_id": row.branch_id,
+            "status": metadata.get("status", "not_requested"),
+            "trigger": metadata.get("trigger"),
+            "requested_at": metadata.get("requested_at"),
+            "requested_by": metadata.get("requested_by"),
+            "attempt_count": metadata.get("attempt_count", 0),
+        })
+    start = max(0, offset)
+    page_size = min(max(1, limit), 500)
+    return {"count": len(queued), "items": queued[start:start + page_size],
+            "limit": page_size, "offset": start, "status": status}
+
+
 @router.get("/candidates", dependencies=[Depends(require_identity_reviewer)])
 def list_overture_candidates(outcome: str | None = None, limit: int = 100, offset: int = 0, db: Session = Depends(get_db)):
     query = db.query(OvertureCandidate)
@@ -82,5 +143,7 @@ def list_overture_candidates(outcome: str | None = None, limit: int = 100, offse
     return {"count": total, "items": [{"id": row.id, "gers_id": row.gers_id,
         "candidate_name": row.candidate_name, "postcode": row.postcode,
         "status": row.status, "outcome": row.outcome, "assessment": row.assessment,
-        "first_party_evidence": row.first_party_evidence, "provider_id": row.provider_id,
+        "first_party_evidence": row.first_party_evidence,
+        "pricing_enrichment": (row.first_party_evidence or {}).get("pricing_enrichment", {"status": "not_requested"}),
+        "provider_id": row.provider_id,
         "branch_id": row.branch_id, "last_checked_at": row.last_checked_at} for row in rows]}
