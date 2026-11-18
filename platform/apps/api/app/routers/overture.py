@@ -104,13 +104,17 @@ def list_pricing_enrichment_queue(
 ):
     """List candidate queue markers. The price-retrieval worker is a separate stage."""
     rows = (
-        db.query(OvertureCandidate)
-        .filter(OvertureCandidate.provider_id.is_not(None))
+        db.query(OvertureCandidate, Provider)
+        .join(Provider, Provider.id == OvertureCandidate.provider_id)
+        .filter(
+            Provider.provider_type == "funeral_director",
+            Provider.status.in_(("approved", "published")),
+        )
         .order_by(OvertureCandidate.id.asc())
         .all()
     )
     queued = []
-    for row in rows:
+    for row, provider in rows:
         metadata = dict(row.first_party_evidence or {}).get("pricing_enrichment") or {}
         if str(metadata.get("status") or "not_requested") != status:
             continue
@@ -120,6 +124,7 @@ def list_pricing_enrichment_queue(
             "candidate_name": row.candidate_name,
             "postcode": row.postcode,
             "provider_id": row.provider_id,
+            "provider_status": provider.status,
             "branch_id": row.branch_id,
             "status": metadata.get("status", "not_requested"),
             "trigger": metadata.get("trigger"),
