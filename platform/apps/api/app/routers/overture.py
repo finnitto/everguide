@@ -165,6 +165,9 @@ def list_pricing_enrichment_queue(
             "requested_at": metadata.get("requested_at"),
             "requested_by": metadata.get("requested_by"),
             "attempt_count": metadata.get("attempt_count", 0),
+            "website_url": (row.first_party_evidence or {}).get("website_url"),
+            "last_error": metadata.get("last_error"),
+            "permission_id": metadata.get("permission_id"),
         })
     start = max(0, offset)
     page_size = min(max(1, limit), 500)
