@@ -114,7 +114,7 @@ def test_approved_candidate_backfill_queues_only_approved_funeral_directors():
     )
     db.commit()
 
-    assert result == {"matched_candidates": 2, "queued": 2, "already_marked": 0}
+    assert result == {"matched_candidates": 2, "queued": 2, "already_marked": 0, "queued_candidate_ids": [candidates[0].id, candidates[1].id]}
     assert candidates[0].first_party_evidence["pricing_enrichment"]["status"] == "queued"
     assert candidates[1].first_party_evidence["pricing_enrichment"]["status"] == "queued"
     assert "pricing_enrichment" not in candidates[2].first_party_evidence
