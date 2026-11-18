@@ -5,7 +5,10 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.config import settings
 from app.models import OvertureCandidate, OvertureImportRun, Provider, AuditEvent
-from app.pricing_enrichment import queue_approved_overture_candidates_for_pricing
+from app.pricing_enrichment import (
+    queue_approved_overture_candidates_for_pricing,
+    dispatch_queued_price_enrichment,
+)
 from app.overture_tasks import process_overture_candidates
 from app.overture_feed import poll_latest_overture_release
 from app.identity_review_auth import require_identity_reviewer
@@ -91,8 +94,39 @@ def queue_approved_candidates_for_pricing(
         actor=reviewer,
     ))
     db.commit()
+    dispatched = dispatch_queued_price_enrichment(result.get("queued_candidate_ids") or [])
     return {"status": "completed", **result,
-            "message": "Approved Overture candidates marked for price enrichment; no external sources were fetched."}
+            "tasks_dispatched": dispatched,
+            "message": "Approved Overture candidates marked for price enrichment. Website and AI retrieval runs only when PRICE_ENRICHMENT_ENABLED and OPENAI_API_KEY are configured."}
+
+
+@router.post("/pricing-enrichment/run-queued", status_code=202)
+def run_queued_price_enrichment(
+    limit: int = 50,
+    reviewer: str = Depends(require_identity_reviewer),
+    db: Session = Depends(get_db),
+):
+    """Start a bounded batch of queued AI price extractions when the feature is enabled."""
+    if not settings.price_enrichment_enabled or not settings.openai_api_key:
+        raise HTTPException(409, "AI price enrichment is disabled or OPENAI_API_KEY is not configured.")
+    candidates = (
+        db.query(OvertureCandidate)
+        .join(Provider, Provider.id == OvertureCandidate.provider_id)
+        .filter(
+            Provider.provider_type == "funeral_director",
+            Provider.status.in_(("approved", "published")),
+        )
+        .order_by(OvertureCandidate.id.asc())
+        .limit(min(max(int(limit), 1), 100))
+        .all()
+    )
+    queued_ids = [
+        row.id for row in candidates
+        if (dict(row.first_party_evidence or {}).get("pricing_enrichment") or {}).get("status") == "queued"
+    ]
+    dispatched = dispatch_queued_price_enrichment(queued_ids)
+    return {"status": "queued" if dispatched else "empty",
+            "candidate_ids": queued_ids, "tasks_dispatched": dispatched}
 
 
 @router.get("/pricing-enrichment/queue")
@@ -102,7 +136,7 @@ def list_pricing_enrichment_queue(
     offset: int = 0,
     db: Session = Depends(get_db),
 ):
-    """List candidate queue markers. The price-retrieval worker is a separate stage."""
+    """List candidate price-enrichment state and extracted-price counts."""
     rows = (
         db.query(OvertureCandidate, Provider)
         .join(Provider, Provider.id == OvertureCandidate.provider_id)
