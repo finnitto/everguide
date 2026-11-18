@@ -15,6 +15,7 @@ from app.models import (
 )
 from app.pricing_enrichment import (
     _VisiblePageParser,
+    _fetch_price_pages,
     _validate_extracted_prices,
     enrich_overture_candidate_prices,
 )
@@ -58,6 +59,41 @@ def test_price_page_parser_captures_price_link_anchor_text():
     parser.feed('<html><title>Example</title><a href="/services">Our services</a><a href="/fees">Our price list</a></html>')
     assert {"href": "/fees", "text": "Our price list"} in parser.links
     assert parser.title_parts == ["Example"]
+
+
+def test_crawler_follows_same_site_price_link_even_when_homepage_has_no_prices(monkeypatch):
+    from email.message import Message
+    from urllib.parse import urlsplit
+    from app import pricing_enrichment
+
+    class _Robots:
+        def can_fetch(self, agent, url):
+            return True
+
+    def fake_get(url, limit):
+        headers = Message()
+        headers["Content-Type"] = "text/html; charset=utf-8"
+        if url == "https://example-funerals.co.uk/":
+            body = b'<html><a href="/fees">View our funeral price list</a></html>'
+        elif url == "https://example-funerals.co.uk/fees":
+            body = b'<html><title>Funeral fees</title><p>Standard funeral service: \xc2\xa33,250.</p></html>'
+        else:
+            raise AssertionError(f"Unexpected URL: {url}")
+        return 200, headers, body, None
+
+    monkeypatch.setattr(
+        pricing_enrichment,
+        "_validate_public_https",
+        lambda url: (urlsplit(url), "example-funerals.co.uk"),
+    )
+    monkeypatch.setattr(pricing_enrichment, "_read_robots", lambda origin: _Robots())
+    monkeypatch.setattr(pricing_enrichment, "_get", fake_get)
+
+    pages = _fetch_price_pages("https://example-funerals.co.uk/", max_pages=6)
+    assert len(pages) == 1
+    assert pages[0]["url"] == "https://example-funerals.co.uk/fees"
+    assert "£3,250" in pages[0]["text"]
+    assert "£3,250" in pages[0]["ai_text"]
 
 
 def test_ai_price_extraction_requires_amount_to_appear_in_exact_source_quote():
