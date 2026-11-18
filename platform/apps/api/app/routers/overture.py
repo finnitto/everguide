@@ -117,13 +117,13 @@ def run_queued_price_enrichment(
             Provider.status.in_(("approved", "published")),
         )
         .order_by(OvertureCandidate.id.asc())
-        .limit(min(max(int(limit), 1), 100))
         .all()
     )
+    page_size = min(max(int(limit), 1), 100)
     queued_ids = [
         row.id for row in candidates
         if (dict(row.first_party_evidence or {}).get("pricing_enrichment") or {}).get("status") == "queued"
-    ]
+    ][:page_size]
     dispatched = dispatch_queued_price_enrichment(queued_ids)
     return {"status": "queued" if dispatched else "empty",
             "candidate_ids": queued_ids, "tasks_dispatched": dispatched}
