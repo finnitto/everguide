@@ -18,7 +18,7 @@ from app.pricing_enrichment import (
     _validate_extracted_prices,
     enrich_overture_candidate_prices,
 )
-from app.routers.evidence import EvidenceDecisionIn, _record_dict, decide_pricing
+from app.routers.evidence import EvidenceDecisionIn, decide_pricing
 from app.routers.providers import public_search
 
 
@@ -199,8 +199,8 @@ def test_enrichment_persists_ai_prices_as_pending_unverified_and_publicly_disclo
         reviewer="reviewer-test",
         db=db,
     )
-    assert _record_dict(verified)["verification_status"] == "verified"
-    assert _record_dict(verified)["verification_label"] == "Verified by Everguide reviewer"
+    assert verified["verification_status"] == "verified"
+    assert verified["verification_label"] == "Verified by Everguide reviewer"
     public_after_review = public_search("RM17", limit=50, db=db)
     assert public_after_review["items"][0]["prices"][0]["verification_status"] == "verified"
     db.close()
