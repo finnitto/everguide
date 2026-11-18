@@ -268,3 +268,57 @@ def test_ai_price_cannot_be_verified_after_source_permission_is_revoked():
     assert exc.value.status_code == 409
     db.close()
     engine.dispose()
+
+
+def test_approving_source_requeues_candidates_waiting_for_source_permission(monkeypatch):
+    from app import pricing_enrichment
+    from app.routers.enrichment import approve_source
+
+    engine, factory = _factory()
+    monkeypatch.setattr(pricing_enrichment.settings, "price_enrichment_enabled", False)
+    db = factory()
+    provider = Provider(
+        trading_name="Waiting Funeral Directors",
+        provider_type="funeral_director",
+        status="published",
+    )
+    db.add(provider)
+    db.flush()
+    source = SourcePermission(
+        provider_id=provider.id,
+        source_url="https://waiting-funerals.example",
+        source_domain="waiting-funerals.example",
+        permission_status="automated_check",
+        permission_basis="Reviewer-reviewed factual price research basis.",
+    )
+    db.add(source)
+    candidate = OvertureCandidate(
+        gers_id="gers-waiting-permission-001",
+        candidate_name="Waiting Funeral Directors",
+        postcode="RM17 5LS",
+        provider_id=provider.id,
+        first_party_evidence={
+            "website_url": "https://waiting-funerals.example",
+            "pricing_enrichment": {
+                "status": "awaiting_permission",
+                "last_error": "Waiting for reviewer source approval",
+            },
+        },
+    )
+    db.add(candidate)
+    db.commit()
+    candidate_id = candidate.id
+    source_id = source.id
+
+    result = approve_source(source_id, reviewer="reviewer-test", db=db)
+
+    assert result["permission_status"] == "approved"
+    assert result["pricing_candidates_requeued"] == 1
+    assert result["pricing_tasks_dispatched"] == 0
+    candidate = db.get(OvertureCandidate, candidate_id)
+    marker = candidate.first_party_evidence["pricing_enrichment"]
+    assert marker["status"] == "queued"
+    assert marker["permission_id"] == source_id
+    assert marker["permission_approved_by"] == "reviewer-test"
+    db.close()
+    engine.dispose()
