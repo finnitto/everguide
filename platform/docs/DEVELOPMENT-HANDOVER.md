@@ -4,123 +4,99 @@
 **Repository:** `finnitto/everguide`  
 **Working branch:** `stage1-overture-identity-provenance`  
 **Pull request:** [PR #1 – Overture-first evidence, reviewer security and release validation](https://github.com/finnitto/everguide/pull/1)  
-**Current release identifier:** v2.8.0  
-**Status:** Development and validation. PR remains draft and unmerged.
+**Release:** v2.8.0  
+**Status:** Implementation and CI validation substantially complete; PR remains draft/unmerged. Local sync, staging acceptance and operational sign-off remain open.
 
-This document records the current implementation, verified local/CI state, decisions, remaining work and the controlled route to the next milestone. It distinguishes code that exists from capabilities that have not yet been exercised against live websites or real approved providers.
+This is the operational handover for the current implementation. It separates code completion and synthetic CI validation from live-source accuracy, product acceptance and production readiness.
 
----
+## 1. Executive status
 
-## 1. Product and data policy
+Everguide has moved from several independent discovery mechanisms to an Overture-first, evidence-led England funeral-director directory. Overture Places is the only initial discovery source and the authority for the published branch identity/location fields. Companies House and provider-owned websites are optional corroborating/conflict sources; neither is a prerequisite for sole traders or partnerships.
 
-Everguide is an England-only funeral-director directory. Overture Places is the sole initial source for funeral-director location discovery and for the Overture branch identity/address/coordinates.
+The current branch adds authenticated reviewer workflows, explicit source provenance and rights controls, separate Stage 3 evidence domains, AI-assisted price extraction with human verification, repeatable CI/Docker validation and deterministic release packaging.
 
-Companies House and provider-owned websites are optional corroborating sources and conflict signals. An absence of Companies House linkage, a website or corroborating evidence must not by itself block an otherwise eligible Overture candidate. Sole traders and partnerships remain supported without a Companies House link.
+**Current gate:** P1 implementation/CI is complete for the application commit identified below. The next action is P1.5 local image/configuration sync without processing data, followed by a staging browser walkthrough and one bounded price-extraction trial. This is not production-ready and does not authorise merge, deployment or feature-flag changes.
 
-The Overture-first approval ruleset is `overture-first-approval-v2.1`. The conventional funeral-director workflow excludes adjacent service types, while retaining distinct classifications for direct cremation providers, pet services and funeral-plan-only providers. Direct cremation is retained as a separate future funeral-services category, not treated as a conventional funeral-director branch.
+## 2. Baseline and repository state
 
-Same-name/postcode identity collisions and material coordinate discrepancies are sent to review. The agreed 100-metre location threshold is a conservative review trigger, not proof that either coordinate is wrong. Source records are retained; no automatic merge, delete or coordinate overwrite is allowed.
+- Requested comparison baseline: `0958c66a2ec6b6b387accde2b802f84ec927faf1`.
+- Current public `main` release commit observed during review: `7e07ad81ef05124063d60aafc9da8b8c6da8753b` (v2.8.0).
+- Working implementation branch: `stage1-overture-identity-provenance`.
+- PR #1 is still draft/unmerged; no submitted PR reviews or inline review threads were present at review time.
+- The comparison API reports the supplied baseline as 92 commits ahead of main, while the working branch is a separate 261-commit descendant of main. Treat the supplied SHA as the requested historical reference, not as the current branch head. The branch/PR head must be checked again before any merge or release action.
+- The handover-only follow-up commit recorded in PR #1 is `b03cc4240fda973e4a58c7e5da30e357e48c3a0c`; application/Compose validation commit is `431094f0c323656681c241f09f75d3a98a8ed4b9`.
 
-**Provider approval, price extraction, price verification and public price display are separate states.** A provider being approved does not make its extracted price evidence verified. Price evidence approval does not change provider identity, branch data or publication status.
+## 3. Product and data policy
 
-## 2. Implemented work
+1. England-only funeral-director directory.
+2. Overture Places is the sole initial candidate source; retain GERS ID, release, contributor lineage, licence and retrieval provenance.
+3. Overture remains authoritative for published branch name, address and coordinates. Corroborating sources do not silently overwrite these fields.
+4. Companies House linkage must be explicitly reviewer-verified before its record can be used as an identity/conflict signal. Missing linkage does not exclude a candidate.
+5. Keep conventional funeral directors distinct from adjacent services, including cemeteries, crematoria, celebrants, memorial/masonry, pet services and funeral-plan-only businesses. Direct-cremation providers remain a separate service category.
+6. Same-name/postcode collisions and material coordinate discrepancies go to review. The 100-metre separation is a review trigger, not proof of error. Never automatically merge, delete or overwrite conflicting source records.
+7. Provider approval, price extraction, price evidence review, membership/regulatory evidence and public price display are separate decisions.
 
-### 2.1 Overture-first discovery and approval
+## 4. Work completed
 
-Implemented in the working branch:
+### 4.1 Overture-first discovery and identity
 
-- Overture GERS IDs, source release, contributor lineage and source-level licences are retained with candidate/source-observation records.
-- Deterministic service classification excludes non-conventional service types from the funeral-director candidate path.
-- Only other funeral-director candidates can create funeral-director duplicate signals.
-- Material location conflicts are flagged where the identity signals match and coordinate separation exceeds 100 metres.
-- Overture remains the source for published branch fields. Website and Companies House records are corroboration/conflict signals, not replacement sources.
-- The publication write-boundary guard blocks automatic publication unless the runtime switch is enabled.
-- Reviewer access is bearer-token gated. The reviewer credential is held as a hash in configuration, not in the repository.
+- Overture GERS IDs and contributor/release/licence provenance are retained.
+- Deterministic service classification and conservative candidate-quality checks are implemented.
+- Independent Google Places, Companies House-led candidate discovery and independent company-website discovery are retired; legacy routes fail closed/return HTTP 410.
+- Direct provider/branch creation and direct publication paths are blocked. Overture approval is the controlled provider/branch publication path.
+- Reviewer-verified Overture-to-Companies House links are persisted; absent or unverified links cannot be treated as corroboration.
+- Overture-first approval rules distinguish eligible, awaiting-enrichment, exception-review and excluded outcomes.
+- A read-only local reassessment of 7,769 candidates was recorded: 5,921 hypothetically eligible, 300 exception review, 136 awaiting enrichment and 1,412 excluded. The 5,921 is not a published-provider count. The exception set includes 256 coordinate-conflict records and 44 possible-same-service duplicate records; these are record counts, not necessarily independent groups.
+- Reviewer bearer-token authentication protects internal API routes; reviewer identity for audit events comes from the authenticated credential. Public directory search and health/readiness interfaces are intentional exceptions.
+- Authentication is a single reviewer permission tier, not full role-based access control.
 
-### 2.2 Read-only v2.1 assessment of the local Overture backlog
+### 4.2 Stage 3 evidence foundation
 
-The local database contained 7,769 Overture candidates. The full v2.1 reassessment was explicitly read-only and performed no website, Companies House or ONS network checks.
+Migration `0023_stage3_evidence` adds separate pricing, membership and regulatory evidence domains and provider business-form metadata. Evidence can be provider-wide or branch-specific, starts pending, carries source/provenance/review data and is reviewed independently of provider publication. Sole traders and partnerships do not require a Companies House link.
 
-| Hypothetical v2.1 outcome | Candidates |
-|---|---:|
-| Eligible if automatic approval were enabled | 5,921 |
-| Exception review | 300 |
-| Awaiting enrichment | 136 |
-| Excluded from conventional funeral-director workflow | 1,412 |
-| **Total** | **7,769** |
+The Stage 3 evidence-entry and manual revalidation APIs do not themselves perform NAFD, SAIF or FCA retrieval. Source-specific legal/rights policy, automated retrieval and scheduled freshness remain outstanding.
 
-All 7,769 cached points were inside the England boundary. The 300 exception-review candidates comprised 256 candidate records with coordinate-conflict flags and 44 candidate records with conservative possible-same-service duplicate flags. Those are candidate-record counts, not a count of independent conflict groups.
+### 4.3 AI-assisted price extraction
 
-The 5,921 eligible figure is hypothetical only. It is not an approved/published provider count.
+The current branch implements the following guarded workflow:
 
-### 2.3 Evidence and pricing data foundation
+1. A candidate must be linked to an approved/published funeral-director provider.
+2. A verified provider-owned HTTPS website and reviewer-approved source permission for the matching domain are required.
+3. Retrieval repeats HTTPS/public-address/SSRF, robots, same-host and bounded-response checks; redirects are not followed automatically.
+4. A bounded number of same-host HTML pages is examined (default maximum six).
+5. The extractor may return only explicit GBP amounts. It must supply an exact quotation and source-page URL; the application checks the quotation and amount against fetched content and discards unsupported output.
+6. Valid results are stored as pending `PricingEvidence`, with source URL, quote, digest, model and candidate provenance.
+7. A reviewer approves or rejects the evidence. Public results distinguish **“AI-extracted · Not verified”** from **“Verified by Everguide reviewer”**. Rejected evidence is hidden; evidence is suppressed if its source permission is withdrawn/removed.
+8. “Verified by Everguide reviewer” means the reviewer checked the cited source. It is not a provider guarantee and does not establish that the price is still current.
 
-The current database model includes separate `PricingEvidence` records linked to a provider and optionally a branch. Each price record supports service classification, fee type, amount/range, price basis, inclusions/exclusions, source URL, source permission link, retrieval timestamp, content hash, evidence excerpt and reviewer decision.
+Automatic/manual provider approval can queue candidates for enrichment; an idempotent backfill and reviewer-controlled batch dispatch are available. Queueing does not itself fetch pages or create a price record.
 
-The current evidence API is reviewer-only. Pricing records can be captured, listed and approved/rejected independently from provider approval.
+### 4.4 Reviewer UI, release and CI
 
-### 2.4 Approval-to-price-enrichment hand-off
+- Dedicated `/admin/pricing` UI supports source registration/approval and pending price approve/reject review.
+- Compose passes the price-enrichment settings to API and worker containers.
+- Deterministic release packaging builds from the maintained `platform/` tree, audits required files and exclusions, and emits a ZIP plus checksum/package manifest.
+- CI uses synthetic fixtures and disposable infrastructure, not the developer's persistent database.
 
-Implemented in the branch:
+## 5. Latest validation evidence
 
-- Automatic Overture publication marks the linked candidate for price enrichment.
-- Manual provider approval marks every Overture candidate linked to that provider for price enrichment.
-- An idempotent reviewer backfill marks existing approved/published funeral-director candidates.
-- Candidate queue state is retained in `OvertureCandidate.first_party_evidence.pricing_enrichment`.
-- The queue can be inspected using the Overture pricing-enrichment API.
-- Task dispatch occurs only after the approval/queue transaction commits.
+GitHub Actions [run #304](https://github.com/finnitto/everguide/actions/runs/44283502723) passed on application/Compose commit `431094f0c323656681c241f09f75d3a98a8ed4b9`:
 
-The queue is a separate work item. It does not itself create a price record or publish anything.
+- 202 backend tests passed (one deprecation warning).
+- Python application and migration compilation passed.
+- Frontend lint, TypeScript and production build passed.
+- Release archive integrity, required-file and exclusion checks passed.
+- Isolated Docker integration passed: API readiness, reviewer credential forwarding, safety switches disabled, migration downgrade/re-upgrade `0023 → 0022 → 0023`, admin HTTP 200, empty Beat schedule, online/idle worker.
+- Uploaded release artifact: [Actions artifact](https://github.com/finnitto/everguide/actions/runs/44283502723/artifacts/14418545979).
+- Uploaded ZIP SHA-256: `8d7441661f134ad6e16631b10f6e3b29ad5d9edf539048d803a3c2cda755a82e`.
 
-### 2.5 AI-assisted price extraction and transparent verification
+The handover-only follow-up is commit `b03cc4240fda973e4a58c7e5da30e357e48c3a0c`. The PR description records that the CI suite covers approval-to-queue hand-off, idempotent backfill, source-permission release, exact quote/amount validation, public pending/verified labels, source-permission withdrawal/removal and Compose configuration forwarding.
 
-The working branch now contains an AI-assisted price extraction task:
+**Validation boundary:** no real OpenAI API request, live provider website price extraction, local candidate backfill, production operation or publication has been performed. The code and synthetic integration are CI-validated; real-world extraction accuracy and reviewer usability are not yet validated. CI success is not production sign-off.
 
-1. The candidate must already be linked to an approved/published funeral-director provider.
-2. A verified provider-owned `website_url` must exist on its first-party evidence.
-3. A reviewer-approved `SourcePermission` for the matching website domain is required before price-page retrieval.
-4. HTTPS, public-address/SSRF, robots.txt, same-host and bounded-response checks are repeated at extraction time. Redirects are not followed automatically.
-5. The worker searches a bounded number of same-host HTML pages, currently configurable with a default maximum of six.
-6. Only contexts around explicit GBP amounts are sent to the AI extractor. The model is instructed to treat website text as untrusted, ignore embedded instructions, and extract only printed amounts. It must not estimate, infer, calculate or invent a price.
-7. The AI response must provide an exact source quotation and source-page URL. The application checks that the quote appears in the fetched page and that the quoted GBP amount matches the structured amount. Items failing those checks are discarded.
-8. Valid items are saved as `PricingEvidence` with `review_status=pending`, `extraction_method=ai_extracted` and `verification_status=unverified`. Source page URL, short quote, content hash, extraction model/response and Overture candidate provenance are retained.
-9. An authenticated reviewer inspects the price and its source. Only an approval decision changes the price to `verified`. Rejected evidence is not shown publicly.
-10. Public directory search returns verified prices and AI-extracted pending prices with distinct labels. Pending manual entries are not shown. If a linked source permission is later withdrawn, the price is hidden from public results.
+## 6. Runtime safety controls
 
-The intended public labels are:
-
-- **AI-extracted · Not verified** — automatically extracted from the cited provider-owned page; not yet checked by an Everguide reviewer.
-- **Verified by Everguide reviewer** — a reviewer has checked the amount against the cited source and approved the evidence.
-
-The public display also supplies the provider-source link and retrieval date, with a prompt to confirm the current price and any additional charges directly with the provider. “AI-extracted” is intentionally more accurate than “AI-generated”: the model is instructed to extract explicit published amounts, not create estimates.
-
-### 2.6 Reviewer screens
-
-The working branch includes a dedicated `/admin/pricing` page. It lets a reviewer:
-
-- sign in with the reviewer bearer token;
-- review pending AI-extracted prices and their source quotation, source URL, hash, model and candidate provenance;
-- approve or reject each price;
-- see candidates waiting for source approval;
-- register a provider-owned HTTPS source for a provider;
-- approve a source for factual price extraction, which releases matching candidates waiting on that permission.
-
-The main admin dashboard links to the price review page.
-
-## 3. Configuration and runtime safeguards
-
-New configuration (defaults shown):
-
-```dotenv
-PRICE_ENRICHMENT_ENABLED=false
-OPENAI_API_KEY=
-PRICE_ENRICHMENT_MODEL=gpt-6-luna
-PRICE_ENRICHMENT_MAX_PAGES=6
-```
-
-The OpenAI key must be supplied privately in the local/runtime `.env`; it must never be committed or included in a release archive. The model default is a configurable choice, not a commitment to keep using a fixed model indefinitely.
-
-The following existing controls must remain false during development and validation:
+Keep all of the following disabled during local sync and validation:
 
 ```dotenv
 AUTO_APPROVE_PROVIDERS=false
@@ -128,110 +104,85 @@ OVERTURE_AUTO_PROCESS=false
 OVERTURE_FEED_ENABLED=false
 OVERTURE_SCHEDULED_TASKS_ENABLED=false
 PRICE_ENRICHMENT_ENABLED=false
+OPENAI_API_KEY=
 ```
 
-A queue marker can exist while the feature flag is off. No AI extraction task is dispatched unless both `PRICE_ENRICHMENT_ENABLED=true` and `OPENAI_API_KEY` are configured. The reviewer endpoint to dispatch a bounded queue is also guarded by both settings.
+The OpenAI key must be supplied only through an approved private staging/runtime secret store for a separately authorised trial. Never commit it or include it in a release archive. A queue marker may exist while the feature flag is off; it must not be dispatched.
 
-**Do not enable these switches as part of ordinary code validation.** Do not run the price-enrichment queue, Overture processing or source checks against the existing local database until a separate controlled test is agreed.
+Do not run live Overture processing, website enrichment, price extraction, candidate backfill or publication against the existing local database as part of ordinary validation.
 
-## 4. Current environment, data and backups
+## 7. Milestones and next steps
 
-The previously validated local development environment uses Docker Compose under `platform/docker-compose.yml` with a local API override at `platform/.stage1-api-override.yml`.
+### P1 — Implementation and CI validation — COMPLETE
+- [x] Full backend checks: 202 tests passed.
+- [x] Python compile, frontend lint, TypeScript and production build.
+- [x] Isolated Docker integration with all automation disabled.
+- [x] Reviewer-protected source-permission/evidence routes and pricing queue/review tests.
+- [x] Exact quotation/amount validation and public pending/verified/source-revocation behaviour.
+- [x] Deterministic release archive and exclusion audit.
+- [ ] Manual staging browser walkthrough remains outstanding; this is an acceptance task, not a CI task.
 
-The local database had been migrated through Alembic revision `0023_stage3_evidence`. The existing migration upgrade was authorised and completed previously; the new price-enrichment change uses existing JSON/evidence structures and is not expected to require a database migration.
+### P1.5 — Sync validated images/config to local development — NEXT
+- [ ] Inspect local Git status/branch and resolve or preserve local edits before syncing the validated branch.
+- [ ] Rebuild API, worker, Beat and web images from the validated source.
+- [ ] Inspect effective settings inside both API and worker containers; verify all five switches above are false and no OpenAI key is configured.
+- [ ] Confirm Alembic is at `0023_stage3_evidence`; price-enrichment work adds no migration.
+- [ ] Check service readiness and logs. Do not dispatch tasks, process candidates or modify database records.
+- [ ] Preserve PostgreSQL, Redis and ONS cache volumes. Never use `docker compose down -v`.
 
-At the last recorded local snapshot:
+### P2 — Controlled staging price-extraction trial
+- [ ] Use a disposable/staging environment and configure the OpenAI key privately.
+- [ ] Keep Overture feed, scheduled processing and automatic publication disabled.
+- [ ] Obtain explicit approval for a single known provider, its provider-owned website and source permission.
+- [ ] Dispatch one candidate manually; record selected pages, exact source quote, extracted amount, model response and actual API cost.
+- [ ] Have a reviewer check service, fee type, price basis, inclusions/exclusions, branch applicability and cited source.
+- [ ] Verify public pending label before review and reviewer-verified label only after approval.
+- [ ] Test robots denial, redirect, missing price, timeout, malformed model output and permission revocation/removal.
 
-- Overture candidates: 7,769
-- Existing providers: 0
-- Existing branches: 0
-- Verified Overture-to-Companies House links: 0
-- Source observations: 23,307
-- Overture import runs: 6
+### P3 — Accuracy, rights and cost sign-off
+- [ ] Build a human-labelled sample and measure precision/recall by price type.
+- [ ] Prevent conflation of package prices, professional fees, disbursements, cremation and burial fees.
+- [ ] Decide VAT, optional extras, local authority charges, branch applicability and effective/expiry-date semantics.
+- [ ] Obtain source terms, copyright/database-rights, data-protection, retention and permitted-purpose review.
+- [ ] Set per-provider and monthly API budgets, rate limits, alerts and a stop mechanism.
+- [ ] Define stale-price expiry, change detection and reviewer re-extraction procedures.
 
-The existing backup recorded for the local database is:
+### P4 — Limited pilot and operational monitoring
+- [ ] Pilot only with an explicitly approved small provider cohort.
+- [ ] Compare extraction with manual source checks and, where practical, provider confirmation.
+- [ ] Monitor coverage, blocked/no-price/failure rates, reviewer corrections/rejections, duplicates and cost.
+- [ ] Add scheduled refresh only after P2/P3 acceptance and separate operational approval.
+- [ ] Expand gradually; reviewer approval remains the only route to the verified label.
 
-- File: `/c/everguide-backups/everguide-pre-v2.8.0-20261117-202550.dump`
-- SHA-256: `a0feab156a12c70803fd29d7773f6e619e800cd49aceaa123b0ac492a7d28fa4`
+### P5 — Production/release readiness
+- [ ] Implement least-privilege roles/RBAC, credential lifecycle and target-environment security review.
+- [ ] Complete backup/restore, retention, monitoring, alerting, failure-recovery and incident runbooks.
+- [ ] Complete the 256 coordinate-conflict record/group audit and representative duplicate review.
+- [ ] Rehearse target-host packaging, migration, backup and rollback/forward-fix plan.
+- [ ] Record product, legal, security and operational sign-off against exact source commit and artifact hash.
+- [ ] Only then request PR readiness/merge, deployment and any feature-flag changes.
 
-The backup checksum was validated previously and a separate temporary restore test matched the source counts. Keep this backup and the current data volumes. Never use `docker compose down -v` on the existing project.
+## 8. Known limitations
 
-## 5. Validation evidence
+- Price extraction currently targets explicit GBP amounts in bounded same-host HTML; PDF/image-only price lists and third-party pages are not covered.
+- Page discovery may miss price lists behind unsupported navigation patterns.
+- No price is inferred when none is explicitly found.
+- A candidate without a verified provider-owned website and approved source permission cannot use this extraction path.
+- AI confidence is not a calibrated probability.
+- Reviewer verification checks a cited source at a point in time; it does not guarantee current price or provider confirmation.
+- Reviewer credentials currently provide a shared reviewer-level permission, not role separation or full RBAC.
+- Membership/regulatory evidence is a separate reviewer-entry foundation; automated NAFD/SAIF/FCA checks are not complete.
+- CI does not prove production infrastructure, persistent database compatibility, live upstream permissions, real-model accuracy or operational resilience.
 
-Previously completed validation:
+## 9. Operational handover rules
 
-- Overture-first v2.1 offline reassessment completed read-only against all 7,769 candidates.
-- GitHub Actions run #198 passed the v2.1 implementation test suite (190 passed) and isolated Docker validation.
-- GitHub Actions run #216 passed the approval-to-price-queue hand-off tests (193 passed), frontend production build, release archive audit and isolated Docker integration.
-- The isolated Docker job checked API readiness, migration downgrade/re-upgrade, reviewer route availability, disabled Beat schedule and an empty worker queue.
-
-The AI price extraction, source-permission release path, public price display and new reviewer UI have been added after run #216. **They must not be treated as CI-validated until a new workflow run for the current branch head completes successfully.** No real OpenAI request or live provider website extraction has been performed as part of this implementation.
-
-## 6. Next milestones
-
-### Milestone P1 — Complete implementation and CI validation
-- [ ] Run the full backend/frontend test suite against the latest branch head.
-- [ ] Pass isolated Docker validation with price-enrichment and all Overture runtime switches disabled.
-- [ ] Verify that the source-permission router is mounted and reviewer-protected.
-- [ ] Verify automatic and manual provider approval queueing, backfill idempotency and source-approval release.
-- [ ] Verify amount/quote validation rejects fabricated or mismatched values.
-- [ ] Verify public API distinguishes pending AI extraction from reviewer-verified prices and hides withdrawn-source prices.
-- [ ] Verify the reviewer UI approve/reject flow and the source approval screen.
-
-### Milestone P2 — Controlled staging trial
-- [ ] Configure the OpenAI API key privately in a disposable/staging environment.
-- [ ] Keep all Overture publication/feed/schedule switches off.
-- [ ] Keep AI price enrichment disabled until the staging candidate and provider website have been checked.
-- [ ] Use a small, known approved candidate and a provider-owned site with a reviewer-approved source permission.
-- [ ] Dispatch one candidate manually, inspect the pages selected, request/response cost, extracted quote and saved `PricingEvidence`.
-- [ ] Confirm the public display shows `AI-extracted · Not verified` before reviewer approval.
-- [ ] Approve/reject the evidence and confirm the public label changes correctly.
-- [ ] Test a blocked robots.txt page, missing prices, revoked source permission, timeouts and malformed model output.
-
-### Milestone P3 — Accuracy, rights and cost sign-off
-- [ ] Build a human-labelled sample of published price lists and compare extraction precision/recall by price type.
-- [ ] Check that package prices, professional fees, disbursements, cremation and burial items are not conflated.
-- [ ] Decide how to handle VAT, optional extras, local authority fees, regional differences and prices that apply only to selected branches.
-- [ ] Review source terms, copyright/database rights, data minimisation and retention policy for the intended provider-source use.
-- [ ] Set a monthly API budget, per-provider usage ceiling, rate limits and alerts.
-- [ ] Define how a reviewer requests re-extraction when a website changes and how stale prices are expired.
-
-### Milestone P4 — Limited pilot and operational monitoring
-- [ ] Pilot with a small, explicitly approved cohort of providers.
-- [ ] Compare extracted prices with direct manual source checks and provider confirmation.
-- [ ] Monitor failure/blocked/no-price rates, costs, duplicate evidence and correction/rejection rates.
-- [ ] Add controlled scheduled revalidation only after the pilot and a separate operational sign-off.
-- [ ] Expand the cohort gradually; retain reviewer verification as the only route to the “verified” label.
-
-### Milestone P5 — Release and production readiness
-- [ ] Finish role-based reviewer permissions, secret rotation, retention, backup/restore, rollback and monitoring runbooks.
-- [ ] Complete the 256-record coordinate-conflict group audit.
-- [ ] Complete target-host release packaging and migration/backup rehearsal.
-- [ ] Obtain explicit approval for PR merge, deployment and any runtime-switch changes.
-
-## 7. Known limitations and open decisions
-
-- Price extraction currently supports explicit GBP amounts in bounded same-host HTML pages. PDF price lists, image-only documents, external third-party pages and prices without an explicit GBP amount are not covered.
-- Page discovery uses the provider homepage and same-host links with price-related URL or anchor text. Some providers may keep their price list behind a navigation pattern this crawler will not discover.
-- No price is inferred when none is found. A candidate can finish as `no_prices_found`, `needs_source`, `awaiting_permission`, `blocked` or `failed`.
-- A candidate without a verified provider-owned website cannot have price information automatically extracted by this pathway.
-- Source registration and reviewer approval are a prerequisite for price extraction. Robots.txt is only a crawler instruction and is not legal permission or a licence.
-- The AI confidence value is not a calibrated probability and must not be presented as one.
-- The current model call sets Responses API `store=false`; organisation-level data controls and retention terms still need to be checked before the API key is configured for real provider data.
-- Automated retries are bounded. A reviewer-facing requeue/re-extraction flow, price history/difference detection and scheduled expiry/revalidation remain next-stage work.
-- The public API currently exposes price rows on search results. A dedicated provider profile page and richer comparisons remain future UI work.
-
-## 8. Operational handover rules
-
-- Keep the PR as draft/unmerged until code, tests and product acceptance are complete.
-- Never commit API keys, reviewer tokens, local `.env`, database dumps or local data.
-- Do not publish or merge data records as part of code testing.
-- Do not run the actual website/AI enrichment task against the existing local database without a separately authorised, bounded plan.
-- Preserve all Overture source records. Do not merge, delete or overwrite ambiguous candidates or conflicting coordinates automatically.
-- Do not enable automatic approval, Overture feed processing or scheduled tasks during development validation.
-- Rebuild only the required application containers; preserve PostgreSQL and cache volumes.
-
-Useful local commands (Git Bash, from `/c/projects/everguide`):
+- Keep PR #1 draft/unmerged until remaining acceptance and sign-off are complete.
+- Never commit API keys, reviewer tokens, local `.env`, database dumps or local datasets.
+- Preserve Overture provenance and ambiguous records; no automatic merge/delete/coordinate overwrite.
+- Do not run live enrichment or publication against the existing local database without a separately approved bounded plan.
+- Inspect Git status, effective configuration, database revision and verified backup before any workload replacement.
+- Preserve persistent volumes; never run `docker compose down -v` against the existing project.
+- The local inspection commands below are read-only:
 
 ```bash
 git status --short
@@ -242,4 +193,4 @@ docker compose -f platform/docker-compose.yml -f platform/.stage1-api-override.y
 docker compose -f platform/docker-compose.yml -f platform/.stage1-api-override.yml exec -T api alembic current
 ```
 
-The commands above are inspection-only. Do not start a live enrichment task or enable feature flags as part of the handover inspection.
+For the local sync procedure and effective API/worker setting assertions, use the P1.5 commands in the handover-only follow-up commit `b03cc4240fda973e4a58c7e5da30e357e48c3a0c`. Do not dispatch the enrichment endpoint or enable a feature flag during that check.
