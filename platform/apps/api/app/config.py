@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     overture_feed_daily_hour: int = 4
     overture_feed_daily_minute: int = 30
     overture_feed_batch_size: int = 500
+    # AI-assisted extraction of prices from verified provider-owned websites.
+    # Disabled by default in development and validation.
+    price_enrichment_enabled: bool = False
+    openai_api_key: str = ""
+    price_enrichment_model: str = "gpt-6-luna"
+    price_enrichment_max_pages: int = 6
     # JSON object mapping reviewer IDs to SHA-256 hashes of bearer tokens.
     identity_review_credentials: str = "{}"
     model_config = SettingsConfigDict(case_sensitive=False, extra="ignore")
