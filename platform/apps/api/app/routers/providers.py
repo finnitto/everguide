@@ -3,7 +3,8 @@ from sqlalchemy import or_, func
 from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.identity_review_auth import require_identity_reviewer
-from app.models import Provider, Branch, SourceObservation, AuditEvent
+from app.models import Provider, Branch, SourceObservation, AuditEvent, OvertureCandidate
+from app.pricing_enrichment import queue_overture_candidate_for_pricing
 from app.schemas import ProviderCreate, ProviderUpdate, ProviderOut, BranchInput, BranchOut, ObservationCreate, ObservationDecision
 from app.matching import find_provider_matches, observation_duplicate_key
 
@@ -76,11 +77,37 @@ def set_provider_status(provider_id: int, status: str, reviewer: str = Depends(r
     p=db.get(Provider,provider_id)
     if not p: raise HTTPException(404,"Provider not found")
     p.status=status
+    queued_candidates = 0
+    if status == "approved":
+        # Manual provider approval is a price-enrichment trigger for every
+        # Overture location already linked to this provider. It does not publish.
+        candidates = db.query(OvertureCandidate).filter(
+            OvertureCandidate.provider_id == p.id
+        ).order_by(OvertureCandidate.id.asc()).all()
+        for candidate in candidates:
+            if queue_overture_candidate_for_pricing(
+                db,
+                candidate,
+                trigger="manual_approval",
+                requested_by=reviewer,
+            ):
+                queued_candidates += 1
+        db.add(AuditEvent(
+            entity_type="provider",
+            entity_id=p.id,
+            action="manual_approval_pricing_enrichment_requested",
+            detail={"linked_overture_candidates": len(candidates),
+                    "newly_queued_candidates": queued_candidates},
+            actor=reviewer,
+        ))
     if status=="published":
         p.verification_status="approved"
         for branch in p.branches:
             if branch.status == "draft": branch.status = "published"
-    audit(db,"provider",p.id,"status_changed",{"status":status}, actor=reviewer); db.commit(); return {"id":p.id,"status":p.status}
+    audit(db,"provider",p.id,"status_changed",{"status":status}, actor=reviewer)
+    db.commit()
+    return {"id":p.id,"status":p.status,
+            "pricing_enrichment_candidates_queued":queued_candidates}
 
 @router.post("/observations", status_code=201)
 def create_observation(
