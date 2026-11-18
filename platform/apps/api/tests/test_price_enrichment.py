@@ -266,6 +266,8 @@ def test_ai_price_cannot_be_verified_after_source_permission_is_revoked():
             db=db,
         )
     assert exc.value.status_code == 409
+    public = public_search("RM17", limit=50, db=db)
+    assert public["items"][0]["prices"] == []
     db.close()
     engine.dispose()
 
