@@ -124,9 +124,10 @@ def run_queued_price_enrichment(
         row.id for row in candidates
         if (dict(row.first_party_evidence or {}).get("pricing_enrichment") or {}).get("status") == "queued"
     ][:page_size]
-    dispatched = dispatch_queued_price_enrichment(queued_ids)
+    dispatched = dispatch_queued_price_enrichment(queued_ids, max_tasks=page_size)
     return {"status": "queued" if dispatched else "empty",
-            "candidate_ids": queued_ids, "tasks_dispatched": dispatched}
+            "candidate_ids": queued_ids[:page_size], "tasks_dispatched": dispatched,
+            "batch_limit": page_size}
 
 
 @router.get("/pricing-enrichment/queue")
