@@ -77,6 +77,7 @@ export default function PricingReviewPage() {
   const [sourceUrl, setSourceUrl] = useState("");
   const [sourceBasis, setSourceBasis] = useState("Provider-owned public website; factual price information only. Review applicable source terms, access restrictions, copyright and database rights before approving extraction and reuse.");
   const [sourceBusy, setSourceBusy] = useState(false);
+  const [runningBatch, setRunningBatch] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -143,6 +144,25 @@ export default function PricingReviewPage() {
       setError(err instanceof Error ? err.message : "Could not save price decision.");
     } finally {
       setBusyId(null);
+    }
+  }
+
+  async function runNextBatch() {
+    setRunningBatch(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await apiFetch(`${API}/api/v1/overture/pricing-enrichment/run-queued?limit=20`, { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Price enrichment is disabled or unavailable.");
+      setNotice(data.tasks_dispatched
+        ? `Dispatched ${data.tasks_dispatched} AI price-enrichment tasks. Refresh this page to review results as they complete.`
+        : "There are no queued candidates ready for price enrichment.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not dispatch the next price-enrichment batch.");
+    } finally {
+      setRunningBatch(false);
     }
   }
 
@@ -228,6 +248,9 @@ export default function PricingReviewPage() {
           <p>AI extraction is a research aid, not verification. Open the provider source and confirm the service, amount, price basis and any stated inclusions or exclusions before approving.</p>
         </div>
         <div className="provider-actions">
+          <button className="primary-button" onClick={() => void runNextBatch()} disabled={runningBatch}>
+            {runningBatch ? "Queueing batch…" : "Run next price batch (20)"}
+          </button>
           <button className="secondary-button" onClick={() => void load()}>Refresh</button>
           <button className="secondary-button" onClick={() => { setToken(""); setTokenInput(""); setItems([]); }}>Sign out</button>
           <Link className="secondary-button" href="/admin">Back to admin</Link>
