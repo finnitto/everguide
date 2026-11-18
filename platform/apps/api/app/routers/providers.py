@@ -233,6 +233,7 @@ def _public_price_rows(db: Session, provider: Provider, branch: Branch) -> list[
             or_(PricingEvidence.branch_id == branch.id, PricingEvidence.branch_id.is_(None)),
             PricingEvidence.review_status.in_(("pending", "approved")),
             or_(PricingEvidence.expires_at.is_(None), PricingEvidence.expires_at >= now),
+            or_(PricingEvidence.effective_to.is_(None), PricingEvidence.effective_to >= now),
         )
         .order_by(PricingEvidence.service_category.asc(), PricingEvidence.service_name.asc())
         .limit(30)
