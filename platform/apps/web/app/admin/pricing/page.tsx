@@ -5,6 +5,28 @@ import Link from "next/link";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
+type SourcePermission = {
+  id: number;
+  provider_id: number;
+  provider_name: string;
+  source_url: string;
+  source_domain: string;
+  permission_status: string;
+  permission_basis: string;
+  permission_reference?: string | null;
+  approved_at?: string | null;
+};
+
+type WaitingCandidate = {
+  candidate_id: number;
+  gers_id: string;
+  candidate_name: string;
+  provider_id: number;
+  website_url?: string | null;
+  last_error?: string | null;
+  status: string;
+};
+
 type PriceEvidence = {
   id: number;
   provider_id: number;
@@ -49,6 +71,12 @@ export default function PricingReviewPage() {
   const [token, setToken] = useState("");
   const [tokenInput, setTokenInput] = useState("");
   const [items, setItems] = useState<PriceEvidence[]>([]);
+  const [sources, setSources] = useState<SourcePermission[]>([]);
+  const [waitingCandidates, setWaitingCandidates] = useState<WaitingCandidate[]>([]);
+  const [sourceProviderId, setSourceProviderId] = useState("");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [sourceBasis, setSourceBasis] = useState("Provider-owned public website; factual price information only. Review applicable source terms, access restrictions, copyright and database rights before approving extraction and reuse.");
+  const [sourceBusy, setSourceBusy] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -66,10 +94,20 @@ export default function PricingReviewPage() {
   const load = useCallback(async () => {
     if (!token) return;
     try {
-      const response = await apiFetch(`${API}/api/v1/evidence/pricing?review_status=pending&limit=500`);
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Could not load pending price evidence.");
-      setItems(data.items || []);
+      const [priceResponse, sourceResponse, queueResponse] = await Promise.all([
+        apiFetch(`${API}/api/v1/evidence/pricing?review_status=pending&limit=500`),
+        apiFetch(`${API}/api/v1/enrichment/sources`),
+        apiFetch(`${API}/api/v1/overture/pricing-enrichment/queue?status=awaiting_permission&limit=500`),
+      ]);
+      const [priceData, sourceData, queueData] = await Promise.all([
+        priceResponse.json(), sourceResponse.json(), queueResponse.json(),
+      ]);
+      if (!priceResponse.ok) throw new Error(priceData.detail || "Could not load pending price evidence.");
+      if (!sourceResponse.ok) throw new Error(sourceData.detail || "Could not load website source permissions.");
+      if (!queueResponse.ok) throw new Error(queueData.detail || "Could not load candidates waiting for source approval.");
+      setItems(priceData.items || []);
+      setSources(sourceData.items || []);
+      setWaitingCandidates(queueData.items || []);
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load pending price evidence.");
@@ -108,7 +146,52 @@ export default function PricingReviewPage() {
     }
   }
 
-  if (!token) {
+  async function registerSource(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSourceBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await apiFetch(`${API}/api/v1/enrichment/sources`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider_id: Number(sourceProviderId),
+          source_url: sourceUrl.trim(),
+          permission_basis: sourceBasis.trim(),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Could not register the provider source.");
+      setNotice(data.message || "Provider source registered for technical screening. Reviewer source approval is still required.");
+      setSourceProviderId("");
+      setSourceUrl("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not register the provider source.");
+    } finally {
+      setSourceBusy(false);
+    }
+  }
+
+  async function approveSource(source: SourcePermission) {
+    setSourceBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await apiFetch(`${API}/api/v1/enrichment/sources/${source.id}/approve`, { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Could not approve the provider source.");
+      setNotice(data.message || "Source approved.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not approve the provider source.");
+    } finally {
+      setSourceBusy(false);
+    }
+  }
+
+    if (!token) {
     return (
       <main className="admin-shell">
         <header className="admin-header">
@@ -152,6 +235,66 @@ export default function PricingReviewPage() {
       </header>
       {error && <div className="alert alert-error">{error}</div>}
       {notice && <div className="alert alert-success">{notice}</div>}
+      <section className="admin-card">
+        <div className="card-heading">
+          <div>
+            <h2>Provider website source approvals</h2>
+            <p>AI price extraction runs only after an Overture-linked provider website has been technically screened and a reviewer has approved its use for factual price extraction. robots.txt is a crawl instruction, not a licence or permission.</p>
+          </div>
+          <span className="count-chip">{waitingCandidates.length} waiting for source approval</span>
+        </div>
+        {waitingCandidates.length > 0 && (
+          <div className="provider-list">
+            {waitingCandidates.map((candidate) => (
+              <article className="provider-row" key={candidate.candidate_id}>
+                <div className="provider-info">
+                  <strong>{candidate.candidate_name}</strong>
+                  <span>Provider #{candidate.provider_id} · Candidate #{candidate.candidate_id} · GERS {candidate.gers_id}</span>
+                  <small>{candidate.last_error || "Waiting for a reviewer-approved source."}</small>
+                  {candidate.website_url && <a href={candidate.website_url} target="_blank" rel="noreferrer">Open verified provider website ↗</a>}
+                </div>
+                <button className="secondary-button" disabled={!candidate.website_url || sourceBusy} onClick={() => {
+                  setSourceProviderId(String(candidate.provider_id));
+                  setSourceUrl(candidate.website_url || "");
+                }}>Use website for source registration</button>
+              </article>
+            ))}
+          </div>
+        )}
+        <form className="source-permission-form" onSubmit={(event) => void registerSource(event)}>
+          <label>Provider ID
+            <input type="number" min="1" required value={sourceProviderId} onChange={(event) => setSourceProviderId(event.target.value)} placeholder="e.g. 123" />
+          </label>
+          <label>Provider-owned HTTPS website URL
+            <input type="url" required value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://www.example-funerals.co.uk" />
+          </label>
+          <label>Source-use basis for reviewer assessment
+            <textarea required value={sourceBasis} onChange={(event) => setSourceBasis(event.target.value)} rows={3} />
+          </label>
+          <button className="primary-button" type="submit" disabled={sourceBusy || !sourceProviderId || !sourceUrl}>Register and technically screen source</button>
+        </form>
+        <div className="provider-list">
+          {sources.map((source) => (
+            <article className="provider-row" key={source.id}>
+              <div className="provider-info">
+                <strong>{source.provider_name}</strong>
+                <span>Provider #{source.provider_id} · {source.source_domain}</span>
+                <small>{source.permission_basis}</small>
+                <a href={source.source_url} target="_blank" rel="noreferrer">Open registered source ↗</a>
+              </div>
+              <div className="provider-actions">
+                <span className={`status-pill ${source.permission_status === "approved" ? "status-completed" : "status-needs_review"}`}>{source.permission_status.replace(/_/g, " ")}</span>
+                {source.permission_status !== "approved" && (
+                  <button className="secondary-button" disabled={sourceBusy} onClick={() => void approveSource(source)}>
+                    Approve source for price extraction
+                  </button>
+                )}
+              </div>
+            </article>
+          ))}
+          {sources.length === 0 && <p className="empty-state">No provider website sources registered yet.</p>}
+        </div>
+      </section>
       <section className="admin-card">
         <div className="card-heading">
           <div>
