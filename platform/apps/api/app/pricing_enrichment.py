@@ -71,9 +71,10 @@ class _VisiblePageParser(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.text_parts: list[str] = []
-        self.links: list[tuple[str, str]] = []
+        self.links: list[dict[str, str]] = []
         self.title_parts: list[str] = []
         self._in_title = False
+        self._current_link: int | None = None
         self._skip_depth = 0
         self._skip_tags = {"script", "style", "noscript", "svg", "iframe", "template"}
 
@@ -85,21 +86,27 @@ class _VisiblePageParser(HTMLParser):
         if tag == "title":
             self._in_title = True
         if tag == "a" and values.get("href"):
-            self.links.append((str(values["href"]), ""))
+            self.links.append({"href": str(values["href"]), "text": ""})
+            self._current_link = len(self.links) - 1
 
     def handle_endtag(self, tag):
         tag = tag.lower()
         if tag == "title":
             self._in_title = False
+        if tag == "a":
+            self._current_link = None
         if tag in self._skip_tags and self._skip_depth:
             self._skip_depth -= 1
 
     def handle_data(self, data):
-        value = re.sub(r"\s+", " ", data or "").strip()
+        value = re.sub(r"\\s+", " ", data or "").strip()
         if not value:
             return
         if self._in_title:
             self.title_parts.append(value)
+        if self._current_link is not None:
+            link = self.links[self._current_link]
+            link["text"] = _normalise_space(link["text"] + " " + value)
         if not self._skip_depth:
             self.text_parts.append(value)
 
@@ -293,12 +300,13 @@ def _fetch_price_pages(website_url: str, max_pages: int = 6) -> list[dict]:
         total_chars += len(text)
 
         if len(pages) == 1:
-            for href, _ in parser.links:
+            for link in parser.links:
+                href = link["href"]
                 absolute = urllib.parse.urljoin(url, href)
                 linked = urllib.parse.urlsplit(absolute)
                 if (linked.scheme.lower() != "https" or linked.hostname is None
                         or linked.hostname.lower() != host or linked.port not in (None, 443)
-                        or not PRICE_PAGE_HINT.search(linked.path + " " + href)):
+                        or not PRICE_PAGE_HINT.search(linked.path + " " + href + " " + link["text"])):
                     continue
                 clean = urllib.parse.urlunsplit((linked.scheme, linked.netloc, linked.path, linked.query, ""))
                 if clean not in seen and clean not in candidates:
