@@ -4,7 +4,7 @@ from sqlalchemy import or_, func
 from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.identity_review_auth import require_identity_reviewer
-from app.models import Provider, Branch, SourceObservation, AuditEvent, OvertureCandidate, PricingEvidence
+from app.models import Provider, Branch, SourceObservation, AuditEvent, OvertureCandidate, PricingEvidence, SourcePermission
 from app.pricing_enrichment import (
     queue_overture_candidate_for_pricing,
     dispatch_queued_price_enrichment,
@@ -228,7 +228,9 @@ def _public_price_rows(db: Session, provider: Provider, branch: Branch) -> list[
     now = datetime.now(timezone.utc)
     rows = (
         db.query(PricingEvidence)
+        .outerjoin(SourcePermission, SourcePermission.id == PricingEvidence.source_permission_id)
         .filter(
+            or_(PricingEvidence.source_permission_id.is_(None), SourcePermission.permission_status == "approved"),
             PricingEvidence.provider_id == provider.id,
             or_(PricingEvidence.branch_id == branch.id, PricingEvidence.branch_id.is_(None)),
             PricingEvidence.review_status.in_(("pending", "approved")),
