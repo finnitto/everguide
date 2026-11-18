@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
@@ -146,7 +146,7 @@ export default function PricingReviewPage() {
     }
   }
 
-  async function registerSource(event: React.FormEvent<HTMLFormElement>) {
+  async function registerSource(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSourceBusy(true);
     setError("");
