@@ -42,3 +42,11 @@ footer{display:flex;align-items:center;justify-content:space-between;padding:30p
 .public-prices .price-source a{color:#315d4b;text-decoration:underline;font-size:11px}
 .price-disclosure{font-size:10px!important;line-height:1.55;color:#69766e!important;margin:12px 0 0!important;padding-top:11px;border-top:1px solid #edf0eb}
 @media(max-width:760px){.public-result{flex-direction:column}.public-prices{width:100%;max-width:none;box-sizing:border-box}}
+
+.price-review-row{align-items:flex-start;gap:22px}
+.price-review-row .provider-info{min-width:0}
+.price-review-row .review-note{margin-top:12px}
+.price-review-row .review-note p{overflow-wrap:anywhere}
+.price-review-actions{flex-direction:column;align-items:stretch;min-width:190px}
+.price-review-actions button{white-space:nowrap}
+@media(max-width:760px){.price-review-row{flex-direction:column}.price-review-actions{min-width:0;width:100%}.price-review-actions button{width:100%}}
