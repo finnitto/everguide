@@ -11,6 +11,7 @@ import html
 import json
 import re
 import time
+from difflib import SequenceMatcher
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -26,6 +27,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.models import (
     AuditEvent,
+    Branch,
     OvertureCandidate,
     PricingEvidence,
     Provider,
@@ -127,7 +129,7 @@ def _candidate_matches_verified_site(candidate: OvertureCandidate, extracted: di
         and (
             source_name in page_name
             or page_name in source_name
-            or __import__("difflib").SequenceMatcher(None, source_name, page_name).ratio() >= 0.78
+            or SequenceMatcher(None, source_name, page_name).ratio() >= 0.78
         )
     )
     postcode_match = normalise_postcode(raw.get("postcode") or candidate.postcode) == normalise_postcode(
@@ -690,7 +692,7 @@ def enrich_overture_candidate_prices(self, candidate_id: int):
         payload, response_id = _call_openai_price_extractor(
             pages,
             provider_name=provider.display_name or provider.trading_name,
-            branch_context=_branch_context(candidate, db.get(__import__("app.models", fromlist=["Branch"]).Branch, candidate.branch_id) if candidate.branch_id else None),
+            branch_context=_branch_context(candidate, db.get(Branch, candidate.branch_id) if candidate.branch_id else None),
         )
         prices = _validate_extracted_prices(payload, pages)
         created, already_present = _persist_ai_prices(
