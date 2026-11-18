@@ -31,6 +31,7 @@ from app.models import (
     OvertureCandidate,
     PricingEvidence,
     Provider,
+    SourcePermission,
 )
 from app.website_checks import USER_AGENT, _get, _validate_public_https, verify_candidate
 from app.candidate_quality import normalise_identity_name, normalise_postcode
@@ -556,6 +557,7 @@ def _persist_ai_prices(
     pages: list[dict],
     prices: list[dict],
     *,
+    source_permission: SourcePermission,
     model: str,
     response_id: str,
 ) -> tuple[int, int]:
@@ -596,10 +598,10 @@ def _persist_ai_prices(
             source_name=provider.display_name or provider.trading_name,
             source_url=price["source_page_url"],
             source_rights_basis=(
-                "Provider-owned public website; factual price information only. "
-                "A short source quotation and source link are retained for reviewer verification. "
-                "Reuse remains subject to source terms and applicable rights."
+                f"{source_permission.permission_basis} "
+                "A short source quotation and source link are retained for reviewer verification."
             ),
+            source_permission_id=source_permission.id,
             source_retrieved_at=_now(),
             evidence_sha256=price["source_page_sha256"],
             evidence_excerpt=price["source_quote"],
@@ -612,6 +614,7 @@ def _persist_ai_prices(
                     "response_id": response_id,
                     "overture_candidate_id": candidate.id,
                     "gers_id": candidate.gers_id,
+                    "source_permission_id": source_permission.id,
                     "source_page_title": next(
                         (page["title"] for page in pages if page["url"] == price["source_page_url"]), ""
                     ),
@@ -668,6 +671,32 @@ def enrich_overture_candidate_prices(self, candidate_id: int):
             db.commit()
             return {"status": "needs_source", "candidate_id": candidate_id}
 
+        source_host = (urllib.parse.urlsplit(str(first_party_url)).hostname or "").lower().removeprefix("www.")
+        permissions = (
+            db.query(SourcePermission)
+            .filter(
+                SourcePermission.provider_id == provider.id,
+                SourcePermission.permission_status == "approved",
+            )
+            .order_by(SourcePermission.id.desc())
+            .all()
+        )
+        source_permission = next(
+            (
+                item for item in permissions
+                if source_host == (item.source_domain or "").lower().removeprefix("www.")
+                or source_host.endswith("." + (item.source_domain or "").lower().removeprefix("www."))
+            ),
+            None,
+        )
+        if source_permission is None:
+            _set_candidate_pricing_status(
+                db, candidate, "awaiting_permission",
+                extra={"last_error": "A reviewer must approve source reuse for this provider-owned website before price extraction."},
+            )
+            db.commit()
+            return {"status": "awaiting_permission", "candidate_id": candidate_id}
+
         # Re-check first-party identity and robots/HTTPS restrictions immediately
         # before price-page collection; a prior technical check is not permanent.
         verification = verify_candidate(str(first_party_url))
@@ -705,6 +734,7 @@ def enrich_overture_candidate_prices(self, candidate_id: int):
         prices = _validate_extracted_prices(payload, pages)
         created, already_present = _persist_ai_prices(
             db, candidate, provider, pages, prices,
+            source_permission=source_permission,
             model=settings.price_enrichment_model,
             response_id=response_id,
         )
