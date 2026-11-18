@@ -4,7 +4,10 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.identity_review_auth import require_identity_reviewer
 from app.models import Provider, Branch, SourceObservation, AuditEvent, OvertureCandidate
-from app.pricing_enrichment import queue_overture_candidate_for_pricing
+from app.pricing_enrichment import (
+    queue_overture_candidate_for_pricing,
+    dispatch_queued_price_enrichment,
+)
 from app.schemas import ProviderCreate, ProviderUpdate, ProviderOut, BranchInput, BranchOut, ObservationCreate, ObservationDecision
 from app.matching import find_provider_matches, observation_duplicate_key
 
@@ -78,6 +81,7 @@ def set_provider_status(provider_id: int, status: str, reviewer: str = Depends(r
     if not p: raise HTTPException(404,"Provider not found")
     p.status=status
     queued_candidates = 0
+    queued_candidate_ids = []
     if status == "approved":
         # Manual provider approval is a price-enrichment trigger for every
         # Overture location already linked to this provider. It does not publish.
@@ -92,6 +96,7 @@ def set_provider_status(provider_id: int, status: str, reviewer: str = Depends(r
                 requested_by=reviewer,
             ):
                 queued_candidates += 1
+                queued_candidate_ids.append(candidate.id)
         db.add(AuditEvent(
             entity_type="provider",
             entity_id=p.id,
@@ -106,8 +111,10 @@ def set_provider_status(provider_id: int, status: str, reviewer: str = Depends(r
             if branch.status == "draft": branch.status = "published"
     audit(db,"provider",p.id,"status_changed",{"status":status}, actor=reviewer)
     db.commit()
+    pricing_tasks_dispatched = dispatch_queued_price_enrichment(queued_candidate_ids)
     return {"id":p.id,"status":p.status,
-            "pricing_enrichment_candidates_queued":queued_candidates}
+            "pricing_enrichment_candidates_queued":queued_candidates,
+            "pricing_enrichment_tasks_dispatched":pricing_tasks_dispatched}
 
 @router.post("/observations", status_code=201)
 def create_observation(
