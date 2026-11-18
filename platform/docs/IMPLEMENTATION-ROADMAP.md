@@ -1,5 +1,7 @@
 # Everguide implementation roadmap
 
+Current engineering state, validation evidence and next operational gates are summarised in [Development handover](DEVELOPMENT-HANDOVER.md).
+
 ## Release 0.1.0 – Development foundation
 - [x] Next.js application scaffold
 - [x] FastAPI service scaffold
@@ -66,6 +68,27 @@
 - [x] Add disposable PostgreSQL downgrade from migration 0023 to 0022 and forward-upgrade to 0023, verifying the new evidence tables/column.
 - [x] Corrected package excludes `stage1_api_patch.py` and `stage1_task_patch.py`; reproducibility, integrity, secret/local-data exclusion and artifact upload passed GitHub Actions run #183.
 - [ ] Complete target-host backup/restore, rollback/forward-fix and replacement checklist before any persistent workload change.
+
+## Price enrichment and verification transparency — next milestone
+
+**Implementation status:** In progress on `stage1-overture-identity-provenance`; new extraction/reviewer flow requires CI validation and a controlled staging trial.
+
+- [x] Queue price enrichment after automatic Overture publication.
+- [x] Queue price enrichment after manual provider approval.
+- [x] Add an idempotent backfill for already-approved/published Overture-linked funeral-director candidates.
+- [x] Add a bounded AI extraction worker using verified provider-owned websites, same-host HTTPS pages and robots checks.
+- [x] Require reviewer-approved `SourcePermission` before price-page retrieval; release candidates waiting for permission when the matching source is approved.
+- [x] Restrict extraction to explicit GBP amounts and require a matching source-page quotation; never infer or invent a price.
+- [x] Store extracted amounts as pending `PricingEvidence` with source URL, quote, SHA-256, model and Overture candidate provenance.
+- [x] Distinguish `AI-extracted · Not verified` from `Verified by Everguide reviewer` in the API and public search display.
+- [x] Add reviewer approve/reject UI for price evidence and source permission approval.
+- [ ] Pass CI on the latest branch head, including extraction, provenance, source-permission and public-display tests plus isolated Docker validation.
+- [ ] Run a controlled staging trial with a small known candidate set and privately configured API key.
+- [ ] Measure extraction precision, review corrections, page coverage and API cost; agree thresholds before expansion.
+- [ ] Add reviewer requeue/re-extraction controls, stale-price handling, history/change detection and scheduled revalidation.
+- [ ] Complete source-use/legal review, retention policy and production monitoring before enabling AI price enrichment beyond the pilot.
+
+Runtime defaults remain `PRICE_ENRICHMENT_ENABLED=false` and `OPENAI_API_KEY` unset. Provider approval does not verify price evidence; no AI-extracted price may be marked verified without reviewer approval. See [Development handover](DEVELOPMENT-HANDOVER.md) for controls, local state and staged acceptance criteria.
 
 ## Five-stage implementation acceptance
 
