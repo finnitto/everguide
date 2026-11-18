@@ -130,6 +130,9 @@ def test_pipeline_publishes_only_when_independent_evidence_and_boundary_pass(mon
     db = factory()
     candidate = db.get(OvertureCandidate, candidate_id)
     assert candidate.outcome == "auto_approved_published"
+    pricing_enrichment = candidate.first_party_evidence["pricing_enrichment"]
+    assert pricing_enrichment["status"] == "queued"
+    assert pricing_enrichment["trigger"] == "automatic_approval"
     provider = db.get(Provider, candidate.provider_id)
     branch = db.get(Branch, candidate.branch_id)
     assert provider.status == "published" and provider.verification_status == "approved"
