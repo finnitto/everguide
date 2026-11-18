@@ -119,5 +119,10 @@ def test_approved_candidate_backfill_queues_only_approved_funeral_directors():
     assert candidates[1].first_party_evidence["pricing_enrichment"]["status"] == "queued"
     assert "pricing_enrichment" not in candidates[2].first_party_evidence
     assert "pricing_enrichment" not in candidates[3].first_party_evidence
+
+    from app.routers.overture import list_pricing_enrichment_queue
+    queue = list_pricing_enrichment_queue(status="queued", limit=100, offset=0, db=db)
+    assert queue["count"] == 2
+    assert {item["provider_status"] for item in queue["items"]} == {"approved", "published"}
     db.close()
     engine.dispose()
