@@ -1,9 +1,10 @@
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, func
 from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.identity_review_auth import require_identity_reviewer
-from app.models import Provider, Branch, SourceObservation, AuditEvent, OvertureCandidate
+from app.models import Provider, Branch, SourceObservation, AuditEvent, OvertureCandidate, PricingEvidence
 from app.pricing_enrichment import (
     queue_overture_candidate_for_pricing,
     dispatch_queued_price_enrichment,
@@ -223,8 +224,66 @@ def matching_queue(limit: int = Query(100, ge=1, le=250), offset: int = Query(0,
                       "possible_duplicate": bool(key and duplicate_counts.get(key, 0) > 1)})
     return {"items": items, "count": total, "limit": limit, "offset": offset}
 
+def _public_price_rows(db: Session, provider: Provider, branch: Branch) -> list[dict]:
+    now = datetime.now(timezone.utc)
+    rows = (
+        db.query(PricingEvidence)
+        .filter(
+            PricingEvidence.provider_id == provider.id,
+            or_(PricingEvidence.branch_id == branch.id, PricingEvidence.branch_id.is_(None)),
+            PricingEvidence.review_status.in_(("pending", "approved")),
+            or_(PricingEvidence.expires_at.is_(None), PricingEvidence.expires_at >= now),
+        )
+        .order_by(PricingEvidence.service_category.asc(), PricingEvidence.service_name.asc())
+        .limit(30)
+        .all()
+    )
+    result = []
+    for row in rows:
+        payload = dict(row.evidence_payload or {})
+        provenance = payload.get("provenance") if isinstance(payload.get("provenance"), dict) else {}
+        extraction_method = provenance.get("extraction_method", "manual")
+        if row.review_status == "approved":
+            verification_status = "verified"
+            verification_label = "Verified by Everguide reviewer"
+        elif extraction_method == "ai_extracted":
+            verification_status = "unverified"
+            verification_label = "AI-extracted · Not verified"
+        else:
+            # Manually captured but unreviewed prices are not shown publicly.
+            continue
+        result.append({
+            "id": row.id,
+            "service_category": row.service_category,
+            "service_name": row.service_name,
+            "fee_type": row.fee_type,
+            "amount": str(row.amount),
+            "amount_upper": str(row.amount_upper) if row.amount_upper is not None else None,
+            "currency": row.currency,
+            "price_basis": row.price_basis,
+            "includes": row.includes or [],
+            "excludes": row.excludes or [],
+            "source_name": row.source_name,
+            "source_url": row.source_url,
+            "source_retrieved_at": row.source_retrieved_at,
+            "verification_status": verification_status,
+            "verification_label": verification_label,
+            "extraction_method": extraction_method,
+        })
+    return result
+
+
 @router.get("/directory/search")
 def public_search(q: str = Query(min_length=2), limit: int = Query(50,ge=1,le=100), db: Session = Depends(get_db)):
     like=f"%{q.strip()}%"
     rows=(db.query(Branch,Provider).join(Provider).filter(Provider.status=="published",Provider.provider_type=="funeral_director",Branch.status=="published").filter(or_(Provider.trading_name.ilike(like),Branch.branch_name.ilike(like),Branch.town_city.ilike(like),Branch.postcode.ilike(like))).order_by(Branch.town_city,Provider.trading_name).limit(limit).all())
-    return {"items":[{"provider_name":p.display_name or p.trading_name,"provider_business_name":p.trading_name,"provider_id":p.id,**branch_dict(b)} for b,p in rows],"count":len(rows)}
+    items = []
+    for branch, provider in rows:
+        items.append({
+            "provider_name": provider.display_name or provider.trading_name,
+            "provider_business_name": provider.trading_name,
+            "provider_id": provider.id,
+            **branch_dict(branch),
+            "prices": _public_price_rows(db, provider, branch),
+        })
+    return {"items": items, "count": len(items)}
