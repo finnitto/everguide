@@ -231,12 +231,13 @@ def queue_approved_overture_candidates_for_pricing(
     }
 
 
-def dispatch_queued_price_enrichment(candidate_ids: list[int]) -> int:
-    """Dispatch only after the caller has committed the queue markers."""
+def dispatch_queued_price_enrichment(candidate_ids: list[int], *, max_tasks: int = 20) -> int:
+    """Dispatch a bounded batch only after the caller has committed queue markers."""
     if not settings.price_enrichment_enabled or not settings.openai_api_key:
         return 0
+    limit = min(max(int(max_tasks), 0), 100)
     dispatched = 0
-    for candidate_id in sorted({int(value) for value in candidate_ids if value}):
+    for candidate_id in sorted({int(value) for value in candidate_ids if value})[:limit]:
         enrich_overture_candidate_prices.delay(candidate_id)
         dispatched += 1
     return dispatched
