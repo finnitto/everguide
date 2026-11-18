@@ -303,6 +303,20 @@ def _decide_evidence(db: Session, model, evidence_id: int, payload: EvidenceDeci
             end_date = getattr(row, field_name, None)
             if end_date is not None and _as_utc(end_date) < _as_utc(now):
                 raise HTTPException(409, "Expired evidence cannot be approved; capture refreshed evidence first")
+        if isinstance(row, PricingEvidence):
+            evidence_payload = dict(row.evidence_payload or {})
+            provenance = evidence_payload.get("provenance") if isinstance(evidence_payload.get("provenance"), dict) else {}
+            if provenance.get("extraction_method") == "ai_extracted":
+                permission = db.get(SourcePermission, row.source_permission_id) if row.source_permission_id else None
+                source_host = (urlsplit(row.source_url).hostname or "").lower().removeprefix("www.")
+                permitted_domain = (permission.source_domain or "").lower().removeprefix("www.") if permission else ""
+                if (
+                    not permission
+                    or permission.permission_status != "approved"
+                    or not permitted_domain
+                    or not (source_host == permitted_domain or source_host.endswith("." + permitted_domain))
+                ):
+                    raise HTTPException(409, "The source permission is not currently approved for this price evidence.")
     row.review_status = payload.review_status
     row.reviewed_by = reviewer
     row.reviewed_at = _now()
