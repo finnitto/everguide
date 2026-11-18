@@ -37,7 +37,10 @@ from app.candidate_quality import (
 )
 from app.website_checks import verify_candidate
 from app.search_providers import search_web, SearchProviderError
-from app.pricing_enrichment import queue_overture_candidate_for_pricing
+from app.pricing_enrichment import (
+    queue_overture_candidate_for_pricing,
+    dispatch_queued_price_enrichment,
+)
 
 ONS_QUERY_URL = (
     "https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/"
@@ -1091,8 +1094,9 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                 evidence["next_retry_at"] = None
             candidate.assessment = assessment
             candidate.first_party_evidence = evidence
+            pricing_queued = False
             if outcome == "auto_approved_published" and candidate.provider_id and candidate.branch_id:
-                queue_overture_candidate_for_pricing(
+                pricing_queued = queue_overture_candidate_for_pricing(
                     db,
                     candidate,
                     trigger="automatic_approval",
@@ -1112,6 +1116,8 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                 action="automated_assessment_completed", detail={"outcome": outcome,
                 "reasons": assessment.get("reasons", ""), "ruleset_version": assessment.get("ruleset_version")}))
             db.commit()
+            if pricing_queued:
+                dispatch_queued_price_enrichment([candidate.id])
 
         if run:
             run.records_processed = (run.records_processed or 0) + checked
