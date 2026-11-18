@@ -199,6 +199,28 @@ def _record_dict(row) -> dict:
         result["amount"] = str(result["amount"])
     if "amount_upper" in result and result["amount_upper"] is not None:
         result["amount_upper"] = str(result["amount_upper"])
+    if isinstance(row, PricingEvidence):
+        payload = result.get("evidence_payload") or {}
+        provenance = payload.get("provenance") if isinstance(payload, dict) else {}
+        provenance = provenance if isinstance(provenance, dict) else {}
+        extraction_method = provenance.get("extraction_method", "manual")
+        if row.review_status == "approved":
+            verification_status = "verified"
+            verification_label = "Verified by Everguide reviewer"
+        elif row.review_status == "rejected":
+            verification_status = "rejected"
+            verification_label = "Rejected by reviewer"
+        elif extraction_method == "ai_extracted":
+            verification_status = "unverified"
+            verification_label = "AI-extracted · Not verified"
+        else:
+            verification_status = "unverified"
+            verification_label = "Not verified"
+        result["extraction_method"] = extraction_method
+        result["verification_status"] = verification_status
+        result["verification_label"] = verification_label
+        result["extraction_model"] = provenance.get("model")
+        result["overture_candidate_id"] = provenance.get("overture_candidate_id")
     return result
 
 
@@ -285,6 +307,18 @@ def _decide_evidence(db: Session, model, evidence_id: int, payload: EvidenceDeci
     row.reviewed_by = reviewer
     row.reviewed_at = _now()
     row.review_notes = payload.review_notes
+    if isinstance(row, PricingEvidence):
+        evidence_payload = dict(row.evidence_payload or {})
+        provenance = dict(evidence_payload.get("provenance") or {})
+        provenance["verification_status"] = (
+            "verified" if payload.review_status == "approved"
+            else "rejected" if payload.review_status == "rejected"
+            else "unverified"
+        )
+        provenance["reviewed_at"] = row.reviewed_at.isoformat()
+        provenance["reviewed_by"] = reviewer
+        evidence_payload["provenance"] = provenance
+        row.evidence_payload = evidence_payload
     db.add(AuditEvent(
         entity_type=model.__tablename__,
         entity_id=row.id,
