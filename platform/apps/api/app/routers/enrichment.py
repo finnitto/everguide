@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import Provider, SourcePermission, WebsiteEvidenceCheck, AuditEvent
+from app.models import Provider, SourcePermission, WebsiteEvidenceCheck, AuditEvent, OvertureCandidate
+from app.pricing_enrichment import dispatch_queued_price_enrichment
 from app.tasks import check_approved_sources
 from app.identity_review_auth import require_identity_reviewer
 router = APIRouter(prefix="/api/v1/enrichment", tags=["source permissions and enrichment"])
@@ -33,8 +34,50 @@ def approve_source(source_id:int, reviewer: str = Depends(require_identity_revie
     row=db.get(SourcePermission,source_id)
     if not row: raise HTTPException(404,"Source permission record not found")
     row.permission_status="approved"; row.approved_by=reviewer; row.approved_at=datetime.now(timezone.utc)
-    db.add(AuditEvent(entity_type="source_permission",entity_id=row.id,action="approved_for_fetch",detail={"domain":row.source_domain,"permission_reference":row.permission_reference,"basis":row.permission_basis})); db.commit()
-    return {"id":row.id,"permission_status":row.permission_status,"message":"Approved source can be checked by the enrichment job."}
+    db.add(AuditEvent(entity_type="source_permission",entity_id=row.id,action="approved_for_fetch",detail={"domain":row.source_domain,"permission_reference":row.permission_reference,"basis":row.permission_basis}))
+
+    # Release only candidates that were held because this source did not yet
+    # have reviewer approval. Candidate identity/publication state is unchanged.
+    queued_ids = []
+    candidates = (
+        db.query(OvertureCandidate)
+        .filter(OvertureCandidate.provider_id == row.provider_id)
+        .order_by(OvertureCandidate.id.asc())
+        .all()
+    )
+    for candidate in candidates:
+        evidence = dict(candidate.first_party_evidence or {})
+        marker = evidence.get("pricing_enrichment")
+        marker = dict(marker) if isinstance(marker, dict) else {}
+        if marker.get("status") != "awaiting_permission":
+            continue
+        marker.update({
+            "status": "queued",
+            "permission_id": row.id,
+            "permission_approved_at": row.approved_at.isoformat(),
+            "permission_approved_by": reviewer,
+            "requested_at": datetime.now(timezone.utc).isoformat(),
+        })
+        evidence["pricing_enrichment"] = marker
+        candidate.first_party_evidence = evidence
+        queued_ids.append(candidate.id)
+        db.add(AuditEvent(
+            entity_type="overture_candidate",
+            entity_id=candidate.id,
+            action="pricing_enrichment_released_after_source_approval",
+            detail={"provider_id": row.provider_id, "source_permission_id": row.id,
+                    "source_domain": row.source_domain},
+            actor=reviewer,
+        ))
+    db.commit()
+    dispatched = dispatch_queued_price_enrichment(queued_ids)
+    return {
+        "id":row.id,
+        "permission_status":row.permission_status,
+        "pricing_candidates_requeued":len(queued_ids),
+        "pricing_tasks_dispatched":dispatched,
+        "message":"Source approved. Waiting price-enrichment candidates were released; retrieval runs only when the AI price-enrichment feature and API key are configured.",
+    }
 @router.post("/run",status_code=202)
 def run_enrichment(reviewer: str = Depends(require_identity_reviewer)):
     task=check_approved_sources.delay()
