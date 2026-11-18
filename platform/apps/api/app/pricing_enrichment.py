@@ -291,11 +291,24 @@ def _fetch_price_pages(website_url: str, max_pages: int = 6) -> list[dict]:
         text = _normalise_space(" ".join(parser.text_parts))[:MAX_TEXT_PER_PAGE]
         if not text:
             continue
+        # Send only compact contexts around explicit GBP amounts to the model.
+        # Retain the full bounded page text in memory solely to validate its quote.
+        contexts = []
+        for match in GBP_AMOUNT.finditer(text):
+            start = max(0, match.start() - 180)
+            end = min(len(text), match.end() + 220)
+            snippet = text[start:end]
+            if snippet not in contexts:
+                contexts.append(snippet)
+        if not contexts:
+            continue
+        ai_text = _normalise_space(" … ".join(contexts))[:4_000]
 
         pages.append({
             "url": url,
             "title": _normalise_space(" ".join(parser.title_parts))[:300],
             "text": text,
+            "ai_text": ai_text,
             "sha256": hashlib.sha256(body).hexdigest(),
         })
         total_chars += len(text)
@@ -373,7 +386,7 @@ def _call_openai_price_extractor(
         "provider_name": provider_name,
         "branch_context": branch_context,
         "source_pages": [
-            {"url": page["url"], "title": page["title"], "visible_text": page["text"]}
+            {"url": page["url"], "title": page["title"], "visible_text": page.get("ai_text") or page["text"]}
             for page in pages
         ],
     }
