@@ -47,6 +47,13 @@ def approve_source(source_id:int, reviewer: str = Depends(require_identity_revie
     )
     for candidate in candidates:
         evidence = dict(candidate.first_party_evidence or {})
+        candidate_url = str(evidence.get("website_url") or "")
+        candidate_host = (urlparse(candidate_url).hostname or "").lower().removeprefix("www.")
+        approved_domain = (row.source_domain or "").lower().removeprefix("www.")
+        if not candidate_host or not (
+            candidate_host == approved_domain or candidate_host.endswith("." + approved_domain)
+        ):
+            continue
         marker = evidence.get("pricing_enrichment")
         marker = dict(marker) if isinstance(marker, dict) else {}
         if marker.get("status") != "awaiting_permission":
