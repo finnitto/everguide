@@ -28,7 +28,7 @@ CATEGORY_TERMS = {
     "cemetery": (
         "cemetery", "cemeteries", "cemetary", "cemetaries",
         "churchyard", "burial ground", "natural burial", "woodland burial",
-        "green burial", "burial meadow",
+        "green burial", "woodlands burial", "burial meadow",
     ),
     "crematorium": ("crematorium", "crematoria"),
     "celebrant": ("celebrant",),
