@@ -1,8 +1,8 @@
 # Everguide five-stage implementation acceptance plan
 
 **Working branch:** `stage1-overture-identity-provenance`  
-**Current implementation baseline:** commit `7913a992727ddfe415f8b195632a62b03284867f` (application and test changes; later documentation commits may advance HEAD)  
-**Product policy:** `overture-first-approval-v2.0`  
+**Current implementation baseline:** application/Compose validation commit `431094f0c323656681c241f09f75d3a98a8ed4b9`; handover-only follow-up `b03cc4240fda973e4a58c7e5da30e357e48c3a0c`  
+**Product policy:** `overture-first-approval-v2.1`  
 **Release target:** 2.8.0  
 **Operational mode during implementation and validation:** non-production; automatic publication, post-import processing and scheduled feed tasks remain disabled by default.
 
@@ -40,11 +40,11 @@ Status labels:
 - [ ] No active API path bypasses the Overture publication worker to create/publish providers or branches.
 - [x] All internal API routes pass the reviewer route-introspection/auth tests; only directory search and health/readiness/API-root remain public.
 - [x] Migrations 0021 and 0022, followed by migration 0023, pass isolated upgrade and schema validation in the current CI stack.
-- [x] Full API and front-end checks pass on the current branch (176 API tests, lint, TypeScript and production build in run #153).
+- [x] Full API and front-end checks pass on the implementation branch (176 API tests, lint, TypeScript and production build in run #153).
 - [ ] Stage acceptance records source-rights and admin-access review.
 
 ### Current assessment
-Core Overture-only discovery, GERS/source/release/contributor/licence provenance, verified Companies House links, retired creation/discovery bypass paths and the Overture approval write boundary are implemented. Observation creation, provider edits, provider status changes and observation decisions require reviewer authentication and record the authenticated reviewer as audit actor. Current branch validation passes 179 API tests, frontend lint/type/build and disposable Docker integration through migration 0023. Source-rights review and product/operational acceptance remain outstanding; no live candidate processing or publication was performed.
+Core Overture-only discovery, GERS/source/release/contributor/licence provenance, verified Companies House links, retired creation/discovery bypass paths and the Overture approval write boundary are implemented. Observation creation, provider edits, provider status changes and observation decisions require reviewer authentication and record the authenticated reviewer as audit actor. GitHub Actions run #304 passed 202 API tests, Python/migration compilation, frontend lint/TypeScript/production build, deterministic release archive checks and disposable Docker integration through migration 0023. No live candidate processing or publication was performed. Source-rights review and product/operational acceptance remain outstanding; no live candidate processing or publication was performed.
 
 ## Stage 2 — Overture-first identity and branch approval
 
@@ -129,7 +129,7 @@ Partially implemented. Every internal `/api/v1/...` route is reviewer-protected 
 - Review migration SQL/DDL, schema compatibility, target Alembic revision and rollback limitations. Rehearse against a disposable copy, never against the persistent operational database as a routine CI action.
 
 ### Exit criteria
-- [x] Current branch passed 179 API tests, frontend lint/type/production build and isolated Docker integration through migration 0023. This is an implementation checkpoint, not release sign-off.
+- [x] Application/Compose commit `431094f0c323656681c241f09f75d3a98a8ed4b9` passed run #304: 202 API tests, Python/migration compile, frontend lint/type/production build, deterministic archive audit and isolated Docker integration through migration 0023. This is an implementation checkpoint, not release sign-off.
 - [x] Release manifest and migration list declare migrations 0021, 0022 and 0023; version consistency passed.
 - [x] Deterministic release archive built from the maintained `platform/` tree; repeat-build SHA-256 equality, required files and ZIP integrity tests passed.
 - [x] Corrected archive exclusion audit passed for environment/credential files, cloud/SSH keys, development patch helpers, databases, candidate datasets, caches, dependencies and build outputs. The `.env.example` template remains included.
@@ -139,7 +139,7 @@ Partially implemented. Every internal `/api/v1/...` route is reviewer-protected 
 - [ ] Release sign-off records the exact source commit, archive hash, CI run and migration evidence.
 
 ### Current assessment
-The corrected release package and full CI validation pass. The workflow produced `everguide-v2.8.0.zip` (155 files; 382,181 bytes) with SHA-256 recorded in its `.sha256` sidecar and source commit/hash/file count in the external `.package-manifest.json`; the ZIP was independently downloaded, checksum-verified and inspected. Both development patch helpers are excluded. CI also passed 179 API tests, Python compile, frontend lint/type/production build and isolated Docker migration downgrade/re-upgrade through `0023_stage3_evidence`, confirming the evidence tables and `providers.business_form`. The root `release_v2.8.0/` snapshot remains superseded. Target-host backup/replacement checklist and formal release sign-off remain outstanding.
+The corrected release package and full CI validation pass. The workflow produced `everguide-v2.8.0.zip` (155 files; 382,181 bytes) with SHA-256 recorded in its `.sha256` sidecar and source commit/hash/file count in the external `.package-manifest.json`; the ZIP was independently downloaded, checksum-verified and inspected. Both development patch helpers are excluded. CI run #304 passed 202 API tests, Python/migration compile, frontend lint/type/production build and isolated Docker migration downgrade/re-upgrade through `0023_stage3_evidence`, confirming the evidence tables and `providers.business_form`. The root `release_v2.8.0/` snapshot remains superseded. Target-host backup/replacement checklist and formal release sign-off remain outstanding.
 
 ## Non-negotiable operating safeguards
 
@@ -155,7 +155,7 @@ The corrected release package and full CI validation pass. The workflow produced
 - Current implementation branch: `stage1-overture-identity-provenance`.
 - Handover baseline: `0958c66a2ec6b6b387accde2b802f84ec927faf1`.
 - Earlier CI baseline: [run #38](https://github.com/finnitto/everguide/actions/runs/44118434200).
-- Latest corrected Stage 5 validation: the current branch run passed 179 API tests, deterministic archive build and upload, and disposable migration 0023 downgrade/forward-upgrade. The generated ZIP is 155 files; its SHA-256 and source commit are in the uploaded sidecar package manifest.
+- Latest corrected Stage 5 validation: run #304 passed 202 API tests, deterministic archive checks and upload, and disposable migration 0023 downgrade/forward-upgrade. The application/Compose validation SHA is `431094f0c323656681c241f09f75d3a98a8ed4b9`; the handover-only commit is `b03cc4240fda973e4a58c7e5da30e357e48c3a0c`. The generated ZIP is 155 files; its SHA-256 and source commit are in the uploaded sidecar package manifest.
 - Overture approval policy: [OVERTURE-AUTOMATIC-APPROVAL.md](OVERTURE-AUTOMATIC-APPROVAL.md).
 - Validation procedure: [VALIDATION.md](VALIDATION.md).
 - Current release metadata: [RELEASE-MANIFEST.json](../RELEASE-MANIFEST.json).
