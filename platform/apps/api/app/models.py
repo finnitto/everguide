@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Float, String, Text, JSON, Index
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Float, String, Text, JSON, Index, UniqueConstraint, Numeric, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -16,6 +16,7 @@ class Provider(Base):
     status: Mapped[str] = mapped_column(String(30), default="draft", index=True)
     verification_status: Mapped[str] = mapped_column(String(30), default="unverified")
     quality_status: Mapped[str] = mapped_column(String(24), default="unassessed", index=True)
+    business_form: Mapped[str] = mapped_column(String(30), nullable=False, default="unknown")
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
@@ -278,6 +279,9 @@ class CompanyBranchProposal(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     companies_house_candidate_id: Mapped[int] = mapped_column(ForeignKey("companies_house_candidates.id", ondelete="CASCADE"), index=True)
     website_candidate_id: Mapped[int] = mapped_column(ForeignKey("company_website_candidates.id", ondelete="CASCADE"), unique=True, index=True)
+    overture_company_link_id: Mapped[int | None] = mapped_column(
+        ForeignKey("overture_company_links.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
     proposed_branch_name: Mapped[str | None] = mapped_column(String(240))
     address_line: Mapped[str | None] = mapped_column(String(500))
@@ -326,6 +330,34 @@ class OvertureImportRun(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class OvertureCompanyLink(Base):
+    """Auditable, explicitly reviewed provenance link between Overture and Companies House."""
+    __tablename__ = "overture_company_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "overture_candidate_id",
+            "companies_house_candidate_id",
+            name="uq_overture_company_links_candidate_pair",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    overture_candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("overture_candidates.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    companies_house_candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("companies_house_candidates.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending", index=True)
+    link_method: Mapped[str] = mapped_column(String(40), nullable=False, default="manual_review")
+    evidence_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    review_notes: Mapped[str | None] = mapped_column(Text)
+    reviewed_by: Mapped[str | None] = mapped_column(String(120))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
 class OvertureCandidate(Base):
     __tablename__ = "overture_candidates"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -345,3 +377,161 @@ class OvertureCandidate(Base):
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+
+class PricingEvidence(Base):
+    """A source-backed price line. Approval accepts this evidence only; it never publishes a provider."""
+    __tablename__ = "pricing_evidence"
+    __table_args__ = (
+        CheckConstraint("amount >= 0", name="ck_pricing_evidence_amount_non_negative"),
+        CheckConstraint("amount_upper IS NULL OR amount_upper >= amount", name="ck_pricing_evidence_amount_upper"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider_id: Mapped[int] = mapped_column(ForeignKey("providers.id", ondelete="CASCADE"), nullable=False, index=True)
+    branch_id: Mapped[int | None] = mapped_column(ForeignKey("branches.id", ondelete="RESTRICT"), index=True)
+    service_category: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
+    service_name: Mapped[str] = mapped_column(String(240), nullable=False)
+    option_group_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    option_group_name: Mapped[str | None] = mapped_column(String(240))
+    fee_type: Mapped[str] = mapped_column(String(60), nullable=False)
+    amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    amount_upper: Mapped[float | None] = mapped_column(Numeric(12, 2))
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="GBP")
+    price_basis: Mapped[str] = mapped_column(String(24), nullable=False, default="fixed")
+    includes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    excludes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    applicability: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    effective_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    source_name: Mapped[str] = mapped_column(String(240), nullable=False)
+    source_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    source_rights_basis: Mapped[str] = mapped_column(Text, nullable=False)
+    source_permission_id: Mapped[int | None] = mapped_column(ForeignKey("source_permissions.id", ondelete="SET NULL"), index=True)
+    source_retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now_utc)
+    evidence_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence_excerpt: Mapped[str | None] = mapped_column(Text)
+    evidence_payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    review_status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending", index=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(120))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    review_notes: Mapped[str | None] = mapped_column(Text)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class MembershipEvidence(Base):
+    """A discrete membership assertion; it is independent of provider identity and publication."""
+    __tablename__ = "membership_evidence"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider_id: Mapped[int] = mapped_column(ForeignKey("providers.id", ondelete="CASCADE"), nullable=False, index=True)
+    branch_id: Mapped[int | None] = mapped_column(ForeignKey("branches.id", ondelete="RESTRICT"), index=True)
+    scheme_code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    membership_number: Mapped[str | None] = mapped_column(String(100))
+    member_name: Mapped[str | None] = mapped_column(String(240))
+    reported_status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown", index=True)
+    applicability_status: Mapped[str] = mapped_column(String(24), nullable=False, default="unknown")
+    valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    source_name: Mapped[str] = mapped_column(String(240), nullable=False)
+    source_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    source_rights_basis: Mapped[str] = mapped_column(Text, nullable=False)
+    source_permission_id: Mapped[int | None] = mapped_column(ForeignKey("source_permissions.id", ondelete="SET NULL"), index=True)
+    source_retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now_utc)
+    evidence_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence_excerpt: Mapped[str | None] = mapped_column(Text)
+    evidence_payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    review_status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending", index=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(120))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    review_notes: Mapped[str | None] = mapped_column(Text)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class RegulatoryEvidence(Base):
+    """A separate regulator-specific result with explicit applicability."""
+    __tablename__ = "regulatory_evidence"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider_id: Mapped[int] = mapped_column(ForeignKey("providers.id", ondelete="CASCADE"), nullable=False, index=True)
+    branch_id: Mapped[int | None] = mapped_column(ForeignKey("branches.id", ondelete="RESTRICT"), index=True)
+    regulator_code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    reference_number: Mapped[str | None] = mapped_column(String(100))
+    permissions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    reported_status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown", index=True)
+    applicability_status: Mapped[str] = mapped_column(String(24), nullable=False, default="unknown")
+    valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    source_name: Mapped[str] = mapped_column(String(240), nullable=False)
+    source_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    source_rights_basis: Mapped[str] = mapped_column(Text, nullable=False)
+    source_permission_id: Mapped[int | None] = mapped_column(ForeignKey("source_permissions.id", ondelete="SET NULL"), index=True)
+    source_retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now_utc)
+    evidence_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence_excerpt: Mapped[str | None] = mapped_column(Text)
+    evidence_payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    review_status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending", index=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(120))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    review_notes: Mapped[str | None] = mapped_column(Text)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class EvidenceRevalidationRequest(Base):
+    """Reviewer-created, idempotent revalidation request with a fixed retry ceiling."""
+    __tablename__ = "evidence_revalidation_requests"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_evidence_revalidation_requests_idempotency_key"),
+        CheckConstraint("attempt_count >= 0 AND attempt_count <= max_attempts", name="ck_evidence_revalidation_attempt_bounds"),
+        CheckConstraint("max_attempts >= 1 AND max_attempts <= 4", name="ck_evidence_revalidation_max_attempts"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    domain: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    evidence_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider_id: Mapped[int] = mapped_column(ForeignKey("providers.id", ondelete="CASCADE"), nullable=False, index=True)
+    branch_id: Mapped[int | None] = mapped_column(ForeignKey("branches.id", ondelete="RESTRICT"), index=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="requested", index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    requested_by: Mapped[str] = mapped_column(String(120), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class EvidenceRevalidationAttempt(Base):
+    """Immutable record of a reviewer-recorded check attempt."""
+    __tablename__ = "evidence_revalidation_attempts"
+    __table_args__ = (
+        UniqueConstraint("request_id", "idempotency_key", name="uq_evidence_revalidation_attempt_request_key"),
+        UniqueConstraint("request_id", "attempt_number", name="uq_evidence_revalidation_attempt_number"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    request_id: Mapped[int] = mapped_column(ForeignKey("evidence_revalidation_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    outcome: Mapped[str] = mapped_column(String(24), nullable=False)
+    failure_class: Mapped[str | None] = mapped_column(String(60))
+    source_url: Mapped[str | None] = mapped_column(String(1000))
+    evidence_sha256: Mapped[str | None] = mapped_column(String(64))
+    detail: Mapped[str | None] = mapped_column(Text)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    actor: Mapped[str] = mapped_column(String(120), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)

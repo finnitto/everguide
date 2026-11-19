@@ -60,3 +60,81 @@ def test_directory_score_is_capped_at_ten_percent():
     item = lead(result_url="https://ashesregister.com/example",
                 extracted_data={"name":"Example Funeral Directors"})
     assert confidence(item, SimpleNamespace(company_name="Example Funeral Directors Ltd")) <= 0.10
+
+
+def test_overture_branch_match_requires_exact_street_locality_and_postcode():
+    from datetime import datetime, timezone
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.database import Base
+    from app.models import CompaniesHouseCandidate, OvertureCandidate, OvertureCompanyLink
+    from app.identity_assessment import matched_overture_company_link
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    company = CompaniesHouseCandidate(
+        company_number="01234567", company_name="Example Funeral Directors Ltd", company_status="active"
+    )
+    first = OvertureCandidate(
+        gers_id="GERS-MATCH-001", candidate_name="Example Funeral Directors", postcode="SS1 1AA",
+        raw_data={"addresses_json":[{"freeform":"12 High Street, Southend-on-Sea, SS1 1AA",
+                                     "locality":"Southend-on-Sea","postcode":"SS1 1AA"}]},
+    )
+    second = OvertureCandidate(
+        gers_id="GERS-MATCH-002", candidate_name="Example Funeral Directors Branch 2", postcode="SS1 1AA",
+        raw_data={"addresses_json":[{"freeform":"4 Station Road, Southend-on-Sea, SS1 1AA",
+                                     "locality":"Southend-on-Sea","postcode":"SS1 1AA"}]},
+    )
+    db.add_all([company, first, second])
+    db.flush()
+    reviewed = datetime.now(timezone.utc)
+    first_link = OvertureCompanyLink(
+        overture_candidate_id=first.id, companies_house_candidate_id=company.id,
+        status="verified", reviewed_by="reviewer", reviewed_at=reviewed, evidence_json={"finding":"matched"}
+    )
+    second_link = OvertureCompanyLink(
+        overture_candidate_id=second.id, companies_house_candidate_id=company.id,
+        status="verified", reviewed_by="reviewer", reviewed_at=reviewed, evidence_json={"finding":"matched"}
+    )
+    db.add_all([first_link, second_link])
+    db.commit()
+
+    branch = {"street":"12 High St", "town":"Southend-on-Sea", "postcode":"ss1 1aa"}
+    match = matched_overture_company_link(db, company.id, branch)
+    assert match is not None
+    assert match[0].id == first_link.id
+    assert match[1].gers_id == "GERS-MATCH-001"
+    assert match[2] == {
+        "street":"12 High Street", "locality":"Southend-on-Sea", "postcode":"SS1 1AA"
+    }
+
+    # Same postcode is not sufficient when the street or locality differs.
+    assert matched_overture_company_link(db, company.id, {
+        "street":"99 High Street", "town":"Southend-on-Sea", "postcode":"SS1 1AA"
+    }) is None
+    assert matched_overture_company_link(db, company.id, {
+        "street":"12 High Street", "town":"Leigh-on-Sea", "postcode":"SS1 1AA"
+    }) is None
+    assert matched_overture_company_link(db, company.id, {
+        "street":"12 High Street", "town":"Southend-on-Sea", "postcode":"SS9 9ZZ"
+    }) is None
+    assert matched_overture_company_link(db, company.id, {
+        "street":"12 High Street", "town":"Southend-on-Sea", "postcode":None
+    }) is None
+
+    # Duplicate Overture records for the same full address are ambiguous.
+    second.raw_data = {"addresses_json":[{"freeform":"12 High Street, Southend-on-Sea, SS1 1AA",
+                                          "locality":"Southend-on-Sea","postcode":"SS1 1AA"}]}
+    db.commit()
+    assert matched_overture_company_link(db, company.id, branch) is None
+
+    # No structured Overture address means no postcode-only fallback.
+    second.raw_data = {}
+    first.raw_data = {}
+    db.commit()
+    assert matched_overture_company_link(db, company.id, branch) is None
+    db.close()
+    Base.metadata.drop_all(engine)
+    engine.dispose()

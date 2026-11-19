@@ -141,6 +141,7 @@ def test_expired_boundary_cache_is_not_used(monkeypatch, tmp_path):
 
 
 def test_scheduled_retry_requeues_only_due_enrichment_candidates(monkeypatch):
+    monkeypatch.setattr(tasks.settings, "overture_scheduled_tasks_enabled", True)
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     from app.database import Base
@@ -182,6 +183,7 @@ def test_scheduled_retry_requeues_only_due_enrichment_candidates(monkeypatch):
 
 
 def test_stale_empty_import_run_is_closed_with_audit(monkeypatch):
+    monkeypatch.setattr(tasks.settings, "overture_scheduled_tasks_enabled", True)
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     from app.database import Base
@@ -207,6 +209,7 @@ def test_stale_empty_import_run_is_closed_with_audit(monkeypatch):
 
 
 def test_stale_import_run_with_unprocessed_candidates_is_resumed(monkeypatch):
+    monkeypatch.setattr(tasks.settings, "overture_scheduled_tasks_enabled", True)
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     from app.database import Base

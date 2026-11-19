@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-everguide}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-this-local-password}
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -20,7 +20,7 @@ services:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -36,7 +36,8 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-development}
       APP_NAME: ${APP_NAME:-Everguide}
-      APP_VERSION: ${APP_VERSION:-2.7.7}
+      APP_VERSION: ${APP_VERSION:-2.8.0}
+      IDENTITY_REVIEW_CREDENTIALS: ${IDENTITY_REVIEW_CREDENTIALS:-}
       COMPANIES_HOUSE_API_KEY: ${COMPANIES_HOUSE_API_KEY:-}
       COMPANIES_HOUSE_SIC_CODES: ${COMPANIES_HOUSE_SIC_CODES:-96030}
       GOOGLE_PLACES_API_KEY: ${GOOGLE_PLACES_API_KEY:-}
@@ -50,6 +51,8 @@ services:
       OVERTURE_FEED_DAILY_HOUR: ${OVERTURE_FEED_DAILY_HOUR:-4}
       OVERTURE_FEED_DAILY_MINUTE: ${OVERTURE_FEED_DAILY_MINUTE:-30}
       OVERTURE_FEED_BATCH_SIZE: ${OVERTURE_FEED_BATCH_SIZE:-500}
+      PRICE_ENRICHMENT_ENABLED: ${PRICE_ENRICHMENT_ENABLED:-true}
+      PRICE_ENRICHMENT_MAX_PAGES: ${PRICE_ENRICHMENT_MAX_PAGES:-6}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-everguide}:${POSTGRES_PASSWORD:-change-this-local-password}@db:5432/${POSTGRES_DB:-everguide}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
@@ -89,6 +92,8 @@ services:
       OVERTURE_FEED_DAILY_HOUR: ${OVERTURE_FEED_DAILY_HOUR:-4}
       OVERTURE_FEED_DAILY_MINUTE: ${OVERTURE_FEED_DAILY_MINUTE:-30}
       OVERTURE_FEED_BATCH_SIZE: ${OVERTURE_FEED_BATCH_SIZE:-500}
+      PRICE_ENRICHMENT_ENABLED: ${PRICE_ENRICHMENT_ENABLED:-true}
+      PRICE_ENRICHMENT_MAX_PAGES: ${PRICE_ENRICHMENT_MAX_PAGES:-6}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-everguide}:${POSTGRES_PASSWORD:-change-this-local-password}@db:5432/${POSTGRES_DB:-everguide}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
@@ -141,8 +146,8 @@ services:
       args:
         # Local Docker Desktop default. Override HTTP_PROXY/HTTPS_PROXY in the
         # shell or .env for another build environment; set them empty to disable.
-        HTTP_PROXY: ${HTTP_PROXY:-http://http.docker.internal:3128}
-        HTTPS_PROXY: ${HTTPS_PROXY:-http://http.docker.internal:3128}
+        HTTP_PROXY: ${HTTP_PROXY-http://http.docker.internal:3128}
+        HTTPS_PROXY: ${HTTPS_PROXY-http://http.docker.internal:3128}
     environment:
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
       NODE_ENV: production

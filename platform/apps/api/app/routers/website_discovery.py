@@ -10,12 +10,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.identity_review_auth import require_identity_reviewer
 from app.config import settings
 from app.models import AuditEvent, WebsiteDiscoveryResult, WebsiteVerification, WebsiteVerificationRun, Provider, Branch, SourceObservation, ProviderQualityAction
 from app.tasks import discover_provider_websites, verify_website_candidates
 from app.identity_rules import _classify, _normalise_identity_name, _provider_quality_assessment
 
-router = APIRouter(prefix="/api/v1/website-discovery", tags=["automatic website discovery"])
+router = APIRouter(prefix="/api/v1/website-discovery", tags=["automatic website discovery"], dependencies=[Depends(require_identity_reviewer)])
 
 
 def _clean_text(value):
@@ -101,7 +102,7 @@ def _recover_stale_verification_runs(db: Session):
     return recovered
 
 
-@router.get("/status")
+@router.get("/status", dependencies=[Depends(require_identity_reviewer)])
 def status(db: Session = Depends(get_db)):
     configured = bool(settings.brave_search_api_key) if settings.search_provider == "brave" else False
     rows = db.query(WebsiteDiscoveryResult).all()
@@ -128,7 +129,7 @@ def start_run():
 def start_verification_run():
     raise HTTPException(status_code=410, detail="Legacy website candidate verification is disabled pending the Overture-led workflow.")
 
-@router.get("/verification-runs")
+@router.get("/verification-runs", dependencies=[Depends(require_identity_reviewer)])
 def verification_runs(limit: int = 10, db: Session = Depends(get_db)):
     _recover_stale_verification_runs(db)
     rows = db.query(WebsiteVerificationRun).order_by(WebsiteVerificationRun.id.desc()).limit(min(max(limit,1),50)).all()
@@ -141,7 +142,7 @@ def verification_runs(limit: int = 10, db: Session = Depends(get_db)):
 
 
 @router.post("/quality-assessments", status_code=200)
-def assess_existing_provider_quality(db: Session = Depends(get_db)):
+def assess_existing_provider_quality(reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     """Idempotently assess existing provider records from retained evidence only."""
     providers = db.query(Provider).order_by(Provider.id.asc()).all()
     observations = db.query(SourceObservation).all()
@@ -166,7 +167,7 @@ def assess_existing_provider_quality(db: Session = Depends(get_db)):
 
 
 @router.post("/quality-assessments/reassess", status_code=200)
-def reassess_existing_provider_quality(db: Session = Depends(get_db)):
+def reassess_existing_provider_quality(reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     """Re-evaluate all providers using the corrected retained-evidence rules.
 
     Provider publication status and branch records are deliberately untouched.
@@ -196,7 +197,7 @@ def reassess_existing_provider_quality(db: Session = Depends(get_db)):
             "message": "Quality statuses re-evaluated using retained evidence. Provider publication and branch records were not changed."}
 
 
-@router.get("/identity-review")
+@router.get("/identity-review", dependencies=[Depends(require_identity_reviewer)])
 def provider_identity_review(db: Session = Depends(get_db)):
     """Return evidence-backed identity anomalies without changing provider records."""
     providers = db.query(Provider).order_by(Provider.id.asc()).all()
@@ -264,7 +265,7 @@ def provider_identity_review(db: Session = Depends(get_db)):
             "message": "Complete read-only identity review. Recommendations are advisory; no provider names, publication statuses or branches were changed."}
 
 
-@router.get("/quality-actions")
+@router.get("/quality-actions", dependencies=[Depends(require_identity_reviewer)])
 def list_quality_actions(status: str | None = "pending", db: Session = Depends(get_db)):
     query = db.query(ProviderQualityAction)
     if status and status != "all":
@@ -281,7 +282,7 @@ def list_quality_actions(status: str | None = "pending", db: Session = Depends(g
 
 
 @router.post("/quality-actions/seed")
-def seed_quality_actions(db: Session = Depends(get_db)):
+def seed_quality_actions(reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     """Create idempotent, evidence-linked proposals; never mutate live providers."""
     report = provider_identity_review(db)
     created = 0
@@ -353,7 +354,7 @@ def seed_quality_actions(db: Session = Depends(get_db)):
 
 
 @router.post("/quality-actions/{action_id}/decide")
-def decide_quality_action(action_id: int, decision: dict, db: Session = Depends(get_db)):
+def decide_quality_action(action_id: int, decision: dict, reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     action = db.get(ProviderQualityAction, action_id)
     if not action:
         raise HTTPException(404, "Quality action not found")
@@ -382,7 +383,7 @@ def decide_quality_action(action_id: int, decision: dict, db: Session = Depends(
                 detail={"old_trading_name": old_name, "new_trading_name": new_name,
                         "old_display_name": old_display_name, "new_display_name": provider.display_name,
                         "registered_name_unchanged": provider.registered_name,
-                        "quality_action_id": action.id, "evidence": action.evidence}, actor="local-admin"))
+                        "quality_action_id": action.id, "evidence": action.evidence}, actor=reviewer))
         elif action.action_type == "reclassify":
             new_type = (action.proposed_value or {}).get("provider_type")
             if new_type not in {"directory", "related_service"}:
@@ -391,18 +392,18 @@ def decide_quality_action(action_id: int, decision: dict, db: Session = Depends(
             provider.provider_type = new_type
             db.add(AuditEvent(entity_type="provider", entity_id=provider.id, action="quality_reclassification_approved",
                 detail={"old_provider_type": old_type, "new_provider_type": new_type,
-                        "quality_action_id": action.id, "evidence": action.evidence}, actor="local-admin"))
+                        "quality_action_id": action.id, "evidence": action.evidence}, actor=reviewer))
         else:
             raise HTTPException(400, "This proposal is review-only and cannot be applied automatically")
         action.status = "approved"
     else:
         action.status = "rejected"
     action.decision_note = str(decision.get("note") or "")[:2000] or None
-    action.decided_by = "local-admin"
+    action.decided_by = reviewer
     action.decided_at = datetime.now(timezone.utc)
     db.add(AuditEvent(entity_type="provider_quality_action", entity_id=action.id,
         action=("approved" if outcome == "approve" else "rejected"), detail={"provider_id": provider.id, "category": action.category,
-        "action_type": action.action_type, "note": action.decision_note}, actor="local-admin"))
+        "action_type": action.action_type, "note": action.decision_note}, actor=reviewer))
     db.commit()
     return {"id": action.id, "status": action.status, "provider_id": provider.id,
             "provider_status": provider.status, "provider_type": provider.provider_type,
@@ -411,7 +412,7 @@ def decide_quality_action(action_id: int, decision: dict, db: Session = Depends(
 
 
 @router.post("/branch-enrichment/postcodes")
-def enrich_published_branch_counties(db: Session = Depends(get_db)):
+def enrich_published_branch_counties(reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     """Fill missing published-branch counties from the Postcodes.io bulk API.
 
     Only explicit admin_county values are written. Unitary-authority and other
@@ -495,7 +496,7 @@ def enrich_published_branch_counties(db: Session = Depends(get_db)):
             "message": "County enrichment completed. Only explicit administrative county values were added; districts and regions were not substituted."}
 
 
-@router.get("/analytics")
+@router.get("/analytics", dependencies=[Depends(require_identity_reviewer)])
 def provider_analytics(db: Session = Depends(get_db)):
     """Distinct provider, branch, geography and duplicate-quality reporting."""
     providers = db.query(Provider).all()
@@ -591,7 +592,7 @@ def provider_analytics(db: Session = Depends(get_db)):
             "by_source_type": [{"source_type": kind, "count": count} for kind, count in db.query(SourceObservation.source_type, func.count(SourceObservation.id)).group_by(SourceObservation.source_type).order_by(func.count(SourceObservation.id).desc()).all()] }
     }
 
-@router.get("/candidates")
+@router.get("/candidates", dependencies=[Depends(require_identity_reviewer)])
 def candidates(limit:int=100, db:Session=Depends(get_db)):
     rows = db.query(WebsiteDiscoveryResult).order_by(WebsiteDiscoveryResult.created_at.desc()).limit(min(max(limit,1),500)).all()
     all_rows = db.query(WebsiteDiscoveryResult).all()

@@ -1,50 +1,79 @@
-# Everguide v2.7.4
+# Everguide v2.8.0
 
-Automation-first discovery, verification and publication foundation for the Everguide funeral director directory.
+England-only funeral director directory with Overture-first discovery, evidence-led identity verification and controlled publication.
 
-## Important deployment behaviour
+## Current operating policy
 
-On first startup after v2.0.0 is deployed, Alembic migration `0013_ch_reset` clears the early-development directory and its operational discovery data. It clears providers, branches, source observations, Google Places discovery observations, website discovery and verification data, correction proposals, source permission records and related development audit events. It retains the PostgreSQL database and schema, Alembic migration history, Redis infrastructure and application configuration. A new system audit event records the reset.
+- **Initial discovery:** Overture Places is the sole source of initial discovery candidates. Companies House and provider-owned websites are supporting legal-identity, trading-identity and branch evidence only.
+- **No independent discovery:** legacy Google Places, Companies House-led candidate discovery and company-website discovery routes are retired. Their legacy worker tasks return disabled before their former processing paths.
+- **Creation and publication:** direct provider and branch creation routes are retired. Direct provider publication is blocked. The Overture approval worker is the only active provider/branch publication path.
+- **Identity provenance:** a Companies House candidate is eligible for identity assessment only after an authenticated reviewer explicitly verifies its link to an Overture candidate with structured evidence.
+- **Reviewer access:** administrative read and mutation endpoints require a bearer token. The public directory search endpoint remains public. Do not expose other API/admin surfaces without an appropriately secured deployment boundary.
+- **Automatic processing:** `AUTO_APPROVE_PROVIDERS=false`, `OVERTURE_AUTO_PROCESS=false` and `OVERTURE_SCHEDULED_TASKS_ENABLED=false` are the application and Compose defaults. Existing local `.env` values can override these defaults; they have not been inspected or changed by this work.
+- **Audit and preservation:** reviewer attribution is taken from authenticated credentials, and candidate, provider, branch and audit history is retained.
 
-This migration is intentionally destructive to the old development directory and is not reversible. Do not deploy it against production customer data.
+## Reviewer credentials
 
-## Companies House setup
+Configure `IDENTITY_REVIEW_CREDENTIALS` in the backend environment as a JSON object mapping stable reviewer IDs to SHA-256 hashes of high-entropy bearer tokens. The API never accepts reviewer identity from request bodies. Keep raw tokens out of source control, logs and release archives. An empty configuration denies reviewer access.
 
-1. Register an application and obtain an API key from the [Companies House Developer Hub](https://developer.company-information.service.gov.uk/).
-2. Add these settings to the existing `.env` file:
+See `docs/OVERTURE-AUTOMATIC-APPROVAL.md` for the Overture feed, assessment and publication safeguards. The five-stage scope and exit criteria are maintained in `docs/FIVE-STAGE-ACCEPTANCE-PLAN.md`.
 
-```dotenv
-COMPANIES_HOUSE_API_KEY=your_api_key_here
-COMPANIES_HOUSE_SIC_CODES=96030
-```
+## Database migrations
 
-3. Extract the release over the existing project, preserving `.env`.
-4. Run:
+Release 2.8.0 includes additive Alembic revisions:
+- `0021_overture_company_links` creates the auditable, reviewer-verified Overture-to-Companies House link table.
+- `0022_branch_overture_provenance` adds an optional link from website-derived branch proposals to that verified link.
+- `0023_stage3_evidence` adds separate pricing, membership, regulatory and revalidation evidence tables plus provider business-form metadata.
 
-```bash
-docker compose up -d --build
-```
+The 0022 proposal-provenance relationship is separate from direct Overture-first
+publication: an Overture candidate does **not** need a Companies House link to be
+eligible. A verified link is required only before a Companies House record can be
+used as a conflict signal in the Overture assessment.
 
-5. Open `http://localhost:3000/admin` and select **Import active Companies House companies**.
+No migration has been run against a persistent operational database as part of
+this implementation review. Before replacing any existing workload, inspect the
+target database and current Alembic revision, take and verify a restorable backup,
+review the migration plan and rollback constraints, and use the controlled local
+replacement procedure. Never use `docker compose down -v` against the existing
+project. The historical destructive migration `0013_ch_reset` must never be
+applied to production customer data.
 
-The importer uses the Companies House Advanced Company Search API, requesting active companies with the configured SIC codes. It paginates through the result set, upserts candidates by company number, and records each import run. API credentials are sent only from the backend using HTTP Basic authentication.
+## Validation status (17 November 2026)
 
-## What the importer does not do
+The current implementation branch has passed the full validation workflow with
+**179 API tests**, Python compilation, frontend lint, TypeScript and production
+frontend build. CI builds a deterministic release archive from the maintained
+`platform/` tree, verifies required files/ZIP integrity/exclusions, and uploads
+the ZIP, SHA-256 sidecar and package manifest as a 14-day Actions artifact.
 
-Companies House records are legal-entity candidates, not verified funeral directors. SIC 96030 includes funeral and related activities, including activities other than funeral directing. A registered office is not assumed to be a funeral home. This release stores candidates separately and does not create or publish providers or branches.
+The validated `everguide-v2.8.0.zip` contains 155 files and is 382,181 bytes.
+Its SHA-256 is recorded in `everguide-v2.8.0.zip.sha256`; the accompanying
+`everguide-v2.8.0.package-manifest.json` records the source commit, digest,
+size, file count and exclusion policy. The corrected archive excludes
+`stage1_api_patch.py` and `stage1_task_patch.py` as well as environment
+secrets, package-manager/cloud/SSH credentials, private keys, local data,
+databases, dependencies, caches and build output. The `.env.example` template
+is retained.
 
-The next stage must classify candidates, establish whether the company actually operates funeral-director services in England, discover trading identities and genuine operating branches, and supplement the register with independent discovery for sole traders and ordinary partnerships.
+The disposable Docker workflow also verified the migration chain by upgrading
+to `0023_stage3_evidence`, downgrading to `0022_branch_overture_provenance`,
+then upgrading back to `0023_stage3_evidence` and checking the five evidence
+tables plus `providers.business_form`. It verifies reviewer credentials,
+disabled automatic approval/feed/processing/scheduling, admin HTTP 200, idle
+worker and empty Beat schedule.
 
-## Local stack
+These checks use a separately named disposable Compose project. No persistent
+local or production database was migrated, no live Overture feed was processed,
+no candidate was published and no production deployment was performed. CI
+success and the release artifact are not production or operational sign-off.
 
-- Next.js / React admin console
-- FastAPI API
-- PostgreSQL + PostGIS
-- Redis + Celery worker
-- Companies House Public Data API
+See [docs/VALIDATION.md](docs/VALIDATION.md) for quick/full validation and
+package-audit instructions, and [docs/FIVE-STAGE-ACCEPTANCE-PLAN.md](docs/FIVE-STAGE-ACCEPTANCE-PLAN.md)
+for the remaining product and operational acceptance items.
 
-The admin console is a development interface. Authentication and role-based access control are not enabled; do not expose it to the public internet.
+## Historical release notes
 
+The following sections preserve earlier implementation history. Their workflow descriptions are historical and do not override the current Overture-first policy above.
 
 ## v2.1 candidate triage
 The Companies House importer remains the legal-entity discovery layer. After import, an administrator can run **Classify active candidates**. The deterministic name-based rules provide an explainable first-pass triage only; they do not verify the company's operating activity, create providers, create branches, or publish listings. Website and company-profile enrichment is the next stage.
@@ -171,7 +200,7 @@ OVERTURE_SCHEDULED_TASKS_ENABLED=false
 OVERTURE_FEED_DAILY_HOUR=4
 OVERTURE_FEED_DAILY_MINUTE=30
 OVERTURE_FEED_BATCH_SIZE=500
-OVERTURE_AUTO_PROCESS=true
+OVERTURE_AUTO_PROCESS=false
 AUTO_APPROVE_PROVIDERS=false
 AUTO_APPROVAL_MIN_CONFIDENCE=0.94
 ONS_BOUNDARY_CACHE_TTL_HOURS=720
@@ -181,7 +210,7 @@ Automatic publication is disabled by default. Keep it disabled while validating 
 
 DuckDB and its HTTPFS/spatial extensions are used by the worker to query public Parquet data in place. The first feed check after deployment may take longer while extensions are installed and the England area is queried. A new Overture release is ingested once; unchanged daily catalogue checks do not rescan the dataset.
 
-See [docs/OVERTURE-AUTOMATIC-APPROVAL.md](docs/OVERTURE-AUTOMATIC-APPROVAL.md) for the feed design, API and safeguards. The API retains the old CSV import endpoint for compatibility, but it is no longer exposed as a normal admin workflow.
+See [docs/OVERTURE-AUTOMATIC-APPROVAL.md](docs/OVERTURE-AUTOMATIC-APPROVAL.md) for the feed design, API and safeguards. Caller-supplied Overture candidate imports are retired; initial candidates enter only through the official Overture Places feed. Reviewer-authenticated feed-check and processing controls remain available. Automatic post-import processing and scheduled ingestion/retry/recovery default to disabled.
 
 
 ## Unified provider approval policy (v2.7.7)
@@ -189,3 +218,19 @@ See [docs/OVERTURE-AUTOMATIC-APPROVAL.md](docs/OVERTURE-AUTOMATIC-APPROVAL.md) f
 Website/Companies House and Overture approval adapters now call the same versioned common evidence policy for access/robots permission, complete branch address, valid UK postcode, telephone, approval enablement and the configured confidence threshold. Each adapter retains its source-specific checks and reason codes. The configured 0.94 threshold is not a claim of 94% measured accuracy.
 
 The provider/Companies House path now requires explicit official England-boundary confirmation (`point_in_england=True`). Its current task callers do not yet supply that boundary result, so that route deliberately fails closed rather than publishing without the required geography evidence. The Overture path retains its existing ONS England boundary gate. Automatic approval remains disabled by default and Overture scheduled tasks remain disabled by default. See `RELEASE-NOTES-2.7.7.md` for validation and remaining integration work.
+
+
+## Identity-review API credentials
+
+The administrative API routes, including identity review and the Stage 3 evidence APIs, require an HTTP Bearer token. Configure `IDENTITY_REVIEW_CREDENTIALS` in the backend environment as a JSON object mapping stable reviewer IDs to SHA-256 hashes of high-entropy tokens, for example:
+
+```json
+{"reviewer-1":"<64-character-sha256-hex-digest>"}
+```
+
+Generate the token securely outside the repository, calculate its SHA-256 digest, and give the raw token only to the intended reviewer. Store only the digest in the environment configuration. The API derives `reviewed_by` and the audit actor from the matched configured reviewer ID; request-body reviewer names are not trusted. All internal `/api/v1/...` routes require the reviewer dependency except the intentionally public `/api/v1/directory/search` route. If credentials are missing or invalid, protected routes fail closed with HTTP 401.
+
+The `/admin` page prompts for this token and holds it in memory only; reload or Sign out clears it. This is a reviewer-token gate, not a complete role-based access-control design: all configured reviewers currently share the same reviewer-level permissions, and there is no token expiry or in-app rotation. Public directory search and health/readiness endpoints remain intentionally public. Do not expose the application publicly until role separation, least-privilege permissions, credential lifecycle, monitoring and the remaining Stage 4 controls are accepted. See [REVIEWER-CREDENTIAL-OPERATIONS.md](docs/REVIEWER-CREDENTIAL-OPERATIONS.md) for provisioning, rotation, revocation and incident procedures.
+
+
+Stage 3 pricing, membership, regulatory evidence and manual revalidation data contracts are documented in [STAGE3-EVIDENCE-DATA-DICTIONARY.md](docs/STAGE3-EVIDENCE-DATA-DICTIONARY.md). These reviewer-entry APIs do not fetch external sources or publish providers.

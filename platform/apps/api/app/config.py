@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "Everguide"
     app_env: str = "development"
-    app_version: str = "2.7.9"
+    app_version: str = "2.8.0"
     database_url: str = "postgresql+psycopg://everguide:change-this-local-password@db:5432/everguide"
     redis_url: str = "redis://redis:6379/0"
     celery_broker_url: str = "redis://redis:6379/1"
@@ -15,12 +15,20 @@ class Settings(BaseSettings):
     search_provider: str = "brave"
     auto_approve_providers: bool = False
     auto_approval_min_confidence: float = 0.94
-    overture_auto_process: bool = True
+    overture_auto_process: bool = False
     overture_feed_enabled: bool = True
     overture_scheduled_tasks_enabled: bool = False
     overture_feed_daily_hour: int = 4
     overture_feed_daily_minute: int = 30
     overture_feed_batch_size: int = 500
+    # AI-assisted extraction of prices from verified provider-owned websites.
+    # Disabled by default in development and validation.
+    price_enrichment_enabled: bool = False
+    openai_api_key: str = ""
+    price_enrichment_model: str = "gpt-6-luna"
+    price_enrichment_max_pages: int = 6
+    # JSON object mapping reviewer IDs to SHA-256 hashes of bearer tokens.
+    identity_review_credentials: str = "{}"
     model_config = SettingsConfigDict(case_sensitive=False, extra="ignore")
 
 settings = Settings()

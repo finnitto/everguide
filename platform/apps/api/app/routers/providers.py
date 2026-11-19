@@ -1,8 +1,14 @@
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, func
 from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
-from app.models import Provider, Branch, SourceObservation, AuditEvent
+from app.identity_review_auth import require_identity_reviewer
+from app.models import Provider, Branch, SourceObservation, AuditEvent, OvertureCandidate, PricingEvidence, SourcePermission
+from app.pricing_enrichment import (
+    queue_overture_candidate_for_pricing,
+    dispatch_queued_price_enrichment,
+)
 from app.schemas import ProviderCreate, ProviderUpdate, ProviderOut, BranchInput, BranchOut, ObservationCreate, ObservationDecision
 from app.matching import find_provider_matches, observation_duplicate_key
 
@@ -10,20 +16,20 @@ router = APIRouter(prefix="/api/v1", tags=["directory"])
 ALLOWED_PROVIDER_STATUSES = {"draft", "needs_review", "approved", "published", "suspended", "rejected"}
 ALLOWED_BRANCH_STATUSES = {"draft", "published", "suspended"}
 
-def audit(db, entity_type, entity_id, action, detail=None):
-    db.add(AuditEvent(entity_type=entity_type, entity_id=entity_id, action=action, detail=detail or {}))
+def audit(db, entity_type, entity_id, action, detail=None, *, actor: str):
+    db.add(AuditEvent(entity_type=entity_type, entity_id=entity_id, action=action, detail=detail or {}, actor=actor))
 
 def provider_dict(p):
-    return {"id":p.id,"trading_name":p.trading_name,"display_name":p.display_name,"registered_name":p.registered_name,"website":p.website,"provider_type":p.provider_type,"status":p.status,"verification_status":p.verification_status,"quality_status":p.quality_status,"notes":p.notes,"created_at":p.created_at,"updated_at":p.updated_at,"branches":[branch_dict(b) for b in p.branches]}
+    return {"id":p.id,"trading_name":p.trading_name,"display_name":p.display_name,"registered_name":p.registered_name,"website":p.website,"provider_type":p.provider_type,"status":p.status,"verification_status":p.verification_status,"quality_status":p.quality_status,"business_form":p.business_form,"notes":p.notes,"created_at":p.created_at,"updated_at":p.updated_at,"branches":[branch_dict(b) for b in p.branches]}
 
 def branch_dict(b):
     return {"id":b.id,"provider_id":b.provider_id,"branch_name":b.branch_name,"address_line_1":b.address_line_1,"address_line_2":b.address_line_2,"town_city":b.town_city,"county":b.county,"postcode":b.postcode,"telephone":b.telephone,"email":b.email,"website":b.website,"latitude":b.latitude,"longitude":b.longitude,"services":b.services or [],"status":b.status}
 
-@router.get("/dashboard")
+@router.get("/dashboard", dependencies=[Depends(require_identity_reviewer)])
 def dashboard(db: Session = Depends(get_db)):
     return {"providers":db.query(Provider).count(),"branches":db.query(Branch).count(),"published":db.query(Provider).filter(Provider.status=="published").count(),"needs_review":db.query(Provider).filter(Provider.status=="needs_review").count(),"draft":db.query(Provider).filter(Provider.status=="draft").count(),"observations_pending":db.query(SourceObservation).filter(SourceObservation.review_status=="pending").count()}
 
-@router.get("/providers")
+@router.get("/providers", dependencies=[Depends(require_identity_reviewer)])
 def list_providers(q: str | None = None, status: str | None = None, limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0), db: Session = Depends(get_db)):
     query = db.query(Provider).options(joinedload(Provider.branches))
     if q:
@@ -34,30 +40,30 @@ def list_providers(q: str | None = None, status: str | None = None, limit: int =
     return {"items":[provider_dict(p) for p in rows],"count":query.count()}
 
 @router.post("/providers", status_code=410)
-def create_provider(payload: ProviderCreate, db: Session = Depends(get_db)):
+def create_provider(payload: ProviderCreate, reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     """Retired: providers may only be created by the Overture publication service."""
     raise HTTPException(
         status_code=410,
         detail="Direct provider creation is disabled. Providers must originate from an eligible Overture candidate.",
     )
 
-@router.get("/providers/{provider_id}")
+@router.get("/providers/{provider_id}", dependencies=[Depends(require_identity_reviewer)])
 def get_provider(provider_id: int, db: Session = Depends(get_db)):
     p=db.query(Provider).options(joinedload(Provider.branches)).filter(Provider.id==provider_id).first()
     if not p: raise HTTPException(404,"Provider not found")
     return provider_dict(p)
 
 @router.patch("/providers/{provider_id}")
-def update_provider(provider_id: int, payload: ProviderUpdate, db: Session = Depends(get_db)):
+def update_provider(provider_id: int, payload: ProviderUpdate, reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     p=db.get(Provider,provider_id)
     if not p: raise HTTPException(404,"Provider not found")
     changes=payload.model_dump(exclude_unset=True)
     for k,v in changes.items(): setattr(p,k,v)
-    audit(db,"provider",p.id,"updated",changes); db.commit(); db.refresh(p)
+    audit(db,"provider",p.id,"updated",changes, actor=reviewer); db.commit(); db.refresh(p)
     return provider_dict(p)
 
 @router.post("/providers/{provider_id}/branches", status_code=410)
-def add_branch(provider_id: int, payload: BranchInput, db: Session = Depends(get_db)):
+def add_branch(provider_id: int, payload: BranchInput, reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     """Retired: branches may only be created by the Overture publication service."""
     raise HTTPException(
         status_code=410,
@@ -65,7 +71,7 @@ def add_branch(provider_id: int, payload: BranchInput, db: Session = Depends(get
     )
 
 @router.patch("/providers/{provider_id}/status")
-def set_provider_status(provider_id: int, status: str, db: Session = Depends(get_db)):
+def set_provider_status(provider_id: int, status: str, reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     if status not in ALLOWED_PROVIDER_STATUSES: raise HTTPException(400,"Invalid provider status")
     if status == "published":
         raise HTTPException(
@@ -75,30 +81,64 @@ def set_provider_status(provider_id: int, status: str, db: Session = Depends(get
     p=db.get(Provider,provider_id)
     if not p: raise HTTPException(404,"Provider not found")
     p.status=status
+    queued_candidates = 0
+    queued_candidate_ids = []
+    if status == "approved":
+        # Manual provider approval is a price-enrichment trigger for every
+        # Overture location already linked to this provider. It does not publish.
+        candidates = db.query(OvertureCandidate).filter(
+            OvertureCandidate.provider_id == p.id
+        ).order_by(OvertureCandidate.id.asc()).all()
+        for candidate in candidates:
+            if queue_overture_candidate_for_pricing(
+                db,
+                candidate,
+                trigger="manual_approval",
+                requested_by=reviewer,
+            ):
+                queued_candidates += 1
+                queued_candidate_ids.append(candidate.id)
+        db.add(AuditEvent(
+            entity_type="provider",
+            entity_id=p.id,
+            action="manual_approval_pricing_enrichment_requested",
+            detail={"linked_overture_candidates": len(candidates),
+                    "newly_queued_candidates": queued_candidates},
+            actor=reviewer,
+        ))
     if status=="published":
         p.verification_status="approved"
         for branch in p.branches:
             if branch.status == "draft": branch.status = "published"
-    audit(db,"provider",p.id,"status_changed",{"status":status}); db.commit(); return {"id":p.id,"status":p.status}
+    audit(db,"provider",p.id,"status_changed",{"status":status}, actor=reviewer)
+    db.commit()
+    pricing_tasks_dispatched = dispatch_queued_price_enrichment(queued_candidate_ids)
+    return {"id":p.id,"status":p.status,
+            "pricing_enrichment_candidates_queued":queued_candidates,
+            "pricing_enrichment_tasks_dispatched":pricing_tasks_dispatched}
 
 @router.post("/observations", status_code=201)
-def create_observation(payload: ObservationCreate, db: Session = Depends(get_db)):
+def create_observation(
+    payload: ObservationCreate,
+    reviewer: str = Depends(require_identity_reviewer),
+    db: Session = Depends(get_db),
+):
     if payload.provider_id and not db.get(Provider,payload.provider_id): raise HTTPException(404,"Provider not found")
     if payload.branch_id and not db.get(Branch,payload.branch_id): raise HTTPException(404,"Branch not found")
-    o=SourceObservation(**payload.model_dump()); db.add(o); db.flush(); audit(db,"observation",o.id,"captured",{"source_name":o.source_name}); db.commit(); db.refresh(o)
+    o=SourceObservation(**payload.model_dump()); db.add(o); db.flush(); audit(db,"observation",o.id,"captured",{"source_name":o.source_name}, actor=reviewer); db.commit(); db.refresh(o)
     return observation_dict(o)
 
 def observation_dict(o):
     return {"id":o.id,"provider_id":o.provider_id,"branch_id":o.branch_id,"source_type":o.source_type,"source_name":o.source_name,"source_url":o.source_url,"retrieved_at":o.retrieved_at,"confidence":o.confidence,"observed_data":o.observed_data,"review_status":o.review_status,"notes":o.notes}
 
-@router.get("/observations")
+@router.get("/observations", dependencies=[Depends(require_identity_reviewer)])
 def list_observations(review_status: str | None = None, db: Session = Depends(get_db)):
     q=db.query(SourceObservation)
     if review_status: q=q.filter(SourceObservation.review_status==review_status)
     return {"items":[observation_dict(o) for o in q.order_by(SourceObservation.retrieved_at.desc()).limit(200).all()]}
 
 @router.patch("/observations/{observation_id}")
-def decide_observation(observation_id: int, payload: ObservationDecision, db: Session = Depends(get_db)):
+def decide_observation(observation_id: int, payload: ObservationDecision, reviewer: str = Depends(require_identity_reviewer), db: Session = Depends(get_db)):
     if payload.review_status not in {"accepted", "rejected", "pending"}:
         raise HTTPException(400, "Invalid review status")
     o = db.get(SourceObservation, observation_id)
@@ -126,13 +166,13 @@ def decide_observation(observation_id: int, payload: ObservationDecision, db: Se
     audit(db, "observation", o.id, "reviewed", {
         "review_status": o.review_status, "provider_id": o.provider_id,
         "branch_id": o.branch_id
-    })
+    }, actor=reviewer)
     db.commit()
     db.refresh(o)
     return observation_dict(o)
 
 
-@router.get("/matching/summary")
+@router.get("/matching/summary", dependencies=[Depends(require_identity_reviewer)])
 def matching_summary(db: Session = Depends(get_db)):
     observations = db.query(SourceObservation).filter(SourceObservation.review_status == "pending").all()
     providers = db.query(Provider).options(joinedload(Provider.branches)).all()
@@ -162,7 +202,7 @@ def matching_summary(db: Session = Depends(get_db)):
             "duplicate_observations": sum(len(ids) for ids in duplicate_groups)}
 
 
-@router.get("/matching/queue")
+@router.get("/matching/queue", dependencies=[Depends(require_identity_reviewer)])
 def matching_queue(limit: int = Query(100, ge=1, le=250), offset: int = Query(0, ge=0),
                    db: Session = Depends(get_db)):
     total = db.query(SourceObservation).filter(SourceObservation.review_status == "pending").count()
@@ -184,8 +224,69 @@ def matching_queue(limit: int = Query(100, ge=1, le=250), offset: int = Query(0,
                       "possible_duplicate": bool(key and duplicate_counts.get(key, 0) > 1)})
     return {"items": items, "count": total, "limit": limit, "offset": offset}
 
+def _public_price_rows(db: Session, provider: Provider, branch: Branch) -> list[dict]:
+    now = datetime.now(timezone.utc)
+    rows = (
+        db.query(PricingEvidence)
+        .outerjoin(SourcePermission, SourcePermission.id == PricingEvidence.source_permission_id)
+        .filter(
+            or_(PricingEvidence.source_permission_id.is_(None), SourcePermission.permission_status == "approved"),
+            PricingEvidence.provider_id == provider.id,
+            or_(PricingEvidence.branch_id == branch.id, PricingEvidence.branch_id.is_(None)),
+            PricingEvidence.review_status.in_(("pending", "approved")),
+            or_(PricingEvidence.expires_at.is_(None), PricingEvidence.expires_at >= now),
+            or_(PricingEvidence.effective_to.is_(None), PricingEvidence.effective_to >= now),
+        )
+        .order_by(PricingEvidence.service_category.asc(), PricingEvidence.service_name.asc())
+        .limit(30)
+        .all()
+    )
+    result = []
+    for row in rows:
+        payload = dict(row.evidence_payload or {})
+        provenance = payload.get("provenance") if isinstance(payload.get("provenance"), dict) else {}
+        extraction_method = provenance.get("extraction_method", "manual")
+        if row.review_status == "approved":
+            verification_status = "verified"
+            verification_label = "Verified by Everguide reviewer"
+        elif extraction_method == "ai_extracted":
+            verification_status = "unverified"
+            verification_label = "AI-extracted · Not verified"
+        else:
+            # Manually captured but unreviewed prices are not shown publicly.
+            continue
+        result.append({
+            "id": row.id,
+            "service_category": row.service_category,
+            "service_name": row.service_name,
+            "fee_type": row.fee_type,
+            "amount": str(row.amount),
+            "amount_upper": str(row.amount_upper) if row.amount_upper is not None else None,
+            "currency": row.currency,
+            "price_basis": row.price_basis,
+            "includes": row.includes or [],
+            "excludes": row.excludes or [],
+            "source_name": row.source_name,
+            "source_url": row.source_url,
+            "source_retrieved_at": row.source_retrieved_at,
+            "verification_status": verification_status,
+            "verification_label": verification_label,
+            "extraction_method": extraction_method,
+        })
+    return result
+
+
 @router.get("/directory/search")
 def public_search(q: str = Query(min_length=2), limit: int = Query(50,ge=1,le=100), db: Session = Depends(get_db)):
     like=f"%{q.strip()}%"
     rows=(db.query(Branch,Provider).join(Provider).filter(Provider.status=="published",Provider.provider_type=="funeral_director",Branch.status=="published").filter(or_(Provider.trading_name.ilike(like),Branch.branch_name.ilike(like),Branch.town_city.ilike(like),Branch.postcode.ilike(like))).order_by(Branch.town_city,Provider.trading_name).limit(limit).all())
-    return {"items":[{"provider_name":p.display_name or p.trading_name,"provider_business_name":p.trading_name,"provider_id":p.id,**branch_dict(b)} for b,p in rows],"count":len(rows)}
+    items = []
+    for branch, provider in rows:
+        items.append({
+            "provider_name": provider.display_name or provider.trading_name,
+            "provider_business_name": provider.trading_name,
+            "provider_id": provider.id,
+            **branch_dict(branch),
+            "prices": _public_price_rows(db, provider, branch),
+        })
+    return {"items": items, "count": len(items)}

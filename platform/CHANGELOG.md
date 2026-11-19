@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.8.0 — Overture-first identity provenance and controlled publication
+
+- Establishes Overture Places as the sole initial discovery source and authoritative source for published branch name, street address, locality, postcode and coordinates; GERS ID and Overture release/contributor/licence lineage are retained.
+- Retires independent Google Places, Companies House-led and company-website discovery, caller-supplied Overture candidate imports, and direct provider/branch creation. Publication is reserved for the Overture approval worker.
+- Adds reviewer-authenticated Overture-to-Companies House links in additive migration `0021_overture_company_links`. Migration `0022_branch_overture_provenance` adds optional verified-link provenance to website-derived branch proposals; it is not a prerequisite for direct Overture-first publication.
+- Implements `overture-first-approval-v2.0`: missing Companies House corroboration, absent/unreachable website, robots restriction, absent branch mention or missing telephone alone does not block a valid Overture candidate.
+- Uses Companies House as a material conflict source only after an explicit reviewer-verified link. Registered-office differences and legal/trading-name variants alone are not conflicts.
+- Accepts website conflicts only from reachable, robots-permitted first-party evidence. A branch-postcode mismatch is material only when the structured street and locality identify the same Overture branch; a different branch on the provider's website is not a conflict for this branch.
+- Requires source-level licence, deterministic service classification, complete Overture street/locality and valid UK postcode, official ONS England point-in-polygon, duplicate/collision checks and a final publication write-boundary guard.
+- Keeps `AUTO_APPROVE_PROVIDERS=false`, `OVERTURE_AUTO_PROCESS=false` and `OVERTURE_SCHEDULED_TASKS_ENABLED=false` as defaults. CI uses a disposable stack with feed access and all processing/publication switches disabled.
+- Requires reviewer authentication for administrative reads and mutations. Review found and closed gaps in observation creation, source-permission listing and website-check listing; regression coverage was added. Audit actor attribution uses the authenticated reviewer.
+- Preserves provider/branch/source-observation/audit writes atomically and does not overwrite existing provider/branch fields.
+- Adds migration `0023_stage3_evidence` with independent pricing, membership and regulatory evidence records, source provenance, provider/branch scope, validity/freshness and reviewer decisions.
+- Represents limited companies, LLPs, partnerships and sole traders as provider business forms without requiring an invented Companies House link. Adds a persisted, idempotent and four-attempt manual revalidation ledger; transient failures do not alter evidence status.
+- The Stage 3 API accepts reviewer-entered evidence only. It does not fetch external sources, infer NAFD/SAIF membership or FCA applicability, alter Overture identity fields or publish providers. See `docs/STAGE3-EVIDENCE-DATA-DICTIONARY.md`.
+- Applies reviewer authentication at the router boundary to all internal admin APIs; only public directory search and health/readiness endpoints remain unauthenticated. Adds route-introspection and credential validity/revocation tests.
+- Adds an in-memory reviewer-token sign-in to the admin frontend; all admin API requests include the Bearer token, and sign-out/reload/HTTP 401 clears it. Adds reviewer credential provisioning, rotation, revocation and incident guidance in `docs/REVIEWER-CREDENTIAL-OPERATIONS.md`.
+- Adds deterministic release packaging from the maintained `platform/` tree with fixed ZIP timestamps/member order, required-file/version checks, integrity and secret/local-data exclusions, SHA-256 sidecar and source-commit package manifest. GitHub Actions uploads the archive and sidecars for 14 days.
+- Extends the disposable Docker check to downgrade migration `0023_stage3_evidence` to `0022_branch_overture_provenance`, upgrade back to `0023`, and verify the evidence tables and provider business-form column. This rehearsal uses only the isolated CI PostgreSQL volume.
+- Excludes development patch helpers `stage1_api_patch.py` and `stage1_task_patch.py` from the release ZIP, with regression coverage, in addition to environment/credential files and local data.
+- Validation: GitHub Actions run #183 passed 179 API tests, Python compile, frontend lint/TypeScript/production build, corrected deterministic archive/exclusion checks and artifact upload. The 155-file, 382,181-byte ZIP has SHA-256 `6791eeffafdc1bf93ade92cc75f96ccb2beecbae74d44f19819bca6867cbd64c`; the checksum and source-commit package manifest are supplied as sidecars.
+- The same run passed disposable PostgreSQL migration 0023 downgrade to 0022 and forward upgrade to 0023, checking all evidence tables and provider business-form metadata. Automatic approval, Overture feed/processing and scheduled tasks remained disabled.
+- Validation: GitHub Actions [run #147](https://github.com/finnitto/everguide/actions/runs/44151136460) passed 176 API tests, Python compile, frontend lint/TypeScript/production build, and isolated Docker integration through `0023_stage3_evidence`, with automatic approval, feed, processing and scheduled tasks disabled.
+- Validation: GitHub Actions [run #110](https://github.com/finnitto/everguide/actions/runs/44137685301) passed 171 API tests, Python compilation, frontend lint/TypeScript/production build and isolated Docker migration/integration through `0023_stage3_evidence`. The disposable stack verified automatic approval, Overture feed/processing and scheduled tasks remained disabled, API readiness, reviewer credential forwarding, admin HTTP 200, idle worker and empty Beat schedule. No persistent database was migrated and no live candidate was processed or published.
+
 ## 2.7.4 — First-party website classification and persistent ONS boundaries
 
 - Separates attributed discovery URLs from verified provider-owned websites; excludes third-party directories, listing pages, news and company-record pages from first-party verification.
@@ -10,7 +35,6 @@
 - Adds a daily bounded enrichment retry sweep (initial assessment plus at most three retries after 2, 7 and 21 days); exclusions and exception-review records are not automatically retried.
 - Adds audit-safe daily reconciliation for import runs stuck for over 24 hours: stale claims are recovered, pending work is resumed, and empty orphaned runs are closed without deleting history.
 - No database migration; adds a dedicated `ons_boundary_cache` named volume.
-
 
 ## 2.7.3 — Overture candidate batch query fix
 

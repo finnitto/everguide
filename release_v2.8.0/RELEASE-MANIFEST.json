@@ -1,7 +1,7 @@
 {
   "product": "Everguide",
   "version": "2.8.0-rc.1",
-  "release_status": "pre-release candidate",
+  "release_status": "superseded snapshot — do not use as current release package",
   "archive_layout": "complete project files at archive root for controlled overlay extraction",
   "workloads_included": [
     "api",
@@ -62,5 +62,8 @@
     "feed_and_pipeline_suite": "included but not fully run for this package build",
     "frontend_build": "not run for this package build",
     "docker_build": "not run for this package build"
-  }
+  },
+  "superseded_by_branch": "stage1-overture-identity-provenance",
+  "superseded_by_commit": "0958c66a2ec6b6b387accde2b802f84ec927faf1",
+  "superseded_reason": "Predates Overture-first approval v2.0 and migrations 0021/0022; current package has not been regenerated or validated."
 }

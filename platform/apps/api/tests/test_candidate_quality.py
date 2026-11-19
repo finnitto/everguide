@@ -133,3 +133,60 @@ def test_provider_quality_holds_obvious_adjacent_services():
         )
         assert status == "needs_review"
 
+
+
+
+def test_overture_classifies_pet_funeral_and_pet_cremation_services_separately():
+    assert classify_service(
+        name="In Our Hands Pet Funeral Services",
+        basic_category="animal_or_pet_service",
+        taxonomy_primary="animal_or_pet_service",
+    ) == "pet_service"
+    assert classify_service(
+        name="Roxy's Rainbow Pet Cremation",
+        basic_category="family_service",
+        taxonomy_primary="funeral_service",
+    ) == "pet_service"
+
+
+def test_natural_and_woodland_burial_locations_are_cemeteries():
+    assert classify_service(
+        name="Aylesbury Vale Natural Burial Meadow",
+        basic_category="family_service",
+        taxonomy_primary="funeral_service",
+    ) == "cemetery"
+    assert classify_service(
+        name="Brocklands Woodlands Burial",
+        basic_category="family_service",
+        taxonomy_primary="funeral_service",
+    ) == "cemetery"
+
+
+def test_direct_cremation_providers_have_a_separate_service_class():
+    for name in ("Simplicity Cremations", "Distinct Cremations", "Direct2Grave Cremations & Burials"):
+        assert classify_service(
+            name=name,
+            basic_category="family_service",
+            taxonomy_primary="funeral_service",
+        ) == "direct_cremation_provider"
+
+
+def test_funeral_plan_only_businesses_have_a_separate_service_class():
+    assert classify_service(
+        name="Flexible Funeral Plans",
+        basic_category="family_service",
+        taxonomy_primary="funeral_service",
+    ) == "funeral_plan_provider"
+
+
+def test_funeral_directors_that_offer_cremation_or_funeral_plans_remain_in_scope():
+    assert classify_service(
+        name="Example Funeral Directors and Cremations",
+        basic_category="family_service",
+        taxonomy_primary="funeral_service",
+    ) == "funeral_director_candidate"
+    assert classify_service(
+        name="Example Funeral Directors and Funeral Plans",
+        basic_category="family_service",
+        taxonomy_primary="funeral_service",
+    ) == "funeral_director_candidate"

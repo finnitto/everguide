@@ -25,3 +25,28 @@ footer{display:flex;align-items:center;justify-content:space-between;padding:30p
 
 .provider-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}.provider-actions .secondary-button{font-size:12px;padding:7px 10px}
 .admin-file-input{display:block;width:100%;margin-top:12px;padding:10px;border:1px solid #dfe4dd;border-radius:6px;background:#fff;color:#526158;font-size:12px}
+
+/* Public price transparency: AI extraction is visually distinct from reviewer verification. */
+.public-result{align-items:flex-start;gap:26px}
+.public-provider{flex:1;min-width:0}
+.public-prices{flex:1;max-width:460px;background:#fff;border:1px solid #e5e9e3;border-radius:8px;padding:16px 18px}
+.public-prices h3{font-family:Georgia,serif;font-size:18px;font-weight:400;margin:0 0 12px;color:#26372f}
+.public-price{padding:12px 0;border-top:1px solid #edf0eb}
+.public-price-main{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.public-price-main strong{font-size:13px;color:#34483d;font-weight:600}
+.public-price-amount{font-size:14px;color:#26372f;font-weight:700;white-space:nowrap}
+.price-verification{display:inline-block;margin-top:8px;padding:5px 8px;border-radius:4px;font-size:10px;font-weight:600}
+.price-unverified{background:#fff3df;color:#835916}
+.price-verified{background:#e8f2eb;color:#286344}
+.price-source,.price-detail{font-size:11px!important;line-height:1.55;color:#77827b!important;margin:7px 0 0!important}
+.public-prices .price-source a{color:#315d4b;text-decoration:underline;font-size:11px}
+.price-disclosure{font-size:10px!important;line-height:1.55;color:#69766e!important;margin:12px 0 0!important;padding-top:11px;border-top:1px solid #edf0eb}
+@media(max-width:760px){.public-result{flex-direction:column}.public-prices{width:100%;max-width:none;box-sizing:border-box}}
+
+.price-review-row{align-items:flex-start;gap:22px}
+.price-review-row .provider-info{min-width:0}
+.price-review-row .review-note{margin-top:12px}
+.price-review-row .review-note p{overflow-wrap:anywhere}
+.price-review-actions{flex-direction:column;align-items:stretch;min-width:190px}
+.price-review-actions button{white-space:nowrap}
+@media(max-width:760px){.price-review-row{flex-direction:column}.price-review-actions{min-width:0;width:100%}.price-review-actions button{width:100%}}

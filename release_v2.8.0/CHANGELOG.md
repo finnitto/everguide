@@ -1,4 +1,12 @@
-# Everguide Changelog
+# Superseded Everguide release snapshot
+
+This historical `release_v2.8.0/` package snapshot is **not a current release
+candidate**. It predates Overture-first approval v2.0 and migrations 0021/0022.
+Do not package, distribute or install it.
+
+The current implementation and validation evidence are maintained under
+`platform/` on branch `stage1-overture-identity-provenance`. See `platform/CHANGELOG.md`,
+`platform/README.md` and `platform/RELEASE-MANIFEST.json`.
 
 > Release history is maintained in this single file. Newest entries appear first.
 

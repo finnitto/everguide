@@ -1,33 +1,52 @@
 {
   "product": "Everguide",
-  "version": "2.7.8",
+  "version": "2.8.0",
   "archive_layout": "project files at archive root for direct overlay extraction",
-  "database_migrations_added": [],
+  "database_migrations_added": [
+    "0021_overture_company_links",
+    "0022_branch_overture_provenance",
+    "0023_stage3_evidence"
+  ],
   "migration_revision_fix": "0020_overture_feed (18 characters), within PostgreSQL default alembic_version.version_num VARCHAR(32)",
   "production_database_accessed_during_build": false,
   "secrets_excluded": [
-    ".env",
-    ".env.local",
-    ".env.development",
-    ".env.production"
+    ".env and *.env files except *.example templates",
+    ".npmrc",
+    ".pypirc",
+    ".netrc",
+    "credentials.json",
+    "secrets.json",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "SSH/AWS/Azure/GPG credential directories",
+    "stage1_api_patch.py",
+    "stage1_task_patch.py"
   ],
   "postgres_data_excluded": true,
   "automatic_approval": {
     "enabled_by_default": false,
-    "minimum_first_party_confidence_default": 0.94,
     "overture_confidence_used_as_approval_proof": false,
-    "requires_first_party_website_and_robots_permission": true,
     "requires_source_level_licence": true,
     "requires_official_ons_england_boundary": true,
     "creates_provider_and_branch_atomically": true,
     "existing_provider_branch_fields_overwritten": false,
     "exception_only_for_unresolved_conflicts": true,
-    "default_safety_note": "Disabled by default; existing explicit .env setting is respected."
+    "default_safety_note": "Automatic provider/branch publication remains disabled by default and is blocked at the final write boundary unless explicitly enabled.",
+    "ruleset_version": "overture-first-approval-v2.0",
+    "approval_source_of_truth": "Overture Places; Companies House and official funeral-director websites are optional corroboration and material-conflict signals, not approval prerequisites.",
+    "optional_fields": [
+      "website",
+      "telephone",
+      "Companies House link"
+    ],
+    "company_link_requirement": "A reviewer-verified link is required only to use a Companies House record as a conflict signal; direct Overture-first publication does not require a Companies House link."
   },
   "overture_pipeline": {
     "database_ingestion_and_publication_integrated": true,
     "ingestion_adapter": "Scheduled daily STAC release detection; DuckDB queries public Places GeoParquet for England in place",
-    "admin_csv_upload": "removed from normal admin workflow; legacy API retained for compatibility",
+    "admin_csv_upload": "Retired: caller-supplied candidate payload imports return HTTP 410. Initial candidates are ingested only from the official Overture Places STAC/GeoParquet feed; reviewer-authenticated feed-check and processing controls remain.",
     "candidate_identity": "GERS ID",
     "geography_scope": "England; broad bbox followed by official ONS county/unitary authority point-in-polygon validation",
     "new_release_only": "yes; daily STAC checks do not rescan an unchanged release",
@@ -36,47 +55,107 @@
     "boundary_cache": "Persistent named Docker volume; source, retrieval timestamp, schema version and SHA-256 validated; 30-day TTL",
     "website_leads": "Original Overture URL retained separately; search alternatives are filtered, individually recorded with source/query/status and body-free structured identity evidence; mismatches are never promoted.",
     "enrichment_retries": "Initial assessment plus at most three scheduled retries after 2, 7 and 21 days; excludes exceptions and exclusions",
-    "stale_run_recovery": "Daily recovery after 24 hours: release stale candidate claims, resume pending work, close empty orphaned runs with audit events; never deletes history"
+    "stale_run_recovery": "Daily recovery after 24 hours: release stale candidate claims, resume pending work, close empty orphaned runs with audit events; never deletes history",
+    "automatic_processing_default": false,
+    "scheduled_tasks_default": false,
+    "approval_ruleset": "overture-first-approval-v2.0",
+    "publication_fields": "Provider and branch name/address/postcode/coordinates come from normalized Overture fields; corroborating sources do not silently replace them."
   },
   "tests": {
-    "new_regression_tests_added": 3,
-    "python_compileall": "passed",
-    "targeted_pytest": "not run in build container: celery, redis and psycopg are unavailable; package installation blocked by network restrictions",
-    "full_api_pytest": "not run in build container for same missing runtime dependencies",
+    "python_compileall": "The corrected packaging run passed Python compileall for application and migration sources.",
+    "targeted_pytest": "The corrected packaging run passed 179 API tests, including Stage 3 evidence, Stage 4 reviewer route matrix/token handling, Stage 5 reproducibility and exclusion tests, and migration revision coverage.",
+    "full_api_pytest": "179 API tests passed (one existing deprecation warning); Python compile, frontend lint, TypeScript and production build also passed.",
     "production_database_accessed_during_build": false,
-    "frontend_build": "not run",
-    "docker_build": "not run"
+    "frontend_build": "The corrected packaging run passed the production frontend build, including in-memory reviewer-token sign-in.",
+    "docker_build": "The corrected packaging run passed isolated Docker image build and integration.",
+    "isolated_docker_integration": "The corrected packaging run passed disposable PostgreSQL upgrade/downgrade/re-upgrade for migration 0023->0022->0023; all five evidence tables and providers.business_form were verified. Reviewer credential forwarding, disabled approval/feed/processing/scheduling, API readiness/version, admin HTTP 200, idle worker and empty Beat schedule also passed.",
+    "validation_run": "https://github.com/finnitto/everguide/actions/runs/44155634542"
   },
   "approval_policy": {
-    "shared_policy_version": "shared-provider-approval-v1.0",
-    "provider_adapter_ruleset": "provider-auto-approval-v1.2",
-    "overture_adapter_ruleset": "overture-auto-approval-v1.1",
-    "common_gates": [
-      "approval_enabled",
-      "first_party_website_access",
-      "robots_permission",
-      "complete_branch_address",
-      "valid_uk_postcode",
-      "telephone",
-      "minimum_confidence"
+    "shared_policy_version": "shared-provider approval policy is not authoritative for the Overture adapter",
+    "provider_adapter_ruleset": "provider-auto-approval-v1.2 (legacy non-Overture pathway; independent initial discovery is retired)",
+    "overture_adapter_ruleset": "overture-first-approval-v2.0",
+    "overture_required_gates": [
+      "stable GERS identity and Overture source/release/contributor provenance",
+      "accepted contributor-level source licence",
+      "deterministic funeral-director service classification",
+      "complete structured Overture street/locality and valid UK postcode",
+      "official ONS England point-in-polygon confirmation",
+      "duplicate and existing-provider/branch collision checks"
     ],
-    "source_specific_gates_retained": [
-      "provider_schema_org_funeralhome",
-      "company_name_relationship",
-      "domain_and_collision_checks",
-      "overture_service_classification",
-      "source_level_licence",
-      "official_geography_boundary"
+    "overture_material_conflicts": [
+      "dissolved or legal-identity contradiction from an explicitly reviewer-verified Overture-to-Companies House link",
+      "explicit closed-branch evidence from a reachable, robots-permitted official provider website",
+      "different structured branch postcode from a reachable, robots-permitted official provider website only when street and locality identify the same Overture branch"
     ],
-    "provider_and_companies_house_geography": "fail_closed_until_point_in_england_is_explicitly_confirmed",
-    "overture_geography": "existing_official_England_boundary_gate_retained",
-    "confidence_default": 0.94,
-    "note": "The 0.94 threshold is a configured gate, not a measured 94 percent accuracy claim."
+    "not_overture_approval_gates": [
+      "Companies House link or corroboration",
+      "official provider website presence or reachability",
+      "robots.txt permission as a prerequisite when no website evidence is available",
+      "telephone number",
+      "first-party confidence threshold",
+      "registered-office address match",
+      "legal-name/trading-name equality"
+    ],
+    "provider_and_companies_house_geography": "fail closed until the point in England is explicitly confirmed",
+    "overture_geography": "official ONS England point-in-polygon confirmation; missing or unavailable geometry fails closed",
+    "note": "Overture confidence is not a probability or proof of identity. Missing secondary corroboration alone is not a conflict or reason to block an otherwise valid Overture record."
   },
   "website_evidence": {
     "source_provenance": "Each attempted URL records discovery source and search query where applicable.",
     "identity_evidence": "Persist only selected structured identity fields, page title, response status and SHA-256 digest; page bodies are discarded.",
     "third_party_filtering": "Expanded exclusions for social networks, public registers, news, notices, directories, job pages and document URLs.",
     "approval_policy": "No approval thresholds or publication gates relaxed; automatic approval remains disabled by default."
+  },
+  "identity_provenance": {
+    "source_policy": "Overture Places official feed is the sole initial discovery source; caller-supplied candidate imports and independent discovery sources are disabled. Companies House and provider-owned websites are supporting identity and branch evidence only.",
+    "link_table": "overture_company_links",
+    "link_revision": "0021_overture_company_links",
+    "verification": "Reviewer-authenticated, explicit Overture-to-Companies House links with structured evidence; pending links are ineligible for identity assessment.",
+    "reviewer_authentication": "Identity-review credentials are configured as reviewer IDs mapped to SHA-256 token hashes; administrative read and mutation endpoints require bearer authentication.",
+    "direct_creation": "Direct provider and branch creation endpoints return 410; direct provider publication is rejected. Active publication is restricted to the Overture worker.",
+    "legacy_discovery": "Independent Google Places, Companies House and company-website discovery entry points and legacy worker tasks are disabled.",
+    "public_endpoint": "/api/v1/directory/search remains public; internal directory and candidate/admin endpoints require reviewer authentication."
+  },
+  "stage1_status": "Core Overture-only discovery, GERS/provenance, reviewer-authenticated Companies House links, retired bypass paths and Overture-first approval safeguards are implemented. Reviewer-authenticated administrative access and audit attribution tests passed in the corrected full workflow (179 API tests and disposable Docker migration validation). Source-rights and product/operational acceptance remain outstanding; no live processing/publication.",
+  "stage5_status": "Corrected release archive validation passed: deterministic ZIP, 155 files, 382181 bytes; SHA-256 recorded in the sidecar package manifest, exclusion audit confirms no secrets/local data/development patch helpers, and artifact uploaded to GitHub Actions. Disposable PostgreSQL migration 0023 downgrade to 0022 and re-upgrade to 0023 passed. Target-host backup/replacement checklist and formal release sign-off remain outstanding.",
+  "security_review": {
+    "access_control": "Bearer reviewer authentication required for active administrative reads and mutations; public directory search and health endpoints remain intentionally public; disabled/retired endpoints return HTTP 410.",
+    "reviewed_gaps_fixed": [
+      "POST /api/v1/observations now requires a reviewer and uses authenticated reviewer identity as audit actor.",
+      "Provider edits, provider status changes and observation decisions now attribute audit events to the authenticated reviewer instead of the legacy local-admin default."
+    ],
+    "defence_in_depth": [
+      "GET /api/v1/enrichment/sources and GET /api/v1/enrichment/checks now have reviewer dependencies. Their enrichment router is not currently mounted in app.main, so these paths are not active API routes."
+    ],
+    "regression_tests": "Corrected full API suite passed 179 tests, including reviewer route introspection, valid/invalid/revoked tokens, public routes, authenticated audit attribution, Stage 3 evidence and Stage 5 packaging exclusion/reproducibility."
+  },
+  "stage2_status": "Overture-first ruleset v2.0 and synthetic approval/conflict regressions passed the corrected full API suite. Conflict detection uses verified Companies House links and branch-aligned first-party website evidence. Non-mutating live-candidate outcome analysis and product acceptance remain outstanding; no live processing/publication.",
+  "stage3_status": "Separate pricing, membership and regulatory evidence, source provenance, provider/branch scope, sole-trader/partnership representation, reviewer-only decisions and bounded idempotent manual revalidation passed the corrected full API suite. Migration 0023 downgrade/forward-upgrade passed on disposable PostgreSQL. Automated source-specific retrieval/refresh, source policy/legal sign-off, canonical pricing taxonomy and full automated freshness/exception path remain open.",
+  "stage4_status": "Partially implemented. All internal API routes except public directory search require reviewer auth; route-introspection, anonymous read/write, valid/invalid/revoked token, public-route and audit attribution tests passed the corrected suite. Admin UI uses an in-memory token and all API calls attach it. Credential operations are documented. RBAC, target-environment rotation, backup/restore, observability/alerts and retention remain open.",
+  "implementation_plan": "docs/FIVE-STAGE-ACCEPTANCE-PLAN.md",
+  "release_packaging": {
+    "generator": "scripts/package_release.py",
+    "archive": "everguide-v2.8.0.zip",
+    "status": "CI validated; archive downloaded and independently checked.",
+    "reproducibility": "Fixed ZIP timestamps, sorted members and stable file modes; repeated-build SHA-256 equality passed.",
+    "integrity": "ZIP integrity, required-file checks, duplicate path checks, release manifest/version consistency and exclusion checks passed.",
+    "excluded_content": [
+      "environment files except example templates",
+      "npm/pip/netrc credentials",
+      "cloud and SSH credentials",
+      "private keys and certificates",
+      "local databases and data",
+      "development patch helpers stage1_api_patch.py and stage1_task_patch.py",
+      "dependencies, caches and build outputs"
+    ],
+    "retained_template": ".env.example",
+    "file_count": 155,
+    "size_bytes": 382181,
+    "checksum_file": "everguide-v2.8.0.zip.sha256",
+    "package_manifest_file": "everguide-v2.8.0.package-manifest.json",
+    "checksum_and_source_commit": "Recorded in the external package manifest and SHA-256 sidecar; intentionally not embedded in RELEASE-MANIFEST.json because that file is itself included in the archive.",
+    "ci_artifact_retention_days": 14,
+    "release_signoff": "Not granted. The artifact is a validated release candidate only; target-host backup, replacement and operator sign-off remain outstanding."
   }
 }
