@@ -44,6 +44,7 @@ def _run_dict(run, db=None):
     target_count = int(metadata.get("target_count") or run.records_received or 0)
     candidates_processed = int(run.records_processed or 0)
     candidate_ids = metadata.get("candidate_ids") or []
+    live_candidate_outcomes = None
     if (db is not None and metadata.get("run_type") == "enrichment_retry"
             and candidate_ids and run.status in {"queued", "running", "processing", "price_enrichment"}):
         # Candidate rows commit independently within each worker batch. Count
@@ -53,6 +54,12 @@ def _run_dict(run, db=None):
             OvertureCandidate.id.in_([int(value) for value in candidate_ids]),
             OvertureCandidate.last_checked_at.is_not(None),
         ).scalar() or 0
+        live_candidate_outcomes = dict(db.query(
+            OvertureCandidate.outcome, func.count(OvertureCandidate.id),
+        ).filter(
+            OvertureCandidate.id.in_([int(value) for value in candidate_ids]),
+            OvertureCandidate.last_checked_at.is_not(None),
+        ).group_by(OvertureCandidate.outcome).all())
     prices_queued = int(metadata.get("pricing_enrichment_queued") or 0)
     prices_terminal = int(metadata.get("pricing_enrichment_terminal") or 0)
     price_outcomes = metadata.get("pricing_enrichment_outcomes") or {}
@@ -96,7 +103,9 @@ def _run_dict(run, db=None):
             "prices_pending": max(0, prices_queued - prices_terminal),
             "retryable_price_failures": retryable_price_failures,
             "price_outcomes": price_outcomes},
-        "outcomes": {**{key: value for key, value in (run.outcomes or {}).items() if key != "_meta"}, "_meta": public_metadata},
+        "outcomes": {**(live_candidate_outcomes if live_candidate_outcomes is not None else
+            {key: value for key, value in (run.outcomes or {}).items() if key != "_meta"}),
+            "_meta": public_metadata},
         "ingestion_method": metadata.get("ingestion_method", "manual_csv"), "error_message": run.error_message,
         "created_at": run.created_at, "started_at": run.started_at, "completed_at": run.completed_at}
 

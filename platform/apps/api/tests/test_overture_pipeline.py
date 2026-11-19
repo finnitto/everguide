@@ -279,6 +279,8 @@ def test_manual_recheck_creates_one_tracked_run_for_waiting_and_url_bearing_exce
     progress = _run_dict(run, db)
     assert progress["progress"]["candidates_total"] == 4
     assert progress["progress"]["candidates_processed"] == 1
+    assert progress["outcomes"]["awaiting_enrichment"] == 1
+    assert "exception_review" not in progress["outcomes"]
     assert progress["progress"]["prices_queued"] == 2
     assert progress["progress"]["prices_terminal"] == 1
     assert progress["progress"]["price_outcomes"] == {"failed": 1}
