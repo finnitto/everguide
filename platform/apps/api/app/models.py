@@ -393,6 +393,8 @@ class PricingEvidence(Base):
     branch_id: Mapped[int | None] = mapped_column(ForeignKey("branches.id", ondelete="RESTRICT"), index=True)
     service_category: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
     service_name: Mapped[str] = mapped_column(String(240), nullable=False)
+    option_group_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    option_group_name: Mapped[str | None] = mapped_column(String(240))
     fee_type: Mapped[str] = mapped_column(String(60), nullable=False)
     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     amount_upper: Mapped[float | None] = mapped_column(Numeric(12, 2))

@@ -83,7 +83,7 @@ def approve_source(source_id:int, reviewer: str = Depends(require_identity_revie
         "permission_status":row.permission_status,
         "pricing_candidates_requeued":len(queued_ids),
         "pricing_tasks_dispatched":dispatched,
-        "message":"Source approved. Waiting price-enrichment candidates were released; retrieval runs only when the AI price-enrichment feature and API key are configured.",
+        "message":"Source approved. Waiting price-enrichment candidates were released; retrieval runs when the price-enrichment feature is enabled.",
     }
 @router.post("/run",status_code=202)
 def run_enrichment(reviewer: str = Depends(require_identity_reviewer)):

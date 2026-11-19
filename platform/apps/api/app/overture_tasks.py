@@ -23,20 +23,21 @@ from collections import Counter
 from difflib import SequenceMatcher
 from datetime import datetime, timezone, timedelta
 
+from sqlalchemy import func
+
 from app.celery_app import celery_app
 from app.config import settings
 from app.database import SessionLocal
 from app.models import (
     AuditEvent, Branch, OvertureCandidate, OvertureImportRun, Provider,
-    SourceObservation, OvertureCompanyLink, CompaniesHouseCandidate,
+    SourceObservation,
 )
 from app.overture_approval import assess_overture_candidate
 from app.candidate_quality import (
-    DIRECTORY_DOMAINS, classify_service, normalise_identity_name, normalise_phone,
+    DIRECTORY_DOMAINS, OVERTURE_IMPORT_SERVICE_TYPES, classify_service, normalise_identity_name, normalise_phone,
     normalise_postcode, website_domain,
 )
 from app.website_checks import verify_candidate
-from app.search_providers import search_web, SearchProviderError
 from app.pricing_enrichment import (
     queue_overture_candidate_for_pricing,
     dispatch_queued_price_enrichment,
@@ -408,14 +409,23 @@ def _https_website(value):
     return urllib.parse.urlunsplit(("https", parsed.netloc, parsed.path or "/", parsed.query, ""))
 
 
-def _existing_provider_match(db, row):
+def _existing_provider_match(db, row, candidate=None):
     """Return (conflict, safe_parent_provider) without merging or overwriting."""
     name_key = normalise_identity_name(row.get("name"))
     postcode_key = normalise_postcode(row.get("postcode"))
     phone_key = normalise_phone(row.get("phone"))
     website = _https_website(row.get("website")) or ""
     domain = (urllib.parse.urlsplit(website).hostname or "").lower().removeprefix("www.")
-    for provider in db.query(Provider).all():
+    service_class = classify_service(
+        name=row.get("name"), basic_category=row.get("basic_category"),
+        taxonomy_primary=row.get("taxonomy_primary"), website="",
+        description=row.get("description", ""),
+    )
+    provider_type = OVERTURE_IMPORT_SERVICE_TYPES.get(service_class)
+    providers = db.query(Provider)
+    if provider_type:
+        providers = providers.filter(Provider.provider_type == provider_type)
+    for provider in providers.all():
         provider_name_key = normalise_identity_name(provider.trading_name)
         purl = _https_website(provider.website) or ""
         pdomain = (urllib.parse.urlsplit(purl).hostname or "").lower().removeprefix("www.")
@@ -429,30 +439,68 @@ def _existing_provider_match(db, row):
             # are never overwritten or merged.
             for branch in provider.branches:
                 if postcode_key and normalise_postcode(branch.postcode) == postcode_key:
+                    if candidate is not None and branch.id == candidate.branch_id:
+                        return False, provider
                     return True, None
             return False, provider
-    for branch in db.query(Branch).all():
+    branches = db.query(Branch).join(Provider)
+    if provider_type:
+        branches = branches.filter(Provider.provider_type == provider_type)
+    for branch in branches.all():
         if postcode_key and normalise_postcode(branch.postcode) == postcode_key:
             if phone_key and normalise_phone(branch.telephone) == phone_key:
                 return True, None
     return False, None
 
 
-def _verified_companies_house_conflicts(db, candidate):
-    """Return conflicts only from an explicitly reviewed Overture↔CH identity link."""
-    links = db.query(OvertureCompanyLink).filter(
-        OvertureCompanyLink.overture_candidate_id == candidate.id,
-        OvertureCompanyLink.status == "verified",
-        OvertureCompanyLink.reviewed_at.is_not(None),
-        OvertureCompanyLink.reviewed_by.is_not(None),
-        OvertureCompanyLink.evidence_json.is_not(None),
-    ).all()
-    conflicts = []
-    for link in links:
-        company = db.get(CompaniesHouseCandidate, link.companies_house_candidate_id)
-        if company and str(company.company_status or "").strip().lower() == "dissolved":
-            conflicts.append("verified_companies_house_entity_dissolved")
-    return sorted(set(conflicts))
+def _ensure_overture_draft_branch(db, candidate, row, website_url):
+    """Create a private draft record to hold Overture-linked enrichment evidence."""
+    if candidate.provider_id and candidate.branch_id:
+        provider = db.get(Provider, candidate.provider_id)
+        branch = db.get(Branch, candidate.branch_id)
+        if provider and branch and provider.provider_type in set(OVERTURE_IMPORT_SERVICE_TYPES.values()):
+            return provider, branch, None
+    conflict, provider = _existing_provider_match(db, row, candidate=candidate)
+    if conflict:
+        return None, None, "existing_provider_or_branch_conflict"
+    address = str(row.get("address_line_1") or "").strip()
+    town = str(row.get("town_city") or "").strip()
+    postcode = str(row.get("postcode") or candidate.postcode or "").strip()
+    if not (row.get("name") and address and town and postcode):
+        return None, None, "overture_branch_fields_incomplete"
+    provider_type = OVERTURE_IMPORT_SERVICE_TYPES.get(_overture_candidate_service_class(candidate))
+    if provider_type is None:
+        return None, None, "unsupported_overture_service_class"
+    if provider is None:
+        provider = Provider(
+            trading_name=str(row["name"])[:240],
+            display_name=str(row["name"])[:240],
+            website=str(website_url)[:500],
+            provider_type=provider_type,
+            status="draft",
+            verification_status="unverified",
+            quality_status="unassessed",
+            notes="Draft created from Overture solely to hold source-linked enrichment; not approved for publication.",
+        )
+        db.add(provider)
+        db.flush()
+    branch = Branch(
+        branch_name=str(row["name"])[:240],
+        address_line_1=address[:240],
+        town_city=town[:120],
+        postcode=postcode[:12],
+        telephone=str(row.get("phone") or "")[:40] or None,
+        website=str(website_url)[:500],
+        latitude=_float_or_none(row.get("latitude")),
+        longitude=_float_or_none(row.get("longitude")),
+        status="draft",
+        services=[],
+    )
+    provider.branches.append(branch)
+    db.flush()
+    candidate.provider_id = provider.id
+    candidate.branch_id = branch.id
+    return provider, branch, None
 
 
 OVERTURE_LOCATION_CONFLICT_DISTANCE_METRES = 100.0
@@ -510,7 +558,8 @@ def _overture_identity_collision_flags(db, candidate):
     postcode_key = normalise_postcode(candidate.postcode)
     if not name_key or not postcode_key:
         return False, False
-    if _overture_candidate_service_class(candidate) != "funeral_director_candidate":
+    candidate_service_class = _overture_candidate_service_class(candidate)
+    if candidate_service_class not in OVERTURE_IMPORT_SERVICE_TYPES:
         return False, False
 
     raw = dict(candidate.raw_data or {})
@@ -520,9 +569,14 @@ def _overture_identity_collision_flags(db, candidate):
     current_domain = website_domain(row.get("website"))
     current_coordinate = _overture_coordinate(raw)
 
+    # Imported postcodes retain the source formatting. Compare a SQL-normalized
+    # key so differences in case and whitespace cannot hide a same-postcode peer.
+    peer_postcode_key = func.upper(OvertureCandidate.postcode)
+    for whitespace in (" ", "\t", "\n", "\r", "\v", "\f"):
+        peer_postcode_key = func.replace(peer_postcode_key, whitespace, "")
     peers = db.query(OvertureCandidate).filter(
         OvertureCandidate.id != candidate.id,
-        OvertureCandidate.postcode == candidate.postcode,
+        peer_postcode_key == postcode_key,
     ).all()
 
     duplicate_conflict = False
@@ -530,7 +584,7 @@ def _overture_identity_collision_flags(db, candidate):
     for peer in peers:
         if normalise_identity_name(peer.candidate_name) != name_key:
             continue
-        if _overture_candidate_service_class(peer) != "funeral_director_candidate":
+        if _overture_candidate_service_class(peer) != candidate_service_class:
             continue
 
         peer_raw = dict(peer.raw_data or {})
@@ -567,15 +621,73 @@ def _overture_duplicate_conflict(db, candidate):
     return _overture_identity_collision_flags(db, candidate)[0]
 
 
+def _overture_website_urls(raw):
+    """Return unique, normalized website URLs supplied on the Overture record."""
+    urls = []
+    primary = raw.get("website")
+    if isinstance(primary, str) and primary.strip():
+        urls.append(primary.strip())
+    for item in _as_sources(raw.get("websites_json")):
+        if isinstance(item, str):
+            value = item
+        elif isinstance(item, dict):
+            value = item.get("url") or item.get("website") or item.get("value")
+        else:
+            value = None
+        if isinstance(value, str) and value.strip():
+            urls.append(value.strip())
+    normalized = []
+    seen = set()
+    for value in urls:
+        url = _https_website(value)
+        if url and url not in seen:
+            seen.add(url)
+            normalized.append(url)
+    return normalized[:10]
+
+
+def _verify_overture_supplied_sites(raw):
+    """Check only Overture-supplied sites; never search other sources for a replacement."""
+    urls = _overture_website_urls(raw)
+    attempts = []
+    first_party_urls = [url for url in urls if not _is_non_first_party_url(url)]
+    fallback = None
+    for url in first_party_urls:
+        try:
+            result = verify_candidate(url)
+        except Exception as exc:
+            result = {"status": "check_blocked_or_failed", "detail": str(exc)[:500], "robots_allowed": None, "final_url": url}
+        extracted = (result or {}).get("extracted_data")
+        matches = _candidate_evidence_matches(raw, extracted)
+        attempt = {
+            "url": url,
+            "status": (result or {}).get("status"),
+            "robots_allowed": (result or {}).get("robots_allowed"),
+            "identity_match": bool(matches),
+        }
+        attempts.append(attempt)
+        if (result or {}).get("status") == "reachable" and (result or {}).get("robots_allowed") is True and matches:
+            result["overture_url_attempts"] = attempts
+            return url, result, extracted, True, attempts
+        if fallback is None and (result or {}).get("status") == "reachable":
+            fallback = (url, result, extracted)
+    if fallback:
+        url, result, extracted = fallback
+        result["overture_url_attempts"] = attempts
+        return url, result, extracted, False, attempts
+    if urls:
+        return urls[0], {"status": "website_not_verified", "final_url": urls[0], "robots_allowed": None}, None, False, attempts
+    return None, {"status": "website_missing", "final_url": None, "robots_allowed": None}, None, False, attempts
+
+
 def _normalised_assessment_row(raw):
     """Normalise Overture fields without replacing them with website data."""
     row = dict(raw)
     row["sources_json"] = _as_sources(row.get("sources_json"))
-    row["website"] = _https_website(row.get("website"))
-    if not row["website"]:
-        websites = _as_sources(raw.get("websites_json"))
-        if websites and isinstance(websites[0], str):
-            row["website"] = _https_website(websites[0])
+    row["website"] = next(
+        (url for url in _overture_website_urls(raw) if not _is_non_first_party_url(url)),
+        None,
+    )
     addresses = _as_sources(raw.get("addresses_json"))
     address = addresses[0] if isinstance(addresses, list) and addresses and isinstance(addresses[0], dict) else {}
     street = (address.get("street") or address.get("street_address") or address.get("address_line_1")
@@ -620,6 +732,23 @@ def _same_asserted_branch_postcode_conflict(raw, extracted):
     return bool(observed_postcode and asserted_postcode and observed_postcode != asserted_postcode)
 
 
+def _candidate_name_matches(raw, extracted):
+    """Compare provider names without requiring a branch page to repeat its postcode."""
+    if not isinstance(extracted, dict):
+        return False
+    candidate_raw = str(raw.get("name") or "").lower()
+    evidence_raw = str(extracted.get("name") or "").lower()
+    candidate_name = normalise_identity_name(candidate_raw)
+    evidence_name = normalise_identity_name(evidence_raw)
+    stop = {"the", "and", "funeral", "funerals", "director", "directors", "service", "services", "limited", "ltd", "plc"}
+    candidate_tokens = {token for token in re.findall(r"[a-z0-9]+", candidate_raw) if token not in stop}
+    evidence_tokens = {token for token in re.findall(r"[a-z0-9]+", evidence_raw) if token not in stop}
+    token_match = (len(candidate_tokens & evidence_tokens) / max(1, min(len(candidate_tokens), len(evidence_tokens)))) >= 0.8
+    return bool(candidate_name and evidence_name and (
+        SequenceMatcher(None, candidate_name, evidence_name).ratio() >= 0.88 or token_match
+    ))
+
+
 def _first_party_website_conflicts(raw, extracted, *, verified_first_party):
     """Return only explicit conflicts supported by verified first-party evidence."""
     if not verified_first_party or not isinstance(extracted, dict):
@@ -632,23 +761,24 @@ def _first_party_website_conflicts(raw, extracted, *, verified_first_party):
         conflicts.append("official_site_branch_closed")
     if _same_asserted_branch_postcode_conflict(raw, extracted):
         conflicts.append("official_site_branch_postcode_mismatch")
+    # A different trading name is only a positive conflict when the page
+    # identifies this exact branch address. Group names and branch aliases are
+    # common, so a name-only mismatch is insufficient evidence by itself.
+    if (_same_asserted_branch_location(raw, extracted)
+            and extracted.get("name") and raw.get("name")
+            and not _candidate_name_matches(raw, extracted)):
+        conflicts.append("official_site_different_operator_at_same_address")
     return conflicts
 
 
 def _candidate_evidence_matches(raw, extracted):
-    if not extracted:
+    if not isinstance(extracted, dict) or not _candidate_name_matches(raw, extracted):
         return False
-    candidate_raw = str(raw.get("name") or "").lower()
-    evidence_raw = str(extracted.get("name") or "").lower()
-    candidate_name = normalise_identity_name(candidate_raw)
-    evidence_name = normalise_identity_name(evidence_raw)
-    stop = {"the", "and", "funeral", "funerals", "director", "directors", "service", "services", "limited", "ltd", "plc"}
-    candidate_tokens = {token for token in re.findall(r"[a-z0-9]+", candidate_raw) if token not in stop}
-    evidence_tokens = {token for token in re.findall(r"[a-z0-9]+", evidence_raw) if token not in stop}
-    token_match = (len(candidate_tokens & evidence_tokens) / max(1, min(len(candidate_tokens), len(evidence_tokens)))) >= 0.8
-    name_match = bool(candidate_name and evidence_name and (SequenceMatcher(None, candidate_name, evidence_name).ratio() >= 0.72 or token_match))
-    postcode_match = normalise_postcode(raw.get("postcode")) == normalise_postcode(extracted.get("postcode"))
-    return name_match and postcode_match
+    candidate_postcode = normalise_postcode(raw.get("postcode"))
+    evidence_postcode = normalise_postcode(extracted.get("postcode"))
+    # A missing page postcode is unknown for enrichment, but does not establish
+    # the stronger name+location match required to unlock public publication.
+    return bool(candidate_postcode and evidence_postcode and candidate_postcode == evidence_postcode)
 
 
 def _is_non_first_party_url(url: str | None) -> bool:
@@ -689,85 +819,6 @@ def _is_non_first_party_url(url: str | None) -> bool:
     if parsed.path.lower().endswith((".pdf", ".doc", ".docx")):
         return True
     return False
-
-
-def _verification_attempt(url, discovery_source, verification, search_query=None):
-    """Build a compact, body-free audit record for one attempted website."""
-    extracted = (verification or {}).get("extracted_data") or {}
-    return {
-        "url": url,
-        "discovery_source": discovery_source,
-        "search_query": search_query,
-        "status": (verification or {}).get("status"),
-        "final_url": (verification or {}).get("final_url"),
-        "page_title": (verification or {}).get("page_title"),
-        "content_sha256": (verification or {}).get("content_sha256"),
-        "robots_allowed": (verification or {}).get("robots_allowed"),
-        "extracted_identity": ({
-            key: extracted.get(key) for key in (
-                "name", "street", "town", "postcode", "telephone", "email", "website",
-                "source_type", "country", "confidence", "funeral_signals", "has_complete_branch_address",
-            )
-        } if extracted else None),
-        "detail": (verification or {}).get("detail"),
-    }
-
-
-def _verify_overture_website(raw, initial_url):
-    """Try Overture first, then search; preserve provenance without promoting mismatches."""
-    candidates = []
-    initial_is_directory = _is_non_first_party_url(initial_url) if initial_url else False
-    if initial_url and not initial_is_directory:
-        candidates.append((initial_url, "overture_website", None))
-    query = f'"{raw.get("name", "")}" funeral directors {raw.get("postcode", "")} official website UK'
-    search_error = None
-    if settings.brave_search_api_key:
-        try:
-            results = search_web(query, provider=settings.search_provider,
-                brave_api_key=settings.brave_search_api_key, count=8)
-            seen = {url for url, _, _ in candidates}
-            for item in results:
-                url = _https_website(item.get("url"))
-                if not url or url in seen or _is_non_first_party_url(url):
-                    continue
-                candidates.append((url, "brave_search", query))
-                seen.add(url)
-        except SearchProviderError as exc:
-            search_error = str(exc)[:500]
-    attempts = []
-    initial_mismatch = None
-    last_verification = None
-    for url, discovery_source, search_query in candidates[:6]:
-        try:
-            verification = verify_candidate(url)
-        except Exception as exc:
-            verification = {"status": "check_blocked_or_failed", "detail": str(exc)[:800],
-                "robots_allowed": None, "final_url": url}
-        last_verification = verification
-        attempts.append(_verification_attempt(url, discovery_source, verification, search_query))
-        extracted = verification.get("extracted_data") if verification else None
-        if extracted and _candidate_evidence_matches(raw, extracted):
-            verification["discovery_source"] = discovery_source
-            verification["search_query"] = search_query
-            verification["search_error"] = search_error
-            verification["attempts"] = attempts
-            return url, verification
-        # Preserve a mismatched original Overture URL for human review. A
-        # mismatched search result is only an attempted lead, never a replacement.
-        if extracted and discovery_source == "overture_website" and initial_mismatch is None:
-            initial_mismatch = (url, verification)
-    if initial_mismatch:
-        url, verification = initial_mismatch
-        verification["discovery_source"] = "identity_or_branch_mismatch"
-        verification["search_query"] = None
-        verification["search_error"] = search_error
-        verification["attempts"] = attempts
-        return url, verification
-    return None, {"status": "website_missing", "final_url": initial_url,
-        "robots_allowed": None, "discovery_source": "third_party_discovery_lead" if initial_is_directory else None,
-        "search_error": search_error, "search_query": query if candidates else None,
-        "attempts": attempts,
-        "detail": "No matching provider-owned HTTPS website could be verified. Original discovery URL is retained as source evidence; attempted alternatives are recorded separately."}
 
 
 @celery_app.task(name="everguide.overture.import_records", bind=True)
@@ -867,9 +918,12 @@ def import_overture_records(self, run_id: int, records: list[dict], source_relea
 
 
 @celery_app.task(name="everguide.overture.process_candidates", bind=True)
-def process_overture_candidates(self, run_id: int | None = None, limit: int = 20):
+def process_overture_candidates(self, run_id: int | None = None, limit: int = 20, candidate_id: int | None = None):
     db = SessionLocal()
     run = db.get(OvertureImportRun, run_id) if run_id else None
+    run_metadata = dict(((run.outcomes or {}).get("_meta") or {})) if run else {}
+    enrichment_retry_run = run_metadata.get("run_type") == "enrichment_retry"
+    retry_candidate_ids = [int(value) for value in (run_metadata.get("candidate_ids") or [])] if enrichment_retry_run else []
     counts = Counter()
     checked = 0
     claimed_ids = []
@@ -895,8 +949,12 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
         # SQLAlchemy does not allow filter() after limit()/offset(). Apply the
         # import-run scope first, then order and cap the batch. This is the
         # normal scheduled-feed path (run_id is supplied by the importer).
-        if run_id:
+        if run_id and enrichment_retry_run:
+            query = query.filter(OvertureCandidate.id.in_(retry_candidate_ids))
+        elif run_id:
             query = query.filter(OvertureCandidate.last_import_run_id == run_id)
+        if candidate_id:
+            query = query.filter(OvertureCandidate.id == candidate_id)
         query = query.order_by(OvertureCandidate.id.asc()).limit(max(1, min(int(limit), 50)))
         candidates = query.with_for_update(skip_locked=True).all()
         claimed_ids = [candidate.id for candidate in candidates]
@@ -926,11 +984,14 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                 geography_scope=geography_scope, auto_approval_enabled=False,
                 minimum_confidence=settings.auto_approval_min_confidence,
             )
+            automatic_publication_allowed = settings.auto_approve_providers
+            manual_enrichment_approval = dict(previous_evidence.get("enrichment_approval") or {})
+            manually_approved = manual_enrichment_approval.get("status") == "approved_by_reviewer"
             if classification["outcome"] == "excluded":
                 assessment = classification
                 outcome = "excluded"
                 evidence = {"boundary_error": boundary_error} if boundary_error else {}
-            elif classification["outcome"] == "exception_review":
+            elif classification["outcome"] == "exception_review" and not manually_approved:
                 assessment = classification
                 outcome = "exception_review"
                 evidence = {"boundary_error": boundary_error} if boundary_error else {}
@@ -938,37 +999,56 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                 point = _inside_boundary(boundary, raw.get("longitude"), raw.get("latitude")) if boundary else None
                 authority_codes = (_authority_codes_for_point(boundary, float(raw.get("longitude")), float(raw.get("latitude")))
                     if boundary and geography_scope == "england" and point is True else [])
-                discovery_url = row.get("website")
-                verification = None
-                verified_url = None
-                extracted = None
-                # Website corroboration is optional and never supplies published branch fields.
-                if discovery_url and not _is_non_first_party_url(discovery_url):
-                    try:
-                        verification = verify_candidate(discovery_url)
-                    except Exception as exc:
-                        verification = {"status": "check_blocked_or_failed", "detail": str(exc)[:800],
-                            "robots_allowed": None, "final_url": discovery_url}
-                    extracted = (verification or {}).get("extracted_data") or None
-                    verified_url = (verification or {}).get("final_url") or discovery_url
-                verified_first_party = bool(verified_url and extracted and verification.get("status") == "reachable"
-                    and verification.get("robots_allowed") is True)
-                conflict_codes = _verified_companies_house_conflicts(db, candidate)
+                overture_urls = _overture_website_urls(raw)
+                discovery_url = overture_urls[0] if overture_urls else None
+                verified_url, verification, extracted, site_identity_matches, url_attempts = (
+                    _verify_overture_supplied_sites(raw)
+                )
+                site_is_reachable = bool(
+                    verified_url and verification.get("status") == "reachable"
+                    and verification.get("robots_allowed") is True
+                )
+                # An Overture-supplied first-party URL with a successful,
+                # robots-permitted check is enough to enrich a draft. Website
+                # extraction is corroborating evidence; its absence is not a
+                # positive identity conflict. Explicit same-branch conflicts
+                # below still route the candidate to manual review.
+                verified_first_party = site_is_reachable
+                automatic_publication_allowed = (
+                    settings.auto_approve_providers
+                    and (not site_is_reachable or site_identity_matches)
+                )
+                # Companies House is deliberately not consulted by this Overture
+                # assessment path. Overture is the import and branch-identity source.
+                conflict_codes = []
                 conflict_codes.extend(_first_party_website_conflicts(
                     row, extracted, verified_first_party=verified_first_party
                 ))
-                if not discovery_url or _is_non_first_party_url(discovery_url):
-                    row["website"] = None
+                identity_conflict_codes = {
+                    "official_site_branch_closed",
+                    "official_site_branch_postcode_mismatch",
+                    "official_site_different_operator_at_same_address",
+                }
+                identity_conflict = any(code in identity_conflict_codes for code in conflict_codes)
+                if identity_conflict:
+                    conflict_codes.append("first_party_identity_mismatch")
+                if verified_first_party:
+                    row["website"] = verified_url
                 evidence = {
                     "source_type": "first_party_website" if verified_first_party else None,
                     "discovery_url": discovery_url,
                     "discovery_url_class": "third_party_lead" if discovery_url and _is_non_first_party_url(discovery_url) else "overture_website",
                     "website_url": verified_url if verified_first_party else None,
+                    "identity_evidence_status": (
+                        "conflicting" if identity_conflict else
+                        "matched" if site_identity_matches else "unverified"
+                    ),
                     "verification_status": (verification or {}).get("status", "not_checked"),
                     "verification_detail": (verification or {}).get("detail"),
                     "robots_allowed": (verification or {}).get("robots_allowed"),
                     "page_title": (verification or {}).get("page_title"),
                     "content_sha256": (verification or {}).get("content_sha256"),
+                    "overture_url_attempts": url_attempts,
                     "extracted_identity_evidence": ({k: extracted.get(k) for k in (
                         "name", "street", "town", "postcode", "telephone", "email", "website",
                         "source_type", "country", "confidence", "funeral_signals", "branch_status", "has_complete_branch_address")}
@@ -986,17 +1066,36 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                     str(raw.get("possible_duplicate", "")).lower() in {"true", "1", "yes"}
                     or duplicate_conflict
                 )
-                existing_conflict, parent_provider = _existing_provider_match(db, row)
+                existing_conflict, parent_provider = _existing_provider_match(db, row, candidate=candidate)
                 assessment = assess_overture_candidate(
                     row, first_party_evidence=evidence, point_in_thurrock=point if geography_scope != "england" else None,
                     point_in_england=point if geography_scope == "england" else None,
                     geography_scope=geography_scope,
                     duplicate_conflict=duplicate, location_conflict=location_conflict,
                     existing_provider_conflict=existing_conflict,
-                    auto_approval_enabled=settings.auto_approve_providers,
+                    # An unverified but reachable Overture site can support
+                    # draft enrichment; it cannot independently unlock public
+                    # publication. Preserve the Overture-only publication path
+                    # when there is no site to contradict the source record.
+                    auto_approval_enabled=automatic_publication_allowed,
                     minimum_confidence=settings.auto_approval_min_confidence,
                 )
                 outcome = assessment["outcome"]
+                if manually_approved and outcome != "excluded":
+                    outcome = "awaiting_enrichment"
+                    assessment["manual_enrichment_approval"] = {
+                        "approved_by": manual_enrichment_approval.get("approved_by"),
+                        "approved_at": manual_enrichment_approval.get("approved_at"),
+                    }
+                    assessment["outcome"] = outcome
+                if (outcome == "awaiting_enrichment" and not site_is_reachable
+                        and not manually_approved):
+                    outcome = "exception_review"
+                    assessment["outcome"] = outcome
+                    assessment["reasons"] = ";".join(filter(None, [
+                        assessment.get("reasons", ""),
+                        "overture_first_party_website_unavailable",
+                    ]))
                 if boundary_error:
                     assessment["reasons"] = ";".join(filter(None, [assessment.get("reasons", ""), "official_ons_boundary_unavailable"]))
                     if outcome == "auto_approved_eligible":
@@ -1005,12 +1104,12 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                 # Defence in depth: re-check the live setting at the exact write
                 # boundary, even if an assessor or future adapter regresses.
                 outcome = _enforce_publication_safety_gate(
-                    assessment, auto_approval_enabled=settings.auto_approve_providers,
+                    assessment, auto_approval_enabled=automatic_publication_allowed,
                 )
                 if outcome == "auto_approved_eligible":
                     # Re-check conflicts immediately before the write. Provider,
                     # branch, source observations and audit events commit atomically.
-                    conflict_now, parent_provider = _existing_provider_match(db, row)
+                    conflict_now, parent_provider = _existing_provider_match(db, row, candidate=candidate)
                     if conflict_now:
                         outcome = "exception_review"
                         assessment["outcome"] = outcome
@@ -1022,7 +1121,8 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                         if created_provider:
                             provider = Provider(
                                 trading_name=row["name"], display_name=row["name"],
-                                website=provider_website, provider_type="funeral_director",
+                                website=provider_website,
+                                provider_type=OVERTURE_IMPORT_SERVICE_TYPES.get(_overture_candidate_service_class(candidate), "funeral_director"),
                                 status="published", verification_status="approved", quality_status="confirmed",
                                 notes="Automatically approved from Overture Places location data under " + assessment["ruleset_version"],
                             )
@@ -1080,6 +1180,39 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                             }))
                         db.add(AuditEvent(entity_type="overture_candidate", entity_id=candidate.id,
                             action="auto_approved_published", detail={"provider_id": provider.id, "branch_id": branch.id}))
+            if manually_approved:
+                evidence["enrichment_approval"] = manual_enrichment_approval
+            if (outcome == "awaiting_enrichment" and evidence.get("website_url")
+                    and evidence.get("robots_allowed") is True and (not boundary_error or manually_approved)):
+                provider, branch, draft_error = _ensure_overture_draft_branch(
+                    db, candidate, row, evidence["website_url"],
+                )
+                if draft_error:
+                    outcome = "exception_review"
+                    assessment["reasons"] = ";".join(filter(None, [assessment.get("reasons", ""), draft_error]))
+                    assessment["outcome"] = outcome
+                else:
+                    outcome = "enrichment_approved"
+                    approval_status = "approved_by_reviewer" if manually_approved else "auto_approved"
+                    evidence["enrichment_approval"] = {
+                        "status": approval_status,
+                        "approved_by": manual_enrichment_approval.get("approved_by") if manually_approved else "system:overture_no_obvious_conflict",
+                        "approved_at": manual_enrichment_approval.get("approved_at") if manually_approved else _now().isoformat(),
+                        "source": "overture_supplied_website_url",
+                        "provider_id": provider.id,
+                        "branch_id": branch.id,
+                    }
+                    assessment["enrichment_approval"] = approval_status
+                    assessment["outcome"] = outcome
+                    db.add(AuditEvent(
+                        entity_type="overture_candidate",
+                        entity_id=candidate.id,
+                        action="enrichment_approved",
+                        detail={"provider_id": provider.id, "branch_id": branch.id,
+                                "approval_status": approval_status,
+                                "website_url": evidence["website_url"]},
+                        actor=evidence["enrichment_approval"]["approved_by"],
+                    ))
             if outcome == "awaiting_enrichment":
                 attempt_count = int(previous_evidence.get("enrichment_attempt_count") or 0) + 1
                 evidence["enrichment_attempt_count"] = attempt_count
@@ -1095,20 +1228,25 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
             candidate.assessment = assessment
             candidate.first_party_evidence = evidence
             pricing_queued = False
-            if outcome == "auto_approved_published" and candidate.provider_id and candidate.branch_id:
+            if outcome in {"auto_approved_published", "enrichment_approved"} and candidate.provider_id and candidate.branch_id:
                 pricing_queued = queue_overture_candidate_for_pricing(
                     db,
                     candidate,
-                    trigger="automatic_approval",
-                    requested_by="system",
+                    trigger=("reviewer_approved_enrichment" if manually_approved else
+                             "automatic_approval" if outcome == "auto_approved_published" else
+                             "automatic_overture_enrichment_approval"),
+                    requested_by=(manual_enrichment_approval.get("approved_by") if manually_approved else "system"),
+                    run_id=run.id if run else None,
                 )
+                if pricing_queued and enrichment_retry_run:
+                    run_metadata["pricing_enrichment_queued"] = int(run_metadata.get("pricing_enrichment_queued") or 0) + 1
+                    run.outcomes = {**(run.outcomes or {}), "_meta": run_metadata}
             candidate.outcome = outcome
-            if outcome != "auto_approved_published":
-                candidate.status = outcome
-                if outcome == "excluded" and candidate.source_observation_id:
-                    source_obs = db.get(SourceObservation, candidate.source_observation_id)
-                    if source_obs:
-                        source_obs.review_status = "rejected"
+            candidate.status = outcome
+            if outcome == "excluded" and candidate.source_observation_id:
+                source_obs = db.get(SourceObservation, candidate.source_observation_id)
+                if source_obs:
+                    source_obs.review_status = "rejected"
             candidate.last_checked_at = _now()
             counts[outcome] += 1
             checked += 1
@@ -1120,32 +1258,57 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                 dispatch_queued_price_enrichment([candidate.id])
 
         if run:
-            run.records_processed = (run.records_processed or 0) + checked
+            processed_total = (run.records_processed or 0) + checked
+            if enrichment_retry_run:
+                db.refresh(run)
+                latest_metadata = dict(((run.outcomes or {}).get("_meta") or {}))
+                run_metadata["pricing_enrichment_queued"] = max(
+                    int(run_metadata.get("pricing_enrichment_queued") or 0),
+                    int(latest_metadata.get("pricing_enrichment_queued") or 0),
+                )
+                run_metadata["pricing_enrichment_terminal"] = max(
+                    int(run_metadata.get("pricing_enrichment_terminal") or 0),
+                    int(latest_metadata.get("pricing_enrichment_terminal") or 0),
+                )
+                run_metadata["pricing_enrichment_outcomes"] = latest_metadata.get(
+                    "pricing_enrichment_outcomes", run_metadata.get("pricing_enrichment_outcomes", {}),
+                )
+            run.records_processed = processed_total
             previous = {k: int(v) for k, v in (run.outcomes or {}).items() if k != "_meta"}
             for key, value in counts.items():
                 previous[key] = previous.get(key, 0) + int(value)
-            run.outcomes = {**previous, "_meta": (run.outcomes or {}).get("_meta", {})}
+            run.outcomes = {**previous, "_meta": run_metadata}
+            run_scope = (OvertureCandidate.id.in_(retry_candidate_ids)
+                if enrichment_retry_run else OvertureCandidate.last_import_run_id == run.id)
             unclaimed = db.query(OvertureCandidate).filter(
-                OvertureCandidate.last_import_run_id == run.id,
+                run_scope,
                 OvertureCandidate.outcome == "awaiting_enrichment",
                 OvertureCandidate.status == "awaiting_enrichment",
                 OvertureCandidate.last_checked_at.is_(None)).count()
             in_progress = db.query(OvertureCandidate).filter(
-                OvertureCandidate.last_import_run_id == run.id,
+                run_scope,
                 OvertureCandidate.outcome == "awaiting_enrichment",
                 OvertureCandidate.status == "processing").count()
-            run.status = "processing" if (unclaimed or in_progress) else "completed"
-            if not (unclaimed or in_progress):
+            if unclaimed or in_progress:
+                run.status = "processing"
+                run.completed_at = None
+            elif enrichment_retry_run and int(run_metadata.get("pricing_enrichment_queued") or 0) > int(run_metadata.get("pricing_enrichment_terminal") or 0):
+                run.status = "price_enrichment"
+                run.completed_at = None
+            else:
+                run.status = "completed"
                 run.completed_at = _now()
             db.add(AuditEvent(entity_type="overture_import_run", entity_id=run.id,
                 action="processing_batch_completed", detail={"records_processed_this_batch": checked,
                 "records_processed_total": run.records_processed, "unclaimed": unclaimed,
                 "in_progress": in_progress, "outcomes_this_batch": dict(counts),
+                "pricing_enrichment_queued": run_metadata.get("pricing_enrichment_queued", 0),
+                "pricing_enrichment_terminal": run_metadata.get("pricing_enrichment_terminal", 0),
                 "boundary_errors": boundary_errors}))
             db.commit()
             if unclaimed and not in_progress:
                 process_overture_candidates.delay(run.id, 20)
-        elif checked:
+        elif checked and candidate_id is None:
             unprocessed = db.query(OvertureCandidate).filter(
                 OvertureCandidate.outcome == "awaiting_enrichment",
                 OvertureCandidate.status == "awaiting_enrichment",

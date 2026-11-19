@@ -52,6 +52,19 @@ FUNERAL_TERMS = (
     "undertaker", "undertakers",
 )
 
+# Overture is the only current source for these funeral-sector candidate types.
+# They remain separate provider types so a related service is never presented
+# as a funeral director by mistake.
+OVERTURE_IMPORT_SERVICE_TYPES = {
+    "funeral_director_candidate": "funeral_director",
+    "direct_cremation_provider": "direct_cremation",
+    "funeral_plan_provider": "funeral_plan",
+    "crematorium": "crematorium",
+    "celebrant": "celebrant",
+    "cemetery": "cemetery",
+    "memorial_or_masonry": "memorial_provider",
+}
+
 THURROCK_OUTWARD_CODES = {
     "RM15", "RM16", "RM17", "RM18", "RM19", "RM20", "SS17",
 }
