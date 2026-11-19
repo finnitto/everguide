@@ -935,23 +935,29 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
         db.query(OvertureCandidate).filter(
             OvertureCandidate.status == "processing",
             OvertureCandidate.updated_at < stale_before,
-        ).update({"status": "awaiting_enrichment", "updated_at": _now()}, synchronize_session=False)
+        ).update({"status": OvertureCandidate.outcome, "updated_at": _now()}, synchronize_session=False)
         db.commit()
         if run:
             run.status = "processing"
             run.started_at = run.started_at or _now()
             db.commit()
-        query = db.query(OvertureCandidate).filter(
-            OvertureCandidate.outcome == "awaiting_enrichment",
-            OvertureCandidate.status == "awaiting_enrichment",
-            OvertureCandidate.last_checked_at.is_(None),
-        )
+        if enrichment_retry_run:
+            query = db.query(OvertureCandidate).filter(
+                OvertureCandidate.id.in_(retry_candidate_ids),
+                OvertureCandidate.outcome.in_(["awaiting_enrichment", "exception_review"]),
+                OvertureCandidate.status.in_(["awaiting_enrichment", "exception_review"]),
+                OvertureCandidate.last_checked_at.is_(None),
+            )
+        else:
+            query = db.query(OvertureCandidate).filter(
+                OvertureCandidate.outcome == "awaiting_enrichment",
+                OvertureCandidate.status == "awaiting_enrichment",
+                OvertureCandidate.last_checked_at.is_(None),
+            )
         # SQLAlchemy does not allow filter() after limit()/offset(). Apply the
         # import-run scope first, then order and cap the batch. This is the
         # normal scheduled-feed path (run_id is supplied by the importer).
-        if run_id and enrichment_retry_run:
-            query = query.filter(OvertureCandidate.id.in_(retry_candidate_ids))
-        elif run_id:
+        if run_id and not enrichment_retry_run:
             query = query.filter(OvertureCandidate.last_import_run_id == run_id)
         if candidate_id:
             query = query.filter(OvertureCandidate.id == candidate_id)
@@ -990,10 +996,6 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
             if classification["outcome"] == "excluded":
                 assessment = classification
                 outcome = "excluded"
-                evidence = {"boundary_error": boundary_error} if boundary_error else {}
-            elif classification["outcome"] == "exception_review" and not manually_approved:
-                assessment = classification
-                outcome = "exception_review"
                 evidence = {"boundary_error": boundary_error} if boundary_error else {}
             else:
                 point = _inside_boundary(boundary, raw.get("longitude"), raw.get("latitude")) if boundary else None
@@ -1280,14 +1282,16 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
             run.outcomes = {**previous, "_meta": run_metadata}
             run_scope = (OvertureCandidate.id.in_(retry_candidate_ids)
                 if enrichment_retry_run else OvertureCandidate.last_import_run_id == run.id)
+            processable_outcomes = (["awaiting_enrichment", "exception_review"]
+                if enrichment_retry_run else ["awaiting_enrichment"])
             unclaimed = db.query(OvertureCandidate).filter(
                 run_scope,
-                OvertureCandidate.outcome == "awaiting_enrichment",
-                OvertureCandidate.status == "awaiting_enrichment",
+                OvertureCandidate.outcome.in_(processable_outcomes),
+                OvertureCandidate.status.in_(processable_outcomes),
                 OvertureCandidate.last_checked_at.is_(None)).count()
             in_progress = db.query(OvertureCandidate).filter(
                 run_scope,
-                OvertureCandidate.outcome == "awaiting_enrichment",
+                OvertureCandidate.outcome.in_(processable_outcomes),
                 OvertureCandidate.status == "processing").count()
             if unclaimed or in_progress:
                 run.status = "processing"

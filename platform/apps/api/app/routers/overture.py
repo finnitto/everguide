@@ -12,7 +12,10 @@ from app.pricing_enrichment import (
     queue_overture_candidate_for_pricing,
     dispatch_queued_price_enrichment,
 )
-from app.overture_tasks import process_overture_candidates, _is_non_first_party_url, _normalised_assessment_row
+from app.overture_tasks import (
+    process_overture_candidates, _is_non_first_party_url, _normalised_assessment_row,
+    _overture_website_urls,
+)
 from app.candidate_quality import OVERTURE_IMPORT_SERVICE_TYPES, classify_service
 from app.overture_feed import poll_latest_overture_release
 from app.identity_review_auth import require_identity_reviewer
@@ -150,14 +153,29 @@ def queue_overture_processing(reviewer: str = Depends(require_identity_reviewer)
                 "message": "The full Overture enrichment run is already active."}
 
     candidates = db.query(OvertureCandidate).filter(
-        OvertureCandidate.outcome == "awaiting_enrichment",
-        OvertureCandidate.status == "awaiting_enrichment",
+        OvertureCandidate.outcome.in_(["awaiting_enrichment", "exception_review"]),
+        OvertureCandidate.status.in_(["awaiting_enrichment", "exception_review"]),
     ).order_by(OvertureCandidate.id.asc()).all()
-    candidate_ids = [candidate.id for candidate in candidates]
+    # Reassess all waiting candidates plus exceptions with at least one URL
+    # supplied by Overture. The worker verifies those URLs and retains genuine
+    # identity, source or location conflicts in the exception queue.
+    terminal_price_states = {"completed", "no_prices_found", "blocked"}
+    selected = []
+    for candidate in candidates:
+        if candidate.outcome == "awaiting_enrichment":
+            selected.append(candidate)
+            continue
+        if not _overture_website_urls(dict(candidate.raw_data or {})):
+            continue
+        price_state = dict((candidate.first_party_evidence or {}).get("pricing_enrichment") or {}).get("status")
+        if price_state in terminal_price_states:
+            continue
+        selected.append(candidate)
+    candidate_ids = [candidate.id for candidate in selected]
     if not candidate_ids:
         return {"status": "empty", "task_id": None, "run_id": None, "candidates_queued": 0,
                 "message": "No Overture candidates are waiting for enrichment."}
-    for candidate in candidates:
+    for candidate in selected:
         candidate.last_checked_at = None
     run = OvertureImportRun(
         status="queued", records_received=len(candidate_ids), records_processed=0,
@@ -174,7 +192,9 @@ def queue_overture_processing(reviewer: str = Depends(require_identity_reviewer)
         entity_id=run.id,
         action="full_overture_enrichment_run_queued",
         actor=reviewer,
-        detail={"candidate_count": len(candidate_ids), "run_type": "enrichment_retry"},
+        detail={"candidate_count": len(candidate_ids), "url_bearing_exceptions_included": sum(
+            1 for candidate in selected if candidate.outcome == "exception_review"
+        ), "run_type": "enrichment_retry"},
     ))
     db.commit()
     try:
