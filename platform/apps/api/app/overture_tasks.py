@@ -938,8 +938,19 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
         ).update({"status": OvertureCandidate.outcome, "updated_at": _now()}, synchronize_session=False)
         db.commit()
         if run:
+            run = (db.query(OvertureImportRun)
+                .filter(OvertureImportRun.id == run.id)
+                .with_for_update()
+                .populate_existing()
+                .one())
+            run_metadata = dict(((run.outcomes or {}).get("_meta") or {}))
             run.status = "processing"
             run.started_at = run.started_at or _now()
+            if enrichment_retry_run:
+                run_metadata["processing_batches_queued"] = max(
+                    0, int(run_metadata.get("processing_batches_queued") or 0) - 1,
+                )
+                run.outcomes = {**(run.outcomes or {}), "_meta": run_metadata}
             db.commit()
         if enrichment_retry_run:
             query = db.query(OvertureCandidate).filter(
@@ -1241,6 +1252,12 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                     run_id=run.id if run else None,
                 )
                 if pricing_queued and enrichment_retry_run:
+                    run = (db.query(OvertureImportRun)
+                        .filter(OvertureImportRun.id == run.id)
+                        .with_for_update()
+                        .populate_existing()
+                        .one())
+                    run_metadata = dict(((run.outcomes or {}).get("_meta") or {}))
                     run_metadata["pricing_enrichment_queued"] = int(run_metadata.get("pricing_enrichment_queued") or 0) + 1
                     run.outcomes = {**(run.outcomes or {}), "_meta": run_metadata}
             candidate.outcome = outcome
@@ -1260,9 +1277,14 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                 dispatch_queued_price_enrichment([candidate.id])
 
         if run:
+            run = (db.query(OvertureImportRun)
+                .filter(OvertureImportRun.id == run.id)
+                .with_for_update()
+                .populate_existing()
+                .one())
+            run_metadata = dict(((run.outcomes or {}).get("_meta") or {}))
             processed_total = (run.records_processed or 0) + checked
             if enrichment_retry_run:
-                db.refresh(run)
                 latest_metadata = dict(((run.outcomes or {}).get("_meta") or {}))
                 run_metadata["pricing_enrichment_queued"] = max(
                     int(run_metadata.get("pricing_enrichment_queued") or 0),
@@ -1293,7 +1315,13 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                 run_scope,
                 OvertureCandidate.outcome.in_(processable_outcomes),
                 OvertureCandidate.status == "processing").count()
-            if unclaimed or in_progress:
+            pending_batches = int(run_metadata.get("processing_batches_queued") or 0)
+            next_batch_count = 0
+            if (enrichment_retry_run and unclaimed and not in_progress and not pending_batches):
+                next_batch_count = min(8, (unclaimed + 19) // 20)
+                run_metadata["processing_batches_queued"] = next_batch_count
+                pending_batches = next_batch_count
+            if unclaimed or in_progress or pending_batches:
                 run.status = "processing"
                 run.completed_at = None
             elif enrichment_retry_run and int(run_metadata.get("pricing_enrichment_queued") or 0) > int(run_metadata.get("pricing_enrichment_terminal") or 0):
@@ -1306,12 +1334,14 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                 action="processing_batch_completed", detail={"records_processed_this_batch": checked,
                 "records_processed_total": run.records_processed, "unclaimed": unclaimed,
                 "in_progress": in_progress, "outcomes_this_batch": dict(counts),
+                "processing_batches_queued": pending_batches,
                 "pricing_enrichment_queued": run_metadata.get("pricing_enrichment_queued", 0),
                 "pricing_enrichment_terminal": run_metadata.get("pricing_enrichment_terminal", 0),
                 "boundary_errors": boundary_errors}))
             db.commit()
-            if unclaimed and not in_progress:
-                process_overture_candidates.delay(run.id, 20)
+            if next_batch_count:
+                for _ in range(next_batch_count):
+                    process_overture_candidates.delay(run.id, 20)
         elif checked and candidate_id is None:
             unprocessed = db.query(OvertureCandidate).filter(
                 OvertureCandidate.outcome == "awaiting_enrichment",

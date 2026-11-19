@@ -21,6 +21,8 @@ from app.overture_feed import poll_latest_overture_release
 from app.identity_review_auth import require_identity_reviewer
 
 router = APIRouter(prefix="/api/v1/overture", tags=["Overture discovery and approval"], dependencies=[Depends(require_identity_reviewer)])
+OVERTURE_ENRICHMENT_BATCH_SIZE = 20
+OVERTURE_ENRICHMENT_FANOUT = 8
 
 class OvertureImportPayload(BaseModel):
     records: list[dict] = Field(min_length=1, max_length=5000)
@@ -177,11 +179,16 @@ def queue_overture_processing(reviewer: str = Depends(require_identity_reviewer)
                 "message": "No Overture candidates are waiting for enrichment."}
     for candidate in selected:
         candidate.last_checked_at = None
+    initial_batches = min(
+        OVERTURE_ENRICHMENT_FANOUT,
+        max(1, (len(candidate_ids) + OVERTURE_ENRICHMENT_BATCH_SIZE - 1) // OVERTURE_ENRICHMENT_BATCH_SIZE),
+    )
     run = OvertureImportRun(
         status="queued", records_received=len(candidate_ids), records_processed=0,
         outcomes={"_meta": {"ingestion_method": "manual_enrichment_retry",
             "run_type": "enrichment_retry", "candidate_ids": candidate_ids,
             "target_count": len(candidate_ids), "requested_by": reviewer,
+            "processing_batches_queued": initial_batches,
             "pricing_enrichment_queued": 0, "pricing_enrichment_terminal": 0,
             "pricing_enrichment_outcomes": {}}},
     )
@@ -198,8 +205,11 @@ def queue_overture_processing(reviewer: str = Depends(require_identity_reviewer)
     ))
     db.commit()
     try:
-        task = process_overture_candidates.delay(run.id, 20)
-        run.celery_task_id = task.id
+        tasks = [
+            process_overture_candidates.delay(run.id, OVERTURE_ENRICHMENT_BATCH_SIZE)
+            for _ in range(initial_batches)
+        ]
+        run.celery_task_id = tasks[0].id
         db.commit()
     except Exception as exc:
         db.rollback()
@@ -210,8 +220,9 @@ def queue_overture_processing(reviewer: str = Depends(require_identity_reviewer)
             failed_run.completed_at = datetime.now(timezone.utc)
             db.commit()
         raise HTTPException(503, "Could not enqueue the Overture enrichment run.") from exc
-    return {"status": "queued", "task_id": task.id, "run_id": run.id,
+    return {"status": "queued", "task_id": run.celery_task_id, "run_id": run.id,
             "candidates_queued": len(candidate_ids),
+            "tasks_dispatched": len(tasks),
             "message": f"Queued a full enrichment run for {len(candidate_ids)} Overture candidates."}
 
 

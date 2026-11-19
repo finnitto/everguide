@@ -331,6 +331,33 @@ def test_full_enrichment_run_rechecks_url_bearing_exception_without_import_prove
     db.close(); engine.dispose()
 
 
+def test_full_enrichment_run_fans_out_initial_batches_to_worker_capacity(monkeypatch):
+    from app.models import OvertureImportRun
+    from app.routers.overture import queue_overture_processing
+
+    engine, factory = _session_factory()
+    dispatched = []
+    monkeypatch.setattr(overture_tasks.process_overture_candidates, "delay",
+        lambda *args: (dispatched.append(args) or type("Task", (), {"id": f"task-{len(dispatched)}"})()))
+    db = factory()
+    db.add_all([OvertureCandidate(
+        gers_id=f"gers-fanout-{i}", candidate_name=f"Fanout Funeral Directors {i}",
+        postcode="RM18 7QX", raw_data=_candidate_row(), outcome="awaiting_enrichment",
+        status="awaiting_enrichment",
+    ) for i in range(45)])
+    db.commit()
+
+    result = queue_overture_processing(reviewer="reviewer-test", db=db)
+
+    run = db.get(OvertureImportRun, result["run_id"])
+    assert result["candidates_queued"] == 45
+    assert result["tasks_dispatched"] == 3
+    assert result["task_id"] == "task-1"
+    assert dispatched == [(run.id, 20), (run.id, 20), (run.id, 20)]
+    assert run.outcomes["_meta"]["processing_batches_queued"] == 3
+    db.close(); engine.dispose()
+
+
 def test_publication_write_gate_blocks_even_if_assessor_returns_eligible_when_disabled(monkeypatch, tmp_path):
     engine, factory = _session_factory()
     monkeypatch.setattr(overture_tasks, "SessionLocal", factory)
