@@ -17,10 +17,12 @@ pipeline:
           id: setup_python
           run:
             shell: bash
-            script: |-
-              sudo apt-get update -qq
-              sudo apt-get install -y -qq python3.12 python3.12-venv python3-pip
-              python3.12 --version
+            script: "sudo apt-get update -qq\r
+
+              sudo apt-get install -y -qq python3.12 python3.12-venv
+              python3-pip\r
+
+              python3.12 --version"
         - name: Install API Dependencies
           id: install_api_deps
           run:
