@@ -1,0 +1,84 @@
+pipeline:
+  id: pipeline_finnitto_everguide_build_6054
+  name: pipeline_finnitto_everguide_build_6054
+  stages:
+    - name: Build and Test
+      id: build_and_test
+      runtime: cloud
+      platform:
+        os: linux
+        arch: amd64
+      clone:
+        enabled: true
+      cache:
+        enabled: true
+      steps:
+        - name: Setup Python 3_12
+          id: setup_python
+          run:
+            shell: bash
+            script: |-
+              sudo apt-get update -qq
+              sudo apt-get install -y -qq python3.12 python3.12-venv python3-pip
+              python3.12 --version
+        - name: Install API Dependencies
+          id: install_api_deps
+          run:
+            shell: bash
+            script: |-
+              cd platform/apps/api
+              python3.12 -m pip install --user -r requirements.txt
+        - name: Test API
+          id: test_api
+          run:
+            shell: bash
+            script: |-
+              export CI=true
+              export PYTHONDONTWRITEBYTECODE=1
+              export PYTHONUNBUFFERED=1
+              cd platform/apps/api
+              mkdir -p .harness/reports
+              python3.12 -m pytest tests/ --junitxml=.harness/reports/junit.xml -v
+            report:
+              type: junit
+              paths:
+                - platform/apps/api/.harness/reports/junit.xml
+        - name: Setup Node 24
+          id: setup_node
+          run:
+            shell: bash
+            script: |-
+              curl -fsSL https://nodejs.org/dist/v24.1.0/node-v24.1.0-linux-x64.tar.xz -o /tmp/node.tar.xz
+              sudo rm -rf /opt/node
+              sudo mkdir -p /opt/node
+              sudo tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1
+              export PATH="/opt/node/bin:$PATH"
+              node --version
+              npm --version
+        - name: Install Web Dependencies
+          id: install_web_deps
+          run:
+            shell: bash
+            script: |-
+              export PATH="/opt/node/bin:$PATH"
+              cd platform/apps/web
+              npm install
+        - name: Lint Web
+          id: lint_web
+          run:
+            shell: bash
+            script: |-
+              export PATH="/opt/node/bin:$PATH"
+              cd platform/apps/web
+              npm run lint
+        - name: Build Web
+          id: build_web
+          run:
+            shell: bash
+            script: |-
+              export PATH="/opt/node/bin:$PATH"
+              export NEXT_TELEMETRY_DISABLED=1
+              cd platform/apps/web
+              npm run build
+  tags:
+    onboarding: "true"
