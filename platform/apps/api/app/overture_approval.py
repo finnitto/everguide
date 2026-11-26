@@ -1,10 +1,10 @@
 """Overture-first approval policy for Everguide funeral-director locations.
 
-Overture is the authoritative discovery and branch-location source. Companies
-House and provider websites are corroborating sources: missing corroboration
-does not block an otherwise valid Overture record. Only explicit, material
-conflicts are routed to exception review. This module is deterministic and
-side-effect free; publication remains guarded by the worker write gate.
+Overture is the sole discovery and branch-location source for funeral-sector
+records. Companies House data is not used in this assessment. Overture-supplied
+provider websites are checked for obvious identity conflicts and used for
+enrichment; material conflicts are routed to exception review. This module is
+deterministic and side-effect free; publication remains separately gated.
 """
 from __future__ import annotations
 
@@ -13,12 +13,13 @@ from urllib.parse import urlsplit
 
 from app.candidate_quality import (
     THURROCK_OUTWARD_CODES,
+    OVERTURE_IMPORT_SERVICE_TYPES,
     classify_service,
     is_valid_uk_postcode,
     normalise_postcode,
 )
 
-RULESET_VERSION = "overture-first-approval-v2.1"
+RULESET_VERSION = "overture-first-approval-v2.2"
 KNOWN_LICENCES = {"CDLA-Permissive-2.0", "Apache-2.0", "CC0-1.0", "CC0"}
 
 
@@ -61,7 +62,7 @@ def assess_overture_candidate(
         website="",
         description=row.get("description", ""),
     )
-    if service_class != "funeral_director_candidate":
+    if service_class not in OVERTURE_IMPORT_SERVICE_TYPES:
         return _result(row, "excluded", [f"not_funeral_director:{service_class}"], service_class, [], None)
 
     postcode = str(row.get("postcode") or "").strip().upper()
@@ -108,11 +109,11 @@ def assess_overture_candidate(
         reasons.append("conflicting_identity_or_branch_evidence")
     for code in conflict_codes:
         if code in {
+            "first_party_identity_mismatch",
+            "first_party_identity_unverified",
             "official_site_branch_closed",
             "official_site_branch_postcode_mismatch",
             "official_site_different_operator_at_same_address",
-            "verified_companies_house_entity_dissolved",
-            "verified_companies_house_identity_conflict",
         }:
             reasons.append(str(code))
 
@@ -130,10 +131,10 @@ def assess_overture_candidate(
         "point_outside_official_england_boundary",
         "source_level_licence_missing_or_unrecognised",
         "conflicting_identity_or_branch_evidence",
+        "first_party_identity_mismatch",
+        "first_party_identity_unverified",
         "official_site_branch_closed",
         "official_site_different_operator_at_same_address",
-        "verified_companies_house_entity_dissolved",
-        "verified_companies_house_identity_conflict",
     )):
         outcome = "exception_review"
     else:

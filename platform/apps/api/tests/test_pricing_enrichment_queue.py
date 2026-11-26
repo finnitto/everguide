@@ -1,14 +1,22 @@
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base
-from app.models import AuditEvent, OvertureCandidate, Provider
+from app.models import AuditEvent, OvertureCandidate, OvertureImportRun, Provider
 from app.pricing_enrichment import (
+    _set_candidate_pricing_status,
     queue_overture_candidate_for_pricing,
     queue_approved_overture_candidates_for_pricing,
 )
 from app.routers.providers import set_provider_status
+
+
+@pytest.fixture(autouse=True)
+def disable_external_task_dispatch(monkeypatch):
+    import app.routers.providers as provider_routes
+    monkeypatch.setattr(provider_routes, "dispatch_queued_price_enrichment", lambda *args, **kwargs: 0)
 
 
 def _factory():
@@ -27,7 +35,11 @@ def _candidate(gers_id, provider_id=None):
         candidate_name=f"{gers_id} Funeral Directors",
         postcode="RM17 5LS",
         provider_id=provider_id,
-        first_party_evidence={"verification_status": "website_missing"},
+        first_party_evidence={
+            "website_url": f"https://{gers_id}.example",
+            "verification_status": "reachable",
+            "robots_allowed": True,
+        },
     )
 
 
@@ -48,7 +60,7 @@ def test_queue_marker_is_idempotent_and_preserves_existing_evidence():
 
     assert first is True
     assert second is False
-    assert candidate.first_party_evidence["verification_status"] == "website_missing"
+    assert candidate.first_party_evidence["verification_status"] == "reachable"
     marker = candidate.first_party_evidence["pricing_enrichment"]
     assert marker["status"] == "queued"
     assert marker["trigger"] == "automatic_approval"
@@ -91,7 +103,7 @@ def test_manual_provider_approval_queues_every_linked_overture_candidate():
     engine.dispose()
 
 
-def test_approved_candidate_backfill_queues_only_approved_funeral_directors():
+def test_approved_candidate_backfill_queues_supported_overture_services():
     engine, factory = _factory()
     db = factory()
     approved = Provider(trading_name="Approved FD", provider_type="funeral_director", status="approved")
@@ -106,6 +118,7 @@ def test_approved_candidate_backfill_queues_only_approved_funeral_directors():
         _candidate("gers-backfill-003", draft.id),
         _candidate("gers-backfill-004", other.id),
     ]
+    candidates[2].first_party_evidence["pricing_enrichment"] = {"status": "awaiting_permission"}
     db.add_all(candidates)
     db.commit()
 
@@ -114,15 +127,42 @@ def test_approved_candidate_backfill_queues_only_approved_funeral_directors():
     )
     db.commit()
 
-    assert result == {"matched_candidates": 2, "queued": 2, "already_marked": 0, "queued_candidate_ids": [candidates[0].id, candidates[1].id]}
+    assert result == {"matched_candidates": 4, "queued": 4, "already_marked": 0, "queued_candidate_ids": [candidates[0].id, candidates[1].id, candidates[2].id, candidates[3].id]}
     assert candidates[0].first_party_evidence["pricing_enrichment"]["status"] == "queued"
     assert candidates[1].first_party_evidence["pricing_enrichment"]["status"] == "queued"
-    assert "pricing_enrichment" not in candidates[2].first_party_evidence
-    assert "pricing_enrichment" not in candidates[3].first_party_evidence
+    assert candidates[2].first_party_evidence["pricing_enrichment"]["status"] == "queued"
+    assert candidates[3].first_party_evidence["pricing_enrichment"]["status"] == "queued"
 
     from app.routers.overture import list_pricing_enrichment_queue
     queue = list_pricing_enrichment_queue(status="queued", limit=100, offset=0, db=db)
-    assert queue["count"] == 2
-    assert {item["provider_status"] for item in queue["items"]} == {"approved", "published"}
+    assert queue["count"] == 4
+    assert {item["provider_status"] for item in queue["items"]} == {"approved", "published", "draft"}
     db.close()
     engine.dispose()
+
+
+def test_price_terminal_status_updates_full_overture_run_progress():
+    engine, factory = _factory()
+    db = factory()
+    provider = Provider(trading_name="Run Provider", provider_type="funeral_director", status="draft")
+    db.add(provider); db.flush()
+    candidate = _candidate("gers-run-progress", provider.id)
+    candidate.first_party_evidence["pricing_enrichment"] = {
+        "status": "in_progress", "overture_run_id": 41,
+    }
+    db.add(candidate)
+    run = OvertureImportRun(id=41, status="price_enrichment", records_received=1,
+        records_processed=1, outcomes={"_meta": {"run_type": "enrichment_retry",
+            "pricing_enrichment_queued": 1, "pricing_enrichment_terminal": 0,
+            "pricing_enrichment_outcomes": {}}})
+    db.add(run); db.commit()
+
+    _set_candidate_pricing_status(db, candidate, "completed", extra={"prices_extracted": 2})
+    db.commit()
+
+    assert run.status == "completed"
+    assert run.completed_at is not None
+    assert run.outcomes["_meta"]["pricing_enrichment_terminal"] == 1
+    assert run.outcomes["_meta"]["pricing_enrichment_outcomes"] == {"completed": 1}
+    assert candidate.first_party_evidence["pricing_enrichment"]["run_terminal_status"] == "completed"
+    db.close(); engine.dispose()

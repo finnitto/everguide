@@ -29,7 +29,7 @@ Current engineering state, validation evidence and next operational gates are su
 - [x] Overture-first England discovery, candidate provenance and identity review.
 - [x] Provider/branch approval safeguards and source-permission evidence.
 - [x] Stage 3 pricing, membership and regulatory evidence data foundation.
-- [x] AI-assisted price extraction, reviewer approval and distinct public disclosure (CI validated; live staging trial remains open).
+- [x] Deterministic price extraction, reviewer approval and distinct public disclosure (CI validated; live staging trial remains open).
 - [ ] Automated membership/regulatory source retrieval, scheduled revalidation and production operations remain future milestones.
 
 ## v2.6.1 – Historical first-party approval pathway (superseded as initial discovery model)
@@ -75,20 +75,20 @@ Current engineering state, validation evidence and next operational gates are su
 
 - [x] Queue price enrichment after automatic Overture publication.
 - [x] Queue price enrichment after manual provider approval.
-- [x] Add an idempotent backfill for already-approved/published Overture-linked funeral-director candidates.
-- [x] Add a bounded AI extraction worker using verified provider-owned websites, same-host HTTPS pages and robots checks.
+- [x] Add an idempotent backfill for linked providers from supported Overture funeral-sector service classes.
+- [x] Add a bounded deterministic extraction worker for verified provider-owned HTML and text-based PDF pages, with same-host HTTPS and robots checks.
 - [x] Require reviewer-approved `SourcePermission` before price-page retrieval; release candidates waiting for permission when the matching source is approved.
 - [x] Restrict extraction to explicit GBP amounts and require a matching source-page quotation; never infer or invent a price.
-- [x] Store extracted amounts as pending `PricingEvidence` with source URL, quote, SHA-256, model and Overture candidate provenance.
-- [x] Distinguish `AI-extracted · Not verified` from `Verified by Everguide reviewer` in the API and public search display.
+- [x] Store extracted amounts as pending `PricingEvidence` with source URL, quote, SHA-256, parser version and Overture candidate provenance.
+- [x] Distinguish `Rule-extracted · Not verified` from `Verified by Everguide reviewer` in the API and public search display.
 - [x] Add reviewer approve/reject UI for price evidence and source permission approval.
 - [x] Pass CI for extraction, provenance, source-permission and public-display tests plus isolated Docker validation (run #304).
-- [ ] Run a controlled staging trial with a small known candidate set and privately configured API key.
-- [ ] Measure extraction precision, review corrections, page coverage and API cost; agree thresholds before expansion.
+- [ ] Run a controlled staging trial with a small known candidate set.
+- [ ] Measure extraction precision, review corrections and page coverage; agree thresholds before expansion.
 - [ ] Add reviewer requeue/re-extraction controls, stale-price handling, history/change detection and scheduled revalidation.
-- [ ] Complete source-use/legal review, retention policy and production monitoring before enabling AI price enrichment beyond the pilot.
+- [ ] Complete source-use/legal review, retention policy and production monitoring before enabling price enrichment beyond the pilot.
 
-Runtime defaults remain `PRICE_ENRICHMENT_ENABLED=false` and `OPENAI_API_KEY` unset. Provider approval does not verify price evidence; no AI-extracted price may be marked verified without reviewer approval. See [Development handover](DEVELOPMENT-HANDOVER.md) for controls, local state and staged acceptance criteria.
+Local runtime has `PRICE_ENRICHMENT_ENABLED=true`; provider publication remains a separate control. Price extraction uses deterministic rules and requires no AI provider key. Provider approval does not verify price evidence; rule-extracted prices remain unverified until reviewer approval. See [Development handover](DEVELOPMENT-HANDOVER.md) for controls, local state and staged acceptance criteria.
 
 ## Five-stage implementation acceptance
 

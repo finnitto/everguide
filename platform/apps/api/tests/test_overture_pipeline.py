@@ -257,7 +257,7 @@ def test_manual_recheck_creates_one_tracked_run_for_waiting_and_url_bearing_exce
     assert result["candidates_queued"] == 4
     assert dispatched == [(result["run_id"], 20)]
     assert all(candidate.last_checked_at is None for candidate in candidates[:4])
-    assert no_url_exception.last_checked_at == checked_at
+    assert no_url_exception.last_checked_at.replace(tzinfo=timezone.utc) == checked_at
     run = db.query(OvertureImportRun).filter_by(id=result["run_id"]).one()
     assert run.records_received == 4
     assert run.outcomes["_meta"]["candidate_ids"] == [candidate.id for candidate in candidates[:4]]
@@ -395,7 +395,10 @@ def test_publication_write_gate_blocks_even_if_assessor_returns_eligible_when_di
     candidate = db.get(OvertureCandidate, candidate_id)
     assert candidate.outcome == "enrichment_approved"
     assert candidate.assessment["outcome"] == "enrichment_approved"
-    assert "automatic_approval_disabled" in candidate.assessment["reasons"]
+    assert "automatic_approval_disabled" not in candidate.assessment["reasons"]
+    assert candidate.assessment["publication_gate"] == {
+        "status": "held", "reason": "automatic_publication_disabled",
+    }
     assert candidate.provider_id is not None and candidate.branch_id is not None
     provider = db.get(Provider, candidate.provider_id)
     branch = db.get(Branch, candidate.branch_id)

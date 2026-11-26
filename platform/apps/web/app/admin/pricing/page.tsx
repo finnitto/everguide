@@ -33,6 +33,8 @@ type PriceEvidence = {
   branch_id?: number | null;
   service_category: string;
   service_name: string;
+  option_group_id?: string | null;
+  option_group_name?: string | null;
   fee_type: string;
   amount: string;
   amount_upper?: string | null;
@@ -49,7 +51,6 @@ type PriceEvidence = {
       extraction_method?: string;
       verification_status?: string;
       model?: string;
-      response_id?: string;
       extraction_confidence?: number;
       overture_candidate_id?: number;
       gers_id?: string;
@@ -131,7 +132,7 @@ export default function PricingReviewPage() {
           review_status: decision,
           review_notes: decision === "approved"
             ? "Reviewed by an Everguide reviewer against the cited provider source."
-            : "AI-extracted price was not verified against the cited provider source.",
+            : "Rule-extracted price was not verified against the cited provider source.",
         }),
       });
       const data = await response.json();
@@ -156,7 +157,7 @@ export default function PricingReviewPage() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Price enrichment is disabled or unavailable.");
       setNotice(data.tasks_dispatched
-        ? `Dispatched ${data.tasks_dispatched} AI price-enrichment tasks. Refresh this page to review results as they complete.`
+        ? `Dispatched ${data.tasks_dispatched} price-enrichment tasks. Refresh this page to review results as they complete.`
         : "There are no queued candidates ready for price enrichment.");
       await load();
     } catch (err) {
@@ -218,7 +219,7 @@ export default function PricingReviewPage() {
           <div>
             <p className="eyebrow">EVERGUIDE ADMIN</p>
             <h1>Price verification</h1>
-            <p>Sign in with your reviewer bearer token to inspect AI-extracted prices and decide whether each amount is supported by its cited provider source.</p>
+            <p>Sign in with your reviewer bearer token to inspect automatically extracted prices and decide whether each amount is supported by its cited provider source.</p>
           </div>
           <Link className="secondary-button" href="/admin">Back to admin</Link>
         </header>
@@ -245,7 +246,7 @@ export default function PricingReviewPage() {
         <div>
           <p className="eyebrow">EVERGUIDE ADMIN · PRICE EVIDENCE</p>
           <h1>Verify extracted prices</h1>
-          <p>AI extraction is a research aid, not verification. Open the provider source and confirm the service, amount, price basis and any stated inclusions or exclusions before approving.</p>
+          <p>Rule extraction is a research aid, not verification. Open the provider source and confirm the service, amount, price basis and any stated inclusions or exclusions before approving.</p>
         </div>
         <div className="provider-actions">
           <button className="primary-button" onClick={() => void runNextBatch()} disabled={runningBatch}>
@@ -262,7 +263,7 @@ export default function PricingReviewPage() {
         <div className="card-heading">
           <div>
             <h2>Provider website source approvals</h2>
-            <p>AI price extraction runs only after an Overture-linked provider website has been technically screened and a reviewer has approved its use for factual price extraction. robots.txt is a crawl instruction, not a licence or permission.</p>
+            <p>Rule-based price extraction runs only after an Overture-linked provider website has been technically screened. Overture-supplied first-party URLs are permitted automatically unless explicitly blocked. robots.txt is a crawl instruction, not a licence or permission.</p>
           </div>
           <span className="count-chip">{waitingCandidates.length} waiting for source approval</span>
         </div>
@@ -321,13 +322,13 @@ export default function PricingReviewPage() {
       <section className="admin-card">
         <div className="card-heading">
           <div>
-            <h2>Pending AI-extracted prices</h2>
-            <p>These records are visible to users with an explicit “AI-extracted · Not verified” label until you approve them.</p>
+            <h2>Pending extracted prices</h2>
+            <p>These records are visible to users with an explicit “Rule-extracted · Not verified” label until you approve them.</p>
           </div>
           <span className="count-chip">{items.length} awaiting review</span>
         </div>
         {items.length === 0 ? (
-          <div className="empty-state"><strong>No pending prices</strong><p>AI-extracted prices will appear here when approved candidates complete enrichment.</p></div>
+          <div className="empty-state"><strong>No pending prices</strong><p>Extracted prices will appear here when eligible candidates complete enrichment.</p></div>
         ) : (
           <div className="provider-list">
             {items.map((row) => {
@@ -336,6 +337,7 @@ export default function PricingReviewPage() {
                 <article className="provider-row price-review-row" key={row.id}>
                   <div className="provider-info">
                     <strong>{row.service_name}</strong>
+                    {row.option_group_name && <span>Option: {row.option_group_name}</span>}
                     <span>{formatAmount(row)} · {row.service_category.replace(/_/g, " ")} · {row.fee_type.replace(/_/g, " ")}</span>
                     <small>Provider #{row.provider_id} · Branch {row.branch_id ?? "provider-wide"} · Overture candidate #{provenance.overture_candidate_id ?? "not linked"} · GERS {provenance.gers_id ?? "not recorded"}</small>
                     <small>AI model {provenance.model || "not recorded"} · Confidence {typeof provenance.extraction_confidence === "number" ? `${Math.round(provenance.extraction_confidence * 100)}%` : "not supplied"} · Retrieved {new Date(row.source_retrieved_at).toLocaleString("en-GB")}</small>
@@ -348,7 +350,7 @@ export default function PricingReviewPage() {
                     </div>
                   </div>
                   <div className="provider-actions price-review-actions">
-                    <span className="status-pill status-needs_review">AI-extracted · Not verified</span>
+                    <span className="status-pill status-needs_review">Rule-extracted · Not verified</span>
                     <button className="primary-button" disabled={busyId === row.id} onClick={() => void decide(row, "approved")}>
                       {busyId === row.id ? "Saving…" : "Approve as verified"}
                     </button>

@@ -31,42 +31,31 @@ def test_known_third_party_leads_are_not_first_party_websites():
         assert tasks._is_non_first_party_url(url), url
 
 
-def test_directory_url_is_retained_as_lead_but_search_can_find_matching_official_site(monkeypatch):
-    monkeypatch.setattr(tasks.settings, "brave_search_api_key", "test-key")
-    monkeypatch.setattr(tasks, "search_web", lambda *a, **k: [
-        {"url": "https://www.examplefunerals.co.uk/", "title": "Example Funeral Directors"},
-        {"url": "https://www.yell.com/biz/example", "title": "Example"},
-    ])
+def test_directory_url_is_not_replaced_by_external_search(monkeypatch):
     calls = []
-
-    def verify(url):
-        calls.append(url)
-        return {"status": "reachable", "final_url": url, "robots_allowed": True,
-                "extracted_data": _extracted()}
-
-    monkeypatch.setattr(tasks, "verify_candidate", verify)
-    raw = {"name": "Example Funeral Directors", "postcode": "RM17 5LS", "phone": "01375 555000"}
-    url, result = tasks._verify_overture_website(raw,
-        "https://tyldesley.cylex-uk.co.uk/company/example.html")
-    assert url == "https://www.examplefunerals.co.uk/"
-    assert result["discovery_source"] == "brave_search"
-    assert calls == ["https://www.examplefunerals.co.uk/"]
+    monkeypatch.setattr(tasks, "verify_candidate", lambda url: calls.append(url))
+    raw = {"name": "Example Funeral Directors", "postcode": "RM17 5LS",
+           "website": "https://tyldesley.cylex-uk.co.uk/company/example.html"}
+    url, result, extracted, matched, attempts = tasks._verify_overture_supplied_sites(raw)
+    assert url == "https://tyldesley.cylex-uk.co.uk/company/example.html"
+    assert result["status"] == "website_not_verified"
+    assert extracted is None and matched is False
+    assert attempts == [] and calls == []
 
 
-def test_mismatched_search_result_is_not_promoted_to_identity_conflict(monkeypatch):
-    monkeypatch.setattr(tasks.settings, "brave_search_api_key", "test-key")
-    monkeypatch.setattr(tasks, "search_web", lambda *a, **k: [
-        {"url": "https://www.unrelatedfunerals.co.uk/", "title": "Unrelated"},
-    ])
+def test_mismatched_overture_url_is_retained_as_failed_identity_attempt(monkeypatch):
     monkeypatch.setattr(tasks, "verify_candidate", lambda url: {
         "status": "reachable", "final_url": url, "robots_allowed": True,
         "extracted_data": _extracted(name="Unrelated Funeral Directors", postcode="AB1 2CD", telephone="01234 567890"),
     })
-    raw = {"name": "Example Funeral Directors", "postcode": "RM17 5LS", "phone": "01375 555000"}
-    url, result = tasks._verify_overture_website(raw, "https://www.yell.com/biz/example")
-    assert url is None
-    assert result["status"] == "website_missing"
-    assert result["discovery_source"] == "third_party_discovery_lead"
+    raw = {"name": "Example Funeral Directors", "postcode": "RM17 5LS",
+           "website": "https://unrelatedfunerals.co.uk/"}
+    url, result, extracted, matched, attempts = tasks._verify_overture_supplied_sites(raw)
+    assert url == "https://unrelatedfunerals.co.uk/"
+    assert result["status"] == "reachable"
+    assert extracted["name"] == "Unrelated Funeral Directors"
+    assert matched is False
+    assert attempts[0]["identity_match"] is False
 
 
 def test_boundary_cache_persists_across_task_calls_and_records_provenance(monkeypatch, tmp_path):
@@ -255,33 +244,16 @@ def test_social_news_jobs_and_public_register_urls_are_not_first_party():
         assert tasks._is_non_first_party_url(url), url
 
 
-def test_search_mismatches_are_retained_as_attempts_not_promoted(monkeypatch):
-    monkeypatch.setattr(tasks.settings, "brave_search_api_key", "test-key")
-    monkeypatch.setattr(tasks, "search_web", lambda *a, **k: [
-        {"url": "https://www.unrelatedfunerals.co.uk/", "title": "Unrelated"},
-    ])
-    monkeypatch.setattr(tasks, "verify_candidate", lambda url: {
-        "status": "reachable", "final_url": url, "robots_allowed": True,
-        "page_title": "Unrelated Funeral Directors", "content_sha256": "abc123",
-        "extracted_data": _extracted(name="Unrelated Funeral Directors", postcode="AB1 2CD", telephone="01234 567890"),
-    })
-    raw = {"name": "Example Funeral Directors", "postcode": "RM17 5LS", "phone": "01375 555000"}
-    url, result = tasks._verify_overture_website(raw, "https://www.yell.com/biz/example")
-    assert url is None
-    assert result["status"] == "website_missing"
-    assert result["attempts"][0]["discovery_source"] == "brave_search"
-    assert result["attempts"][0]["extracted_identity"]["name"] == "Unrelated Funeral Directors"
-    assert result["attempts"][0]["content_sha256"] == "abc123"
-
-
 def test_overture_mismatch_preserves_original_url_and_extracted_identity(monkeypatch):
-    monkeypatch.setattr(tasks.settings, "brave_search_api_key", "")
     monkeypatch.setattr(tasks, "verify_candidate", lambda url: {
         "status": "reachable", "final_url": url, "robots_allowed": True,
         "extracted_data": _extracted(name="Different Funeral Directors", postcode="AB1 2CD", telephone="01234 567890"),
     })
-    raw = {"name": "Example Funeral Directors", "postcode": "RM17 5LS", "phone": "01375 555000"}
-    url, result = tasks._verify_overture_website(raw, "https://www.examplefunerals.co.uk/")
+    raw = {"name": "Example Funeral Directors", "postcode": "RM17 5LS", "phone": "01375 555000",
+           "website": "https://www.examplefunerals.co.uk/"}
+    url, result, extracted, matched, attempts = tasks._verify_overture_supplied_sites(raw)
     assert url == "https://www.examplefunerals.co.uk/"
-    assert result["discovery_source"] == "identity_or_branch_mismatch"
-    assert result["attempts"][0]["extracted_identity"]["name"] == "Different Funeral Directors"
+    assert result["status"] == "reachable"
+    assert extracted["name"] == "Different Funeral Directors"
+    assert matched is False
+    assert attempts[0]["identity_match"] is False

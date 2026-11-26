@@ -9,6 +9,8 @@ type Price = {
   id: number;
   service_category: string;
   service_name: string;
+  option_group_id?: string | null;
+  option_group_name?: string | null;
   fee_type: string;
   amount: string;
   amount_upper?: string | null;
@@ -47,6 +49,18 @@ function displayPrice(price: Price) {
     return `${lower}–${formatGBP(price.amount_upper, price.currency)}`;
   }
   return lower;
+}
+
+function groupPrices(prices: Price[]) {
+  const groups = new Map<string, { label: string; prices: Price[] }>();
+  for (const price of prices) {
+    const key = price.option_group_id || `price:${price.id}`;
+    const label = price.option_group_name || "Other price information";
+    const group = groups.get(key) || { label, prices: [] };
+    group.prices.push(price);
+    groups.set(key, group);
+  }
+  return [...groups.entries()].map(([key, group]) => ({ key, ...group }));
 }
 
 export default function SearchPage() {
@@ -142,12 +156,18 @@ export default function SearchPage() {
             {result.prices && result.prices.length > 0 && (
               <section className="public-prices" aria-label="Published price information">
                 <h3>Price information</h3>
-                {result.prices.map((price) => (
+                {groupPrices(result.prices).map((group) => (
+                  <div className="public-price-group" key={group.key}>
+                    {group.prices[0]?.option_group_id && <h4>{group.label}</h4>}
+                    {group.prices.map((price) => (
                   <div className="public-price" key={price.id}>
                     <div className="public-price-main">
                       <strong>{price.service_name}</strong>
                       <span className="public-price-amount">{displayPrice(price)}</span>
                     </div>
+                        <span className="price-detail">
+                          {price.fee_type === "package" ? "Package price" : price.fee_type.replace(/_/g, " ")}
+                        </span>
                     <span className={`price-verification ${price.verification_status === "verified" ? "price-verified" : "price-unverified"}`}>
                       {price.verification_label}
                     </span>
@@ -158,11 +178,14 @@ export default function SearchPage() {
                     {price.includes.length > 0 && <p className="price-detail">Includes: {price.includes.join(", ")}</p>}
                     {price.excludes.length > 0 && <p className="price-detail">Excludes: {price.excludes.join(", ")}</p>}
                   </div>
+                    ))}
+                  </div>
                 ))}
                 <p className="price-disclosure">
-                  AI-extracted prices have not been checked by an Everguide reviewer. They are shown for guidance only;
+                  Automatically extracted prices have not been checked by an Everguide reviewer. They are shown for guidance only;
                   confirm the latest price, what is included and any additional fees directly with the provider.
-                  Prices labelled verified have been reviewed by Everguide against their cited source.
+                  Prices labelled verified have been reviewed by Everguide against their cited source. Components are
+                  shown as listed by the provider and are not added to package prices.
                 </p>
               </section>
             )}

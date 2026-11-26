@@ -26,7 +26,7 @@ footer{display:flex;align-items:center;justify-content:space-between;padding:30p
 .provider-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}.provider-actions .secondary-button{font-size:12px;padding:7px 10px}
 .admin-file-input{display:block;width:100%;margin-top:12px;padding:10px;border:1px solid #dfe4dd;border-radius:6px;background:#fff;color:#526158;font-size:12px}
 
-/* Public price transparency: AI extraction is visually distinct from reviewer verification. */
+/* Public price transparency: rule extraction is visually distinct from reviewer verification. */
 .public-result{align-items:flex-start;gap:26px}
 .public-provider{flex:1;min-width:0}
 .public-prices{flex:1;max-width:460px;background:#fff;border:1px solid #e5e9e3;border-radius:8px;padding:16px 18px}

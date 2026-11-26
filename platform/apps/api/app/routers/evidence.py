@@ -73,6 +73,8 @@ class PricingEvidenceIn(EvidenceCommonIn):
     effective_to: datetime | None = None
     service_category: str = Field(min_length=2, max_length=60)
     service_name: str = Field(min_length=2, max_length=240)
+    option_group_id: str | None = Field(default=None, max_length=64)
+    option_group_name: str | None = Field(default=None, max_length=240)
     fee_type: str = Field(min_length=2, max_length=60)
     amount: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
     amount_upper: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
@@ -210,9 +212,9 @@ def _record_dict(row) -> dict:
         elif row.review_status == "rejected":
             verification_status = "rejected"
             verification_label = "Rejected by reviewer"
-        elif extraction_method == "ai_extracted":
+        elif extraction_method == "deterministic_rules":
             verification_status = "unverified"
-            verification_label = "AI-extracted · Not verified"
+            verification_label = "Rule-extracted · Not verified"
         else:
             verification_status = "unverified"
             verification_label = "Not verified"
@@ -306,7 +308,7 @@ def _decide_evidence(db: Session, model, evidence_id: int, payload: EvidenceDeci
         if isinstance(row, PricingEvidence):
             evidence_payload = dict(row.evidence_payload or {})
             provenance = evidence_payload.get("provenance") if isinstance(evidence_payload.get("provenance"), dict) else {}
-            if provenance.get("extraction_method") == "ai_extracted":
+            if provenance.get("extraction_method") == "deterministic_rules":
                 permission = db.get(SourcePermission, row.source_permission_id) if row.source_permission_id else None
                 source_host = (urlsplit(row.source_url).hostname or "").lower().removeprefix("www.")
                 permitted_domain = (permission.source_domain or "").lower().removeprefix("www.") if permission else ""

@@ -74,14 +74,16 @@ def _as_sources(value):
     return value if isinstance(value, list) else []
 
 
-def _enforce_publication_safety_gate(assessment: dict, *, auto_approval_enabled: bool) -> str:
-    """Defence-in-depth guard immediately before any provider/branch writes."""
+def _enforce_publication_safety_gate(
+    assessment: dict,
+    *,
+    auto_approval_enabled: bool,
+    hold_reason: str = "automatic_publication_disabled",
+) -> str:
+    """Keep a publication hold out of enrichment review reasons."""
     outcome = assessment.get("outcome")
     if outcome == "auto_approved_eligible" and not auto_approval_enabled:
-        reasons = [item for item in str(assessment.get("reasons") or "").split(";") if item]
-        if "automatic_approval_disabled" not in reasons:
-            reasons.append("automatic_approval_disabled")
-        assessment["reasons"] = ";".join(reasons)
+        assessment["publication_gate"] = {"status": "held", "reason": hold_reason}
         assessment["outcome"] = "awaiting_enrichment"
         return "awaiting_enrichment"
     return outcome
@@ -123,8 +125,14 @@ def _point_on_ring(lon, lat, ring):
     return any(_point_on_segment(lon, lat, ring[index], ring[index - 1]) for index in range(len(ring)))
 
 
-def _point_in_polygon(lon, lat, polygon):
-    if not polygon or not _point_in_ring(lon, lat, polygon[0]):
+def _point_in_polygon(lon, lat, polygon, bounds=None):
+    if not polygon:
+        return False
+    if bounds is not None:
+        min_lon, min_lat, max_lon, max_lat = bounds
+        if lon < min_lon or lon > max_lon or lat < min_lat or lat > max_lat:
+            return False
+    if not _point_in_ring(lon, lat, polygon[0]):
         return False
     for hole in polygon[1:]:
         # A hole's interior is excluded, but its boundary belongs to the polygon.
@@ -226,16 +234,30 @@ def _write_boundary_cache(scope: str, geometry: dict) -> None:
             pass
 
 
+def _index_boundary_geometry(geometry: dict) -> dict:
+    """Cache each exterior ring's bounds for fast point-in-polygon rejection."""
+    coords = geometry.get("coordinates") or []
+    polygons = [coords] if geometry.get("type") == "Polygon" else coords
+    bounds = []
+    for polygon in polygons:
+        ring = polygon[0] if polygon else []
+        longitudes = [float(point[0]) for point in ring]
+        latitudes = [float(point[1]) for point in ring]
+        bounds.append((min(longitudes), min(latitudes), max(longitudes), max(latitudes)))
+    geometry["_polygon_bounds"] = bounds
+    return geometry
+
+
 def _get_ons_boundary(scope: str):
     scope = "england" if scope == "england" else "thurrock"
     cached = _read_boundary_cache(scope)
     if cached is not None:
-        return cached
+        return _index_boundary_geometry(cached)
     fetcher = _fetch_ons_england_geometry if scope == "england" else _fetch_ons_geometry
     geometry = fetcher()
     _validate_boundary_geometry(geometry, minimum_polygons=100 if scope == "england" else 1)
     _write_boundary_cache(scope, geometry)
-    return geometry
+    return _index_boundary_geometry(geometry)
 
 
 def _fetch_ons_json(url: str, *, timeout: int, attempts: int = 3) -> dict:
@@ -367,7 +389,7 @@ def _fetch_ons_england_geometry():
               "authority_codes": authority_codes, "authority_names": authority_names,
               "ons_feature_count": expected_count}
     _validate_boundary_geometry(result, minimum_polygons=100)
-    return result
+    return _index_boundary_geometry(result)
 
 
 def _authority_codes_for_point(geometry, lon, lat):
@@ -378,8 +400,10 @@ def _authority_codes_for_point(geometry, lon, lat):
     polygons = [coords] if geometry["type"] == "Polygon" else coords
     codes = geometry.get("authority_codes") or []
     matches = []
+    bounds = geometry.get("_polygon_bounds") or []
     for index, polygon in enumerate(polygons):
-        if _point_in_polygon(lon, lat, polygon):
+        polygon_bounds = bounds[index] if index < len(bounds) else None
+        if _point_in_polygon(lon, lat, polygon, polygon_bounds):
             code = codes[index] if index < len(codes) else None
             if code and code not in matches:
                 matches.append(code)
@@ -396,7 +420,9 @@ def _inside_boundary(geometry, lon, lat):
         return None
     kind, coords = geometry["type"], geometry["coordinates"]
     polygons = [coords] if kind == "Polygon" else coords
-    return any(_point_in_polygon(lon, lat, polygon) for polygon in polygons)
+    bounds = geometry.get("_polygon_bounds") or []
+    return any(_point_in_polygon(lon, lat, polygon, bounds[index] if index < len(bounds) else None)
+               for index, polygon in enumerate(polygons))
 
 
 def _https_website(value):
@@ -664,13 +690,17 @@ def _verify_overture_supplied_sites(raw):
             "status": (result or {}).get("status"),
             "robots_allowed": (result or {}).get("robots_allowed"),
             "identity_match": bool(matches),
+            "final_url": (result or {}).get("final_url"),
+            "http_status": (result or {}).get("http_status"),
+            "redirect_count": (result or {}).get("redirect_count", 0),
+            "detail": str((result or {}).get("detail") or "")[:400],
         }
         attempts.append(attempt)
         if (result or {}).get("status") == "reachable" and (result or {}).get("robots_allowed") is True and matches:
             result["overture_url_attempts"] = attempts
-            return url, result, extracted, True, attempts
+            return (result.get("final_url") or url), result, extracted, True, attempts
         if fallback is None and (result or {}).get("status") == "reachable":
-            fallback = (url, result, extracted)
+            fallback = (result.get("final_url") or url, result, extracted)
     if fallback:
         url, result, extracted = fallback
         result["overture_url_attempts"] = attempts
@@ -1090,7 +1120,9 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                     # draft enrichment; it cannot independently unlock public
                     # publication. Preserve the Overture-only publication path
                     # when there is no site to contradict the source record.
-                    auto_approval_enabled=automatic_publication_allowed,
+                    # Enrichment eligibility and public publication are separate
+                    # decisions. Publication remains guarded immediately below.
+                    auto_approval_enabled=True,
                     minimum_confidence=settings.auto_approval_min_confidence,
                 )
                 outcome = assessment["outcome"]
@@ -1101,8 +1133,8 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                         "approved_at": manual_enrichment_approval.get("approved_at"),
                     }
                     assessment["outcome"] = outcome
-                if (outcome == "awaiting_enrichment" and not site_is_reachable
-                        and not manually_approved):
+                if (outcome in {"awaiting_enrichment", "auto_approved_eligible"} and not site_is_reachable
+                        and not manually_approved and not automatic_publication_allowed):
                     outcome = "exception_review"
                     assessment["outcome"] = outcome
                     assessment["reasons"] = ";".join(filter(None, [
@@ -1117,7 +1149,13 @@ def process_overture_candidates(self, run_id: int | None = None, limit: int = 20
                 # Defence in depth: re-check the live setting at the exact write
                 # boundary, even if an assessor or future adapter regresses.
                 outcome = _enforce_publication_safety_gate(
-                    assessment, auto_approval_enabled=automatic_publication_allowed,
+                    assessment,
+                    auto_approval_enabled=automatic_publication_allowed,
+                    hold_reason=(
+                        "automatic_publication_disabled"
+                        if not settings.auto_approve_providers
+                        else "first_party_identity_not_verified"
+                    ),
                 )
                 if outcome == "auto_approved_eligible":
                     # Re-check conflicts immediately before the write. Provider,

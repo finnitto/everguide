@@ -2,7 +2,7 @@
 
 **Working branch:** `stage1-overture-identity-provenance`  
 **Current implementation baseline:** application/Compose validation commit `431094f0c323656681c241f09f75d3a98a8ed4b9`; handover-only follow-up `b03cc4240fda973e4a58c7e5da30e357e48c3a0c`  
-**Product policy:** `overture-first-approval-v2.1`  
+**Product policy:** `overture-first-approval-v2.2`
 **Release target:** 2.8.0  
 **Operational mode during implementation and validation:** non-production; automatic publication, post-import processing and scheduled feed tasks remain disabled by default.
 

@@ -249,9 +249,9 @@ def _public_price_rows(db: Session, provider: Provider, branch: Branch) -> list[
         if row.review_status == "approved":
             verification_status = "verified"
             verification_label = "Verified by Everguide reviewer"
-        elif extraction_method == "ai_extracted":
+        elif extraction_method == "deterministic_rules":
             verification_status = "unverified"
-            verification_label = "AI-extracted · Not verified"
+            verification_label = "Rule-extracted · Not verified"
         else:
             # Manually captured but unreviewed prices are not shown publicly.
             continue
@@ -259,6 +259,8 @@ def _public_price_rows(db: Session, provider: Provider, branch: Branch) -> list[
             "id": row.id,
             "service_category": row.service_category,
             "service_name": row.service_name,
+            "option_group_id": row.option_group_id,
+            "option_group_name": row.option_group_name,
             "fee_type": row.fee_type,
             "amount": str(row.amount),
             "amount_upper": str(row.amount_upper) if row.amount_upper is not None else None,

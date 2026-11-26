@@ -21,7 +21,7 @@ def test_valid_overture_location_auto_approves_without_companies_house_or_websit
     result = assess_overture_candidate(row(website=""), point_in_thurrock=True)
     assert result["outcome"] == "auto_approved_eligible"
     assert result["reasons"] == ""
-    assert result["ruleset_version"] == RULESET_VERSION == "overture-first-approval-v2.1"
+    assert result["ruleset_version"] == RULESET_VERSION == "overture-first-approval-v2.2"
 
 
 def test_consistent_optional_website_evidence_does_not_change_overture_authority():
@@ -41,11 +41,13 @@ def test_explicit_material_conflict_routes_to_exception_review():
     assert "official_site_branch_closed" in result["reasons"]
 
 
-def test_missing_or_unreachable_website_is_not_a_conflict():
+def test_missing_or_unreachable_website_is_an_enrichment_exception():
     result = assess_overture_candidate(
         row(website=""), first_party_evidence={"verification_status": "website_missing"},
         point_in_thurrock=True,
     )
+    # The side-effect-free location policy cannot decide website availability;
+    # the enrichment gate applies that check in the candidate processing task.
     assert result["outcome"] == "auto_approved_eligible"
 
 
@@ -55,9 +57,10 @@ def test_disabled_auto_approval_never_returns_auto_approved_eligible():
     assert "automatic_approval_disabled" in result["reasons"]
 
 
-def test_wrong_service_is_excluded_even_if_overture_taxonomy_says_funeral():
+def test_related_memorial_service_can_be_enriched_from_overture_without_becoming_a_funeral_director():
     result = assess_overture_candidate(row(name="A Elfes Memorial Masonry", website="https://memorial.example"), point_in_thurrock=True)
-    assert result["outcome"] == "excluded"
+    assert result["service_class"] == "memorial_or_masonry"
+    assert result["outcome"] == "auto_approved_eligible"
 
 
 def test_postcode_outside_pilot_area_is_exception():
@@ -101,8 +104,18 @@ def test_companies_house_registered_office_does_not_enter_branch_conflict_withou
     assert result["outcome"] == "auto_approved_eligible"
 
 
+def test_companies_house_conflicts_are_ignored_by_overture_approval_policy():
+    result = assess_overture_candidate(
+        row(),
+        first_party_evidence={"conflict_codes": ["verified_companies_house_entity_dissolved"]},
+        point_in_thurrock=True,
+    )
+    assert result["outcome"] == "auto_approved_eligible"
+    assert "verified_companies_house_entity_dissolved" not in result["reasons"]
 
-def test_adjacent_pet_burial_plan_and_direct_cremation_services_are_not_funeral_directors():
+
+
+def test_overture_related_services_are_retained_for_enrichment_without_becoming_funeral_directors():
     cases = (
         ("In Our Hands Pet Funeral Services", "animal_or_pet_service", "animal_or_pet_service", "pet_service"),
         ("Aylesbury Vale Natural Burial Meadow", "family_service", "funeral_service", "cemetery"),
@@ -110,6 +123,12 @@ def test_adjacent_pet_burial_plan_and_direct_cremation_services_are_not_funeral_
         ("Simplicity Cremations", "family_service", "funeral_service", "direct_cremation_provider"),
         ("Distinct Cremations", "family_service", "funeral_service", "direct_cremation_provider"),
     )
+    expected_outcomes = {
+        "pet_service": "excluded",
+        "cemetery": "auto_approved_eligible",
+        "funeral_plan_provider": "auto_approved_eligible",
+        "direct_cremation_provider": "auto_approved_eligible",
+    }
     for name, basic, taxonomy, expected_service in cases:
         result = assess_overture_candidate(
             row(name=name, basic_category=basic, taxonomy_primary=taxonomy),
@@ -117,7 +136,7 @@ def test_adjacent_pet_burial_plan_and_direct_cremation_services_are_not_funeral_
             geography_scope="england",
         )
         assert result["service_class"] == expected_service
-        assert result["outcome"] == "excluded"
+        assert result["outcome"] == expected_outcomes[expected_service]
 
 
 def test_overture_coordinate_conflict_routes_to_exception_review():
