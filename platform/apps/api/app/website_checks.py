@@ -11,9 +11,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from urllib.robotparser import RobotFileParser
+from app.config import settings
 
 USER_AGENT = "EverguideEvidenceBot/0.8 (+https://everguide.example/contact)"
 MAX_BYTES = 1_000_000
+DEFAULT_MAX_REDIRECTS = 3
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -58,6 +60,46 @@ def _get(url: str, limit: int = 4096):
         if len(body) > limit:
             raise ValueError("Response exceeded the configured safety size limit.")
         return response.status, response.headers, body, None
+
+
+def _provider_host_key(host: str) -> str:
+    """Treat only the apex and its www alias as the same provider host."""
+    normalized = host.lower().rstrip(".").encode("idna").decode("ascii")
+    return normalized[4:] if normalized.startswith("www.") else normalized
+
+
+def _get_with_safe_redirects(url: str, limit: int, max_redirects: int):
+    """Follow a bounded same-provider HTTPS redirect chain, validating every hop."""
+    current_url = url
+    visited = {urllib.parse.urldefrag(current_url)[0]}
+    redirects_followed = 0
+    while True:
+        code, headers, body, redirect = _get(current_url, limit)
+        if not redirect:
+            if 300 <= code < 400:
+                return code, headers, b"", current_url, redirects_followed, "redirect_missing_location"
+            return code, headers, body, current_url, redirects_followed, None
+
+        destination = urllib.parse.urljoin(current_url, redirect)
+        if redirects_followed >= max_redirects:
+            return code, headers, b"", current_url, redirects_followed, "redirect_limit_exceeded"
+        try:
+            destination_parsed, destination_host = _validate_public_https(destination)
+            current_host = urllib.parse.urlsplit(current_url).hostname or ""
+        except (TypeError, ValueError) as exc:
+            return code, headers, b"", current_url, redirects_followed, f"unsafe_redirect_destination: {str(exc)[:240]}"
+
+        if _provider_host_key(current_host) != _provider_host_key(destination_host):
+            return code, headers, b"", current_url, redirects_followed, "cross_domain_redirect_requires_review"
+        normalized_destination = urllib.parse.urldefrag(destination)[0]
+        if normalized_destination in visited:
+            return code, headers, b"", current_url, redirects_followed, "redirect_loop"
+        visited.add(normalized_destination)
+        current_url = urllib.parse.urlunsplit((
+            destination_parsed.scheme, destination_parsed.netloc,
+            destination_parsed.path or "/", destination_parsed.query, "",
+        ))
+        redirects_followed += 1
 
 def _extract_funeral_provider_data(decoded: str):
     """Extract factual provider identity only when page-level evidence is strong.
@@ -127,6 +169,18 @@ def _extract_funeral_provider_data(decoded: str):
             email = str(item.get('email') or '')[:254] or None
             website = str(item.get('url') or '')[:1000] or None
             complete_address = bool(street and town and postcode_ok)
+            # A closure status is retained only from an explicitly branch-scoped
+            # LocalBusiness/FuneralHome node with a complete structured address.
+            branch_status = None
+            business_status = item.get('businessStatus')
+            if isinstance(business_status, dict):
+                business_status = business_status.get('@id') or business_status.get('name') or business_status.get('value')
+            status_token = re.sub(r'[^a-z0-9]', '', str(business_status or '').rsplit('/', 1)[-1].lower())
+            if complete_address and any(t in ('funeralhome', 'localbusiness') for t in type_names):
+                if status_token == 'closedpermanently':
+                    branch_status = 'permanently_closed'
+                elif status_token == 'closedtemporarily':
+                    branch_status = 'temporarily_closed'
             # At least one independent contact/location signal is mandatory.
             if not (complete_address or telephone or email):
                 continue
@@ -136,7 +190,7 @@ def _extract_funeral_provider_data(decoded: str):
                 'postcode': postcode if postcode_ok else None, 'telephone': telephone, 'email': email,
                 'website': website, 'source_type': 'schema_org_funeralhome' if explicit_funeral_type else 'schema_org_' + (type_names[0] if type_names else 'business'),
                 'country': country_text or 'unspecified', 'confidence': confidence,
-                'funeral_signals': hits, 'has_complete_branch_address': complete_address})
+                'funeral_signals': hits, 'branch_status': branch_status, 'has_complete_branch_address': complete_address})
     if not candidates:
         return None
     return sorted(candidates, key=lambda x: (x['confidence'], bool(x['telephone']), bool(x['email'])), reverse=True)[0]
@@ -147,44 +201,98 @@ def _structured_funeral_home_data(decoded: str):
     return _extract_funeral_provider_data(decoded)
 
 def verify_candidate(url: str):
-    parsed, _ = _validate_public_https(url)
-    origin = f"https://{parsed.netloc}"
-    robots_status, _, robots_body, robots_redirect = _get(origin + "/robots.txt", 65536)
-    if robots_redirect:
-        raise ValueError("robots.txt redirects; automated check stopped for manual review.")
-    if robots_status >= 400:
-        raise ValueError(f"robots.txt could not be checked (HTTP {robots_status}); page was not fetched.")
-    parser = RobotFileParser()
-    parser.set_url(origin + "/robots.txt")
-    parser.parse(robots_body.decode("utf-8", errors="replace").splitlines())
-    if not parser.can_fetch(USER_AGENT, url):
-        return {"status": "robots_disallowed", "final_url": url, "http_status": None,
-                "content_type": None, "page_title": None, "robots_allowed": False,
-                "content_sha256": None, "detail": "robots.txt disallows this page; no page content fetched."}
-    code, headers, body, redirect = _get(url, MAX_BYTES)
-    if redirect:
-        return {"status": "redirect_requires_review", "final_url": urllib.parse.urljoin(url, redirect),
-                "http_status": code, "content_type": headers.get("Content-Type"), "page_title": None,
-                "robots_allowed": True, "content_sha256": None,
-                "detail": "Redirect was not followed. Destination must be independently checked before verification."}
+    max_redirects = int(getattr(settings, "website_max_redirects", DEFAULT_MAX_REDIRECTS))
+    max_redirects = max(0, min(max_redirects, 5))
+    current_url = url
+    visited = {urllib.parse.urldefrag(current_url)[0]}
+    redirects_followed = 0
+
+    while True:
+        parsed, _ = _validate_public_https(current_url)
+        origin = f"https://{parsed.netloc}"
+        robots_status, _, robots_body, robots_url, _, robots_issue = _get_with_safe_redirects(
+            origin + "/robots.txt", 65536, max_redirects,
+        )
+        if robots_issue:
+            raise ValueError(f"robots.txt redirect could not be safely checked ({robots_issue}); page was not fetched.")
+        if robots_status >= 400:
+            raise ValueError(f"robots.txt could not be checked (HTTP {robots_status}); page was not fetched.")
+        parser = RobotFileParser()
+        parser.set_url(robots_url)
+        parser.parse(robots_body.decode("utf-8", errors="replace").splitlines())
+        if not parser.can_fetch(USER_AGENT, current_url):
+            return {"status": "robots_disallowed", "final_url": current_url, "http_status": None,
+                    "content_type": None, "page_title": None, "robots_allowed": False,
+                    "content_sha256": None, "redirect_count": redirects_followed,
+                    "detail": "robots.txt disallows this page; no page content fetched."}
+
+        code, headers, body, redirect = _get(current_url, MAX_BYTES)
+        if redirect:
+            destination = urllib.parse.urljoin(current_url, redirect)
+            if redirects_followed >= max_redirects:
+                return {"status": "redirect_limit_exceeded", "final_url": current_url,
+                        "http_status": code, "content_type": headers.get("Content-Type"),
+                        "page_title": None, "robots_allowed": True, "content_sha256": None,
+                        "redirect_count": redirects_followed,
+                        "detail": f"Redirect limit ({max_redirects}) reached; destination was not fetched."}
+            try:
+                destination_parsed, destination_host = _validate_public_https(destination)
+                current_host = urllib.parse.urlsplit(current_url).hostname or ""
+            except (TypeError, ValueError) as exc:
+                return {"status": "redirect_requires_review", "final_url": current_url,
+                        "http_status": code, "content_type": headers.get("Content-Type"),
+                        "page_title": None, "robots_allowed": True, "content_sha256": None,
+                        "redirect_count": redirects_followed,
+                        "detail": f"Unsafe redirect destination was not fetched: {str(exc)[:240]}"}
+            if _provider_host_key(current_host) != _provider_host_key(destination_host):
+                return {"status": "redirect_requires_review", "final_url": current_url,
+                        "http_status": code, "content_type": headers.get("Content-Type"),
+                        "page_title": None, "robots_allowed": True, "content_sha256": None,
+                        "redirect_count": redirects_followed,
+                        "detail": "Cross-domain redirect was not followed; manual review is required."}
+            normalized_destination = urllib.parse.urldefrag(destination)[0]
+            if normalized_destination in visited:
+                return {"status": "redirect_requires_review", "final_url": current_url,
+                        "http_status": code, "content_type": headers.get("Content-Type"),
+                        "page_title": None, "robots_allowed": True, "content_sha256": None,
+                        "redirect_count": redirects_followed,
+                        "detail": "Redirect loop detected; manual review is required."}
+            visited.add(normalized_destination)
+            current_url = urllib.parse.urlunsplit((
+                destination_parsed.scheme, destination_parsed.netloc,
+                destination_parsed.path or "/", destination_parsed.query, "",
+            ))
+            redirects_followed += 1
+            continue
+        if 300 <= code < 400:
+            return {"status": "redirect_requires_review", "final_url": current_url,
+                    "http_status": code, "content_type": headers.get("Content-Type"),
+                    "page_title": None, "robots_allowed": True, "content_sha256": None,
+                    "redirect_count": redirects_followed,
+                    "detail": "Redirect response had no usable Location header; manual review is required."}
+        break
+
     content_type = headers.get("Content-Type", "")[:160]
     if code < 200 or code >= 300:
-        return {"status": "http_error", "final_url": url, "http_status": code,
+        return {"status": "http_error", "final_url": current_url, "http_status": code,
                 "content_type": content_type, "page_title": None, "robots_allowed": True,
-                "content_sha256": None, "detail": f"Website returned HTTP {code}."}
+                "content_sha256": None, "redirect_count": redirects_followed,
+                "detail": f"Website returned HTTP {code}."}
     if "text/html" not in content_type.lower():
-        return {"status": "not_html", "final_url": url, "http_status": code,
+        return {"status": "not_html", "final_url": current_url, "http_status": code,
                 "content_type": content_type, "page_title": None, "robots_allowed": True,
                 "content_sha256": hashlib.sha256(body).hexdigest(),
+                "redirect_count": redirects_followed,
                 "detail": "Reachable response is not HTML; response body discarded."}
     decoded = body.decode("utf-8", errors="replace")
     match = re.search(r"<title\b[^>]*>(.*?)</title\s*>", decoded, re.I | re.S)
     title = html.unescape(re.sub(r"<[^>]+>", " ", match.group(1))).strip() if match else None
     title = re.sub(r"\s+", " ", title or "")[:500] or None
     extracted = _extract_funeral_provider_data(decoded)
-    return {"status": "reachable", "final_url": url, "http_status": code,
+    return {"status": "reachable", "final_url": current_url, "http_status": code,
             "content_type": content_type, "page_title": title, "robots_allowed": True,
             "content_sha256": hashlib.sha256(body).hexdigest(), "extracted_data": extracted,
+            "redirect_count": redirects_followed,
             "detail": ("Technical reachability and structured business identity signals were checked. "
                        "Only extracted identity fields and a content digest are retained; the page body is discarded." if extracted else
                        "Technical reachability confirmed, but no qualifying structured funeral-provider identity was extracted. "

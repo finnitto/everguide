@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.main import app
+from app.identity_review_auth import require_identity_reviewer
 from app.models import Provider, Branch, AuditEvent
 from app import models  # noqa: F401
 
@@ -24,6 +25,7 @@ def test_postcode_county_enrichment_only_fills_explicit_counties():
             db.close()
 
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[require_identity_reviewer] = lambda: "test-reviewer"
     db = session_factory()
     try:
         provider = Provider(trading_name="County Test Funeral Service", status="published")
@@ -67,5 +69,6 @@ def test_postcode_county_enrichment_only_fills_explicit_counties():
         db.close()
     finally:
         app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(require_identity_reviewer, None)
         Base.metadata.drop_all(engine)
         engine.dispose()

@@ -4,6 +4,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.main import app
+from app.identity_review_auth import require_identity_reviewer
 from app import models  # noqa: F401
 
 
@@ -20,6 +21,7 @@ def test_direct_provider_and_branch_creation_and_publication_are_blocked():
             db.close()
 
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[require_identity_reviewer] = lambda: "test-reviewer"
     try:
         with TestClient(app) as client:
             created = client.post("/api/v1/providers", json={
@@ -92,5 +94,6 @@ def test_direct_provider_and_branch_creation_and_publication_are_blocked():
             assert linked.json()["branch_id"] == branch_id
     finally:
         app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(require_identity_reviewer, None)
         Base.metadata.drop_all(engine)
         engine.dispose()
