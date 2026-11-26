@@ -39,7 +39,7 @@ The isolated project:
 - uses a fresh, project-scoped PostgreSQL volume and Redis volume;
 - disables Overture feed access, scheduled tasks, automatic processing and automatic approval;
 - supplies no Companies House, Google Places or Brave API credentials;
-- applies migrations only to its disposable database, checks migration head `0023_stage3_evidence`, downgrades to `0022_branch_overture_provenance`, upgrades back to `0023_stage3_evidence`, and verifies Stage 3 tables/columns;
+- applies migrations only to its disposable database, checks migration head `0024_pricing_option_groups`, downgrades to `0023_stage3_evidence`, upgrades back to `0024_pricing_option_groups`, and verifies Stage 3 tables/columns;
 - checks API readiness/version, reviewer credential forwarding, disabled automation controls, admin HTTP response, worker liveness and empty task states, and the empty Beat schedule;
 - removes its containers, network and database/cache volumes on exit, including
   after a failed check.

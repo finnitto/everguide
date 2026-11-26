@@ -67,7 +67,9 @@ def test_boundary_cache_persists_across_task_calls_and_records_provenance(monkey
     first = tasks._get_ons_boundary("thurrock")
     second = tasks._get_ons_boundary("thurrock")
 
-    assert first == second == _geometry()
+    assert first == second
+    assert {key: value for key, value in first.items() if key != "_polygon_bounds"} == _geometry()
+    assert first["_polygon_bounds"] == [(0.0, 0.0, 2.0, 2.0)]
     assert len(fetches) == 1
     payload = json.loads((tmp_path / "ons-thurrock-boundary-v2.json").read_text())
     assert payload["schema_version"] == 2
@@ -88,7 +90,9 @@ def test_corrupt_boundary_cache_is_rejected_and_refetched(monkeypatch, tmp_path)
     payload["sha256"] = "invalid"
     cache_file.write_text(json.dumps(payload))
 
-    assert tasks._get_ons_boundary("thurrock") == _geometry()
+    boundary = tasks._get_ons_boundary("thurrock")
+    assert {key: value for key, value in boundary.items() if key != "_polygon_bounds"} == _geometry()
+    assert boundary["_polygon_bounds"] == [(0.0, 0.0, 2.0, 2.0)]
     assert len(calls) == 2
 
 

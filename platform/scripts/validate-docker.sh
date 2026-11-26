@@ -102,28 +102,28 @@ dc exec -T api python -c 'import json, os; expected={"ci-reviewer":"aaaaaaaaaaaa
 echo "[CHECK] Safety controls are disabled in the isolated stack"
 dc exec -T api python -c 'from app.config import settings; assert settings.auto_approve_providers is False; assert settings.overture_auto_process is False; assert settings.overture_feed_enabled is False; assert settings.overture_scheduled_tasks_enabled is False; print("automatic approval, processing, feed and scheduled tasks are disabled")'
 
-echo "[CHECK] Complete migration chain reached 0023"
+echo "[CHECK] Complete migration chain reached 0024"
 MIGRATION="$(dc exec -T api alembic current)"
 printf '%s\n' "$MIGRATION"
-printf '%s' "$MIGRATION" | grep -q '0023_stage3_evidence' || {
-  echo "Expected migration 0023_stage3_evidence to be current." >&2
+printf '%s' "$MIGRATION" | grep -q '0024_pricing_option_groups' || {
+  echo "Expected migration 0024_pricing_option_groups to be current." >&2
   exit 1
 }
 
-echo "[CHECK] Disposable migration downgrade to 0022 and forward upgrade to 0023"
-dc exec -T api alembic downgrade 0022_branch_overture_provenance
+echo "[CHECK] Disposable migration downgrade to 0023 and forward upgrade to 0024"
+dc exec -T api alembic downgrade 0023_stage3_evidence
 MIGRATION_DOWN="$(dc exec -T api alembic current)"
 printf '%s\n' "$MIGRATION_DOWN"
-printf '%s' "$MIGRATION_DOWN" | grep -q '0022_branch_overture_provenance' || {
-  echo "Expected disposable database to downgrade to 0022_branch_overture_provenance." >&2
+printf '%s' "$MIGRATION_DOWN" | grep -q '0023_stage3_evidence' || {
+  echo "Expected disposable database to downgrade to 0023_stage3_evidence." >&2
   exit 1
 }
 
 dc exec -T api alembic upgrade head
 MIGRATION_UP="$(dc exec -T api alembic current)"
 printf '%s\n' "$MIGRATION_UP"
-printf '%s' "$MIGRATION_UP" | grep -q '0023_stage3_evidence' || {
-  echo "Expected disposable database to upgrade back to 0023_stage3_evidence." >&2
+printf '%s' "$MIGRATION_UP" | grep -q '0024_pricing_option_groups' || {
+  echo "Expected disposable database to upgrade back to 0024_pricing_option_groups." >&2
   exit 1
 }
 dc exec -T api python -c 'from sqlalchemy import inspect; from app.database import engine; i=inspect(engine); tables=set(i.get_table_names()); expected={"pricing_evidence","membership_evidence","regulatory_evidence","evidence_revalidation_requests","evidence_revalidation_attempts"}; assert expected.issubset(tables), expected - tables; cols={c["name"] for c in i.get_columns("providers")}; assert "business_form" in cols; print("Stage 3 tables and provider.business_form are present after re-upgrade")'
